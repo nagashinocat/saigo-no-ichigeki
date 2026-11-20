@@ -26,6 +26,8 @@
     .hud-puff small { font-size: 0.42em; font-weight: 700; opacity: 0.75; }
     .hud-puff:active:not(.off) { transform: scale(0.94); }
     .hud-puff.off { border-color: rgba(255, 255, 255, 0.28); background: rgba(30, 26, 40, 0.5); color: rgba(255, 255, 255, 0.38); box-shadow: none; cursor: default; }
+    .hud-hint { position: absolute; text-align: center; font-size: clamp(14px, 4vw, 20px); font-weight: 800; opacity: 0; transition: opacity 0.25s; text-shadow: 0 1px 3px rgba(20, 10, 30, 0.9), 0 0 10px rgba(20, 10, 30, 0.6); }
+    .hud-hint.show { opacity: 1; transition: opacity 0.08s; }
     @media (pointer: coarse) { .hud-puff small { display: none; } }
     #start { position: fixed; left: 0; right: 0; top: 30%; text-align: center; pointer-events: none; font-size: clamp(16px, 4.6vw, 26px); font-weight: 700; text-shadow: 0 1px 4px rgba(20, 10, 30, 0.9), 0 0 14px rgba(20, 10, 30, 0.6); }
     #start[hidden], #result[hidden], #result [hidden] { display: none; }

@@ -342,6 +342,8 @@ export function createHandView(models, tierName) {
 
   let clock = 0, lvl = 0;
   let rel = null; // { t, hold, back, strength }
+  let fizzT = Infinity; // 足りずに離してからの秒（びくっと震えて光がしぼむ）
+  const FIZZ_SEC = 0.55;
   let joined = 0, flashK = 0;
   const hash = (x) => { const s = Math.sin(x * 127.1) * 43758.5453; return s - Math.floor(s); };
   const _c = new THREE.Vector3(), _q = new THREE.Quaternion(), _e = new THREE.Euler(), _mid = new THREE.Vector3();
@@ -390,7 +392,9 @@ export function createHandView(models, tierName) {
 
       // 両手の位置・向き・形
       const D = PALM_D[0] + (PALM_D[1] - PALM_D[0]) * s;
-      const trem = amp * 0.018 + weak * 0.006;
+      fizzT += dt;
+      const fizzK = fizzT < FIZZ_SEC ? Math.exp(-fizzT / 0.12) * (1 - fizzT / FIZZ_SEC) : 0;
+      const trem = amp * 0.018 + weak * 0.006 + fizzK * 0.03;
       const bob = Math.sin(clock * 1.3) * 0.012;
       _mid.set(0, 0, 0);
       for (const h of hands) {
@@ -426,7 +430,7 @@ export function createHandView(models, tierName) {
       const stutter = weak * (0.25 + 0.45 * (hash(Math.floor(clock * 14)) > 0.55 ? 1 : 0));
       const crackle = amp * 0.18 * (hash(Math.floor(clock * 24) + 7.0) - 0.5);
       const orbFade = rel ? Math.max(1 - squeeze * squeeze, orbBack) : 1;
-      const power = (0.65 + 0.35 * s) * (1 - 0.5 * weak) * (pulse - stutter + crackle) * orbFade;
+      const power = (0.65 + 0.35 * s) * (1 - 0.5 * weak) * (pulse - stutter + crackle) * orbFade * (1 - 0.6 * fizzK);
       orbU.uTime.value = clock;
       orbU.uLevel.value = lvl;
       orbU.uPower.value = Math.max(0.05, power);
@@ -458,6 +462,8 @@ export function createHandView(models, tierName) {
       skinU.uRimDirV.value.copy(rimLight.position).normalize().transformDirection(view);
     },
     // 放つ瞬間: 両手が中央へ寄って組み合わさる（約 0.25 秒）。大きな一発は演出の間そのまま、小さな一発は約 0.4 秒で構えへ戻る
+    // 足りずに離した: 放たず、両手がびくっと震えて球の光が一瞬しぼむ
+    fizzle() { fizzT = 0; },
     release(shot) {
       const strength = Math.min(1, (shot?.amount ?? 0) / CONFIG.power.max);
       // 組み合わさる途中・戻る途中にまた放ったら、今の合わさり具合から続けて寄る（手が跳ばない）

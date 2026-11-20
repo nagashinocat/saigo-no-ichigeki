@@ -71,16 +71,19 @@ const result = createResult(document.getElementById('result'), {
 const press = createPressTracker({
   onStart() { startHint.hidden = true; game.pressStart(); },
   onEnd() { game.pressEnd(); },
+  // 離していないのに押下が途切れた（pointercancel・キャプチャが外れた・タブを隠した・blur）: 放たずに打ち切る
+  onCancel() { game.pressCancel(); },
 });
 canvas.addEventListener('pointerdown', (e) => { if (e.pointerType === 'mouse' && e.button !== 0) return; canvas.setPointerCapture?.(e.pointerId); press.down(e.pointerId); });
 canvas.addEventListener('pointerup', (e) => press.up(e.pointerId));
 canvas.addEventListener('pointercancel', (e) => press.cancel(e.pointerId));
-// 指が画面の外へ出ても、キャプチャが外れたら離したことにする
+// キャプチャが外れたら押下を打ち切る（離した後に来る分は何もしない。放つのは pointerup だけ）
 canvas.addEventListener('lostpointercapture', (e) => press.cancel(e.pointerId));
 window.addEventListener('blur', () => press.reset());
 // PC はマウスで長押ししながら、もう片方の手の Space キーで小爆発
 window.addEventListener('keydown', (e) => {
-  if (e.code !== 'Space') return;
+  // 結果画面では奪わない（ボタンを Space で押せる）
+  if (e.code !== 'Space' || game.phase === 'over') return;
   e.preventDefault();
   if (!e.repeat) game.puff();
 });
@@ -88,7 +91,7 @@ window.addEventListener('contextmenu', (e) => e.preventDefault());
 // iOS では最初の1回で running にならないことがあるので、鳴らせるまで毎回呼ぶ
 window.addEventListener('pointerdown', () => { if (!audio.running) audio.unlock(); }, { capture: true });
 document.addEventListener('visibilitychange', () => {
-  // 隠れる前に押下を打ち切る（貯めていた分は放つ。戻ってきたとき指が引っかかったままにならない）
+  // 隠れる前に押下を打ち切る（放たず、貯めた力は残る。戻ってきたとき指が引っかかったままにならない）
   if (document.hidden) press.reset();
   game.setHidden(document.hidden);
   if (document.hidden) audio.suspend(); else audio.resume();
@@ -138,6 +141,8 @@ game.on('shot', (shot) => {
   audio.releaseSilence(CONFIG.cinematic.freezeSec);
 });
 // 小爆発: 両手が素早く組み合わさって弾け、主人公のまわりに小さな光の球（貯めの唸りは止めない）
+// 足りずに離した: 放たず、両手がびくっと震え、ひとこと知らせる
+game.on('fizzle', () => { hand.fizzle(); hud.hint('まだ足りない。もっと貯めてから離して'); });
 game.on('puff', (shot) => { explosionView.begin(shot); hand.release(shot); });
 
 // 軍勢と主人公の姿

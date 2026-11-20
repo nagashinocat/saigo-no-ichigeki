@@ -217,3 +217,19 @@ test('組み合わさる途中や戻る途中にもう一度放っても、両�
     expect(peak).toBeCloseTo(1, 2);
   }
 });
+
+test('fizzle（足りずに離した）: 両手がびくっと震え、球の光が一瞬しぼみ、約0.6秒で落ち着く。組み合わさらない', () => {
+  const calm = createHandView(hands('low'), 'low'), fz = createHandView(hands('low'), 'low');
+  for (const v of [calm, fz]) run(v, 1, 0.06, false, 1);
+  fz.fizzle();
+  let maxDiff = 0;
+  for (let i = 0; i < 12; i++) {
+    calm.update(DT, 0.06, false, 1); fz.update(DT, 0.06, false, 1);
+    maxDiff = Math.max(maxDiff, fz.palms.right.distanceTo(calm.palms.right));
+    expect(fz.joined).toBe(0);
+  }
+  expect(maxDiff).toBeGreaterThan(0.004);
+  run(calm, 0.6, 0.06, false, 1); run(fz, 0.6, 0.06, false, 1);
+  expect(fz.palms.right.distanceTo(calm.palms.right)).toBeLessThan(0.002);
+  expectFinite(fz);
+});

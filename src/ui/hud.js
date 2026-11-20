@@ -16,13 +16,16 @@ export function powerText(power, max) {
 export function createHud(root, { onPuff } = {}) {
   root.innerHTML = '<div class="hud-strip"><div class="hud-power-text"></div><div class="hud-time"></div></div>'
     + '<div class="hud-power"><i></i></div>'
-    + '<button type="button" class="hud-puff off" aria-disabled="true"><b>払う</b><small>Space</small></button>';
+    + '<button type="button" class="hud-puff off" aria-disabled="true"><b>払う</b><small>Space</small></button>'
+    + '<div class="hud-hint"></div>';
   const strip = root.querySelector('.hud-strip');
   const label = root.querySelector('.hud-power-text');
   const time = root.querySelector('.hud-time');
   const bar = root.querySelector('.hud-power');
   const fill = bar.querySelector('i');
   const button = root.querySelector('.hud-puff');
+  const hintEl = root.querySelector('.hud-hint');
+  let hintTimer = 0;
   // 押した瞬間に払う（click は指を離すまで来ない）。押せないときの押下も、ここで受け止めて長押しにはしない
   button.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); onPuff?.(); });
   button.addEventListener('contextmenu', (e) => e.preventDefault());
@@ -34,7 +37,16 @@ export function createHud(root, { onPuff } = {}) {
       Object.assign(strip.style, { left: hud.x + 'px', top: height - hud.y - hud.h + 'px', width: hud.w + 'px', height: hud.h + 'px' });
       Object.assign(bar.style, { left: hand.x + 'px', top: height - hand.y - hand.h + 'px', width: hand.w + 'px' });
       const r = puffButtonRect(layout, height);
+      // ひとことの知らせは、手の帯のすぐ上（街の画面の下端）
+      Object.assign(hintEl.style, { left: hand.x + 'px', width: hand.w + 'px', top: height - hand.y - hand.h - 44 + 'px' });
       Object.assign(button.style, { left: r.left + 'px', top: r.top + 'px', width: r.size + 'px', height: r.size + 'px', fontSize: Math.round(r.size * 0.3) + 'px' });
+    },
+    // 短い知らせ（例: 足りずに離したとき）を sec 秒だけ出す
+    hint(text, sec = 1.4) {
+      hintEl.textContent = text;
+      hintEl.classList.add('show');
+      clearTimeout(hintTimer);
+      hintTimer = setTimeout(() => hintEl.classList.remove('show'), sec * 1000);
     },
     setVisible(v) { root.style.visibility = v ? 'visible' : 'hidden'; },
     update({ remaining, power, max, canPuff }) {

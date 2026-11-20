@@ -95,9 +95,10 @@ export function createGame({ seed, cfg = CONFIG }) {
 
     // 離す: 貯めた力が minRelease 以上なら最後の一発（ここでゲームの進行は終わり、演出 → 爆発 → 結果）
     pressEnd() {
-      if (phase !== 'playing') return;
+      if (phase !== 'playing' || !charge.active) return;
       const shot = charge.release();
-      if (!shot) return;
+      // 足りない: 放たない。手の画面とヒントで「まだ足りない」を知らせる
+      if (!shot) { emit('fizzle', { power: power.value, need: cfg.power.minRelease }); return; }
       emit('shot', shot);
       phase = 'cinematic';
       timer.pause();
@@ -105,6 +106,9 @@ export function createGame({ seed, cfg = CONFIG }) {
       pendingShot = shot;
       emit('cinematicStart', shot);
     },
+
+    // 指を離していないのに押下が途切れた（タブを隠した・blur・pointercancel）: 放たずに貯めを止める。力は残る
+    pressCancel() { charge.cancel(); },
 
     // 小爆発のボタン: 力を cost 使って主人公のまわりの軍勢を払う。押せたら true
     puff() {

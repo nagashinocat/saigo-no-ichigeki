@@ -16,6 +16,8 @@ export function createCharge(power, cfg = CONFIG) {
     update(dt) {
       if (c.active) power.add(cfg.power.chargePerSec * dt);
     },
+    // 放たずに打ち切る（貯めた力はそのまま）
+    cancel() { c.active = false; },
     release() {
       if (!c.active) return null;
       c.active = false;

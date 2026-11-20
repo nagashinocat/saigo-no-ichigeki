@@ -319,3 +319,50 @@ test('blasts は進行中の一発ごとに id・shot・front を読み取り専
   step(g, 20);
   expect(g.blasts).toEqual([]);
 });
+
+test('pressCancel（タブを隠す・blur・pointercancel）は放たずに貯めを止め、力は残る。押し直すと続きから貯まる', () => {
+  const g = createGame({ seed: 1, cfg: quiet });
+  const log = record(g, ['shot', 'cinematicStart', 'over', 'fizzle']);
+  hold(g, secFor(40));
+  const v = g.power.value;
+  expect(v).toBeGreaterThan(CONFIG.power.minRelease);
+  g.pressCancel();
+  expect(g.charge.active).toBe(false);
+  expect(g.phase).toBe('playing');
+  expect(g.power.value).toBe(v);
+  g.pressEnd(); // 打ち切った後の離す は何もしない
+  step(g, 5);
+  expect(g.power.value).toBe(v);
+  expect(log).toHaveLength(0);
+  hold(g, 1);
+  expect(g.power.value).toBeCloseTo(v + CONFIG.power.chargePerSec);
+  g.pressEnd(); // ふつうに離せば放つ
+  expect(log.map(([n]) => n)).toEqual(['shot', 'cinematicStart']);
+});
+
+test('隠れたまま pressCancel が来ても放たず、戻ってからも力は残る', () => {
+  const g = createGame({ seed: 1, cfg: quiet });
+  const log = record(g, ['shot']);
+  hold(g, secFor(30));
+  const v = g.power.value;
+  g.setHidden(true);
+  g.pressCancel();
+  g.update(30);
+  g.setHidden(false);
+  expect(g.charge.active).toBe(false);
+  expect(g.power.value).toBe(v);
+  expect(g.phase).toBe('playing');
+  expect(log).toHaveLength(0);
+});
+
+test('minRelease 未満で離すと fizzle（不発の知らせ）を一度出す。押していなければ出さない', () => {
+  const g = createGame({ seed: 1, cfg: quiet });
+  const log = record(g, ['fizzle', 'shot']);
+  g.pressEnd();
+  hold(g, 1);
+  g.pressEnd();
+  g.pressEnd();
+  expect(log).toEqual([['fizzle', { power: g.power.value, need: CONFIG.power.minRelease }]]);
+  g.pressStart(); g.pressCancel(); // 打ち切りでは知らせない
+  expect(log).toHaveLength(1);
+});
