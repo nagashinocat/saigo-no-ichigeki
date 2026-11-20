@@ -71,7 +71,7 @@ test('blast が終わった時点で、その一発の Hit の value を addShot
   small(g);
   step(g, 3);
   expect(log.some(([n]) => n === 'shotScored')).toBe(false);
-  step(g, 5);
+  step(g, 20);
   const values = log.filter(([n]) => n === 'hit').map(([, p]) => p.target.value);
   expect(values.length).toBeGreaterThan(0);
   const scored = log.filter(([n]) => n === 'shotScored');
@@ -116,8 +116,9 @@ test('時間切れで over(time)、blast 中なら終わってから over', () =
   small(g);
   step(g, 3);
   expect(g.timer.isOver()).toBe(true);
-  expect(g.phase).toBe('playing');
-  g.update(0.1);
+  expect(g.phase).toBe('playing'); // 時間は切れたが、じわじわ → 弾ける爆発がまだ走っている
+  expect(g.blasts).toHaveLength(1);
+  step(g, 20);
   expect(g.phase).toBe('over');
   expect(log).toHaveLength(1);
   expect(log[0][1].reason).toBe('time');
@@ -186,7 +187,7 @@ test('blast が二つ同時に生きていても hit の id は重複せず、�
   const log = record(g, ['hit', 'shotScored']);
   big(g);
   step(g, 15); // cinematic 終了、一つ目の blast が走り出す
-  step(g, 3);
+  step(g, 10); // じわじわ期（最大 0.8 s）の後に弾ける
   expect(g.enemies.list.some((e) => e.state === 'dead')).toBe(true);
   expect(g.enemies.list.filter((e) => e.state !== 'dead' && e.dist <= 40)).toHaveLength(0);
   small(g); // 二つ目

@@ -6,6 +6,7 @@ import { generateCity } from '../../src/world/cityGen.js';
 import { radiusFor } from '../../src/game/charge.js';
 import { createRng } from '../../src/rng.js';
 import { CONFIG } from '../../src/config.js';
+import { frontAt, blastDuration } from '../../src/game/blast.js';
 
 const city = generateCity(3);
 const shotOf = (amount) => ({ amount, radius: radiusFor(amount), isBig: true });
@@ -142,6 +143,22 @@ test('追われて引くカメラ: 生きた front を読み、常に front + mi
   // 大きな dt でも front を追い越されない
   const c2 = createChase(10);
   expect(c2.update(0.5, 200)).toBeGreaterThanOrEqual(200 + minLeadFor(200));
+});
+
+test('追われて引くカメラ: 実際の爆発曲線（じわじわ → 弾ける）でも飲まれず、追う時間は chaseMaxSec に収まる', () => {
+  const R = CONFIG.radius.max, dur = blastDuration(R);
+  expect(dur).toBeLessThan(CINE.chaseMaxSec);
+  const chase = createChase(30), dt = 1 / 60;
+  let prev = 30, creepEnd = 0;
+  for (let t = dt; t <= dur + 1e-9; t += dt) {
+    const front = frontAt(t, R), s = chase.update(dt, front);
+    expect(s).toBeGreaterThanOrEqual(front + minLeadFor(front) - 1e-9);
+    expect(s).toBeGreaterThanOrEqual(prev - 1e-9);
+    if (t < CONFIG.blast.creepSec) creepEnd = s - 30; // じわじわ期はほとんど引かない
+    prev = s;
+  }
+  expect(creepEnd).toBeLessThan(40);
+  expect(prev).toBeGreaterThan(R); // 最後には球の外
 });
 
 // 線分 a→c がビルの箱を通るか

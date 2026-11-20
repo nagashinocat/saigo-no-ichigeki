@@ -2,6 +2,7 @@ import { test, expect } from 'vitest';
 import * as THREE from 'three';
 import { pullbackDistance, createCameraFollow } from '../../src/render/views.js';
 import { CONFIG } from '../../src/config.js';
+import { frontAt, blastDuration } from '../../src/game/blast.js';
 
 const pos = [0, 280, 260];
 const dir = new THREE.Vector3(0, -0.8, -0.6).normalize().toArray();
@@ -18,8 +19,8 @@ test('球が最大まで広がる間ずっと、カメラと中心の距離は f
   const follow = createCameraFollow();
   const dt = 1 / 60, R = CONFIG.radius.max;
   let front = 0;
-  for (let i = 0; i < 400; i++) {
-    front = Math.min(R, front + CONFIG.blast.speed * dt);
+  for (let i = 0; i < Math.ceil(blastDuration(R) / dt) + 120; i++) {
+    front = frontAt((i + 1) * dt, R);
     const t = follow.update(dt, pos, dir, front, R);
     expect(at(t)).toBeGreaterThanOrEqual(front * 1.3 - 1e-6);
   }
@@ -50,4 +51,20 @@ test('動き出しはなめらか（最初のフレームはほとんど動か�
 test('小さな一発ではカメラは動かない', () => {
   const follow = createCameraFollow();
   for (let i = 0; i < 120; i++) expect(follow.update(1 / 60, pos, dir, 100, 120)).toBe(0);
+});
+
+test('じわじわ期はカメラがほとんど動かず、弾けたら最後の半径へ向けて一気に引く', () => {
+  const follow = createCameraFollow();
+  const dt = 1 / 60, R = CONFIG.radius.max, creep = CONFIG.blast.creepSec;
+  let tCreep = 0, tAfter = 0;
+  for (let i = 1; i <= Math.ceil(blastDuration(R) / dt); i++) {
+    const t = i * dt, front = frontAt(t, R);
+    const goal = t < creep ? frontAt(t + 0.25, R) : R; // explosionView の先回り
+    const pull = follow.update(dt, pos, dir, front, goal);
+    if (t <= creep) tCreep = pull;
+    if (t <= creep + 0.5) tAfter = pull;
+    expect(at(pull)).toBeGreaterThanOrEqual(front * 1.3 - 1e-6);
+  }
+  expect(tCreep).toBeLessThan(60);
+  expect(tAfter).toBeGreaterThan(tCreep + 80);
 });

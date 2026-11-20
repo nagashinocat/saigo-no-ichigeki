@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { createExplosionView } from '../../src/render/explosionView.js';
 import { TIERS } from '../../src/render/quality.js';
 import { CONFIG } from '../../src/config.js';
+import { frontAt } from '../../src/game/blast.js';
 
 const camera = new THREE.PerspectiveCamera(60, 1, 1, 5000);
 const make = (tier = 'mid') => {
@@ -18,7 +19,7 @@ const spheresVisible = (scene) => {
 // blasts を game.blasts と同じ形で進める
 function run(view, list, sec, dt = 1 / 60) {
   for (let t = 0; t < sec; t += dt) {
-    for (const b of list) b.front = Math.min(b.shot.radius, b.front + CONFIG.blast.speed * dt);
+    for (const b of list) { b.t = (b.t ?? 0) + dt; b.front = frontAt(b.t, b.shot.radius); }
     const live = list.filter((b) => b.front < b.shot.radius);
     view.update(dt, live, camera, 500);
   }
@@ -57,12 +58,14 @@ test('放つと白く光ってすぐ収まり、揺れは front が速く広が�
   expect(view.screen.flash).toBe(0);
 
   const b = { id: 7, shot: shot(300), front: 0 };
-  run(view, [b], 0.5);
+  run(view, [b], 0.4);
+  expect(view.cameraInfo.shake).toBe(0); // じわじわ期は揺れない
+  run(view, [b], 0.4); // 弾けた直後
   const growing = view.cameraInfo.shake;
   expect(growing).toBeGreaterThan(0);
-  // 同じ速さなら大きな一発ほど揺れが大きい
+  // 同じ段階なら大きな一発ほど揺れが大きい
   const small = make().view;
-  run(small, [{ id: 1, shot: shot(60), front: 0 }], 0.3);
+  run(small, [{ id: 1, shot: shot(60), front: 0 }], 0.4);
   expect(small.cameraInfo.shake).toBeLessThan(growing);
   run(view, [b], 3);
   expect(view.cameraInfo.shake).toBeLessThan(growing * 0.01);
@@ -76,6 +79,28 @@ test('cameraInfo は今の球の大きさと、先回りの大きさ（最後の
   expect(front).toBeCloseTo(b.front, 5);
   expect(goal).toBeGreaterThan(front);
   expect(goal).toBeLessThanOrEqual(400);
+});
+
+test('じわじわ期は球が脈打って揺れず、弾けた瞬間に光が跳ね上がり揺れの一撃が出て、カメラの先回りが最後の半径になる', () => {
+  const { view } = make();
+  const b = { id: 5, shot: shot(400), front: 0, t: 0 };
+  const burstAt = CONFIG.blast.creepSec * Math.sqrt(400 / CONFIG.radius.max);
+  run(view, [b], 0.1); // 放った閃光が収まる
+  run(view, [b], burstAt - 0.2);
+  expect(view.screen.flash).toBe(0);
+  expect(view.cameraInfo.shake).toBe(0);
+  expect(view.cameraInfo.goal).toBeLessThan(400 * 0.5);
+  run(view, [b], 0.3); // 弾ける
+  expect(view.cameraInfo.shake).toBeGreaterThan(0.002);
+  expect(view.cameraInfo.goal).toBe(400);
+});
+test('弾ける瞬間（front が creepFrac × radius を越えた更新）に一度だけ閃光が出る', () => {
+  const { view } = make();
+  const b = { id: 6, shot: shot(300), front: 0, t: 0 };
+  run(view, [b], 0.2);
+  let peaks = 0, prev = 0;
+  for (let i = 0; i < 120; i++) { run(view, [b], 1 / 60); if (view.screen.flash > prev + 0.1) peaks++; prev = view.screen.flash; }
+  expect(peaks).toBe(1);
 });
 
 test('vaporize は光に溶ける箱を置き、溶け終わるまで busy', () => {

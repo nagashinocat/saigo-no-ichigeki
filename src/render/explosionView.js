@@ -5,6 +5,7 @@ import { createRng } from '../rng.js';
 import { NOISE_GLSL } from './glslNoise.js';
 import { createDustView } from './dustView.js';
 import { createVaporizeView } from './vaporizeView.js';
+import { frontAt, timeAtFront } from '../game/blast.js';
 
 // 爆発の見た目: 一発ごとの光の球と地面を走る衝撃波の輪、爆心から街を照らす光、閃光・揺れ・熱のゆがみの量、
 // 粉（DustEvent）と土煙の輪、光に溶ける建物。
@@ -15,8 +16,13 @@ const AFTER_GROW = 0.07;     // 消えながら、さらに広がる割合
 const RING_AHEAD = 1.03;     // 衝撃波の輪は球の少し先を走る
 const FLASH_SEC = 0.07;
 const MAX_SPHERES = 6;
-const LOOKAHEAD_SEC = 1.0;    // カメラは、球がこの秒数のうちに届く大きさへ先回りして下がる
-const SHAKE_K = 0.012 / CONFIG.blast.speed; // front の速さ (m/s) あたりの揺れ (rad)
+const LOOKAHEAD_SEC = 0.25;   // じわじわ期のカメラは、球がこの秒数のうちに届く大きさへ先回りする（弾けたら最後の半径へ）
+const SPEED_REF = 800;        // 弾ける期の最大の速さの目安 (m/s)。揺れ・粉の量の基準
+const SHAKE_K = 0.012 / SPEED_REF; // front の速さ (m/s) あたりの揺れ (rad)
+const DONE_RING_SPEED = 128;  // 前線が届いたあとの衝撃波の輪の速さ (m/s)
+const BURST_FLARE_SEC = 0.22; // 弾けた瞬間の光の強まり
+const BURST_SHAKE = 0.007;    // 弾けた瞬間の揺れの一撃 (rad、最大の一発)
+const HUM_HZ = 5;             // じわじわ期の球の脈打ち
 
 const SPHERE_VERT = /* glsl */`
 uniform float uTime, uSeed, uRadius;
@@ -206,7 +212,7 @@ export function createExplosionView(scene, tierName, { sunDir = null, seed = 7 }
     // 空きがなければ一番古い球を使い回す（古い一発の対応は外す）
     const s = spheres.find((x) => !x.active) ?? spheres.reduce((a, x) => (x.age > a.age ? x : a));
     if (live.get(s.id) === s) { live.delete(s.id); evicted.add(s.id); }
-    Object.assign(s, { active: true, id: b.id, radius: b.shot.radius, front: 0, prev: 0, age: 0, done: false, fadeAge: 0, ringFront: 0, dustAcc: 0 });
+    Object.assign(s, { active: true, id: b.id, radius: b.shot.radius, front: 0, prev: 0, age: 0, done: false, fadeAge: 0, ringFront: 0, dustAcc: 0, burstAge: Infinity, burst: false });
     s.uniforms.uSeed.value = rng() * 100;
     s.mesh.visible = s.ring.visible = true;
     live.set(b.id, s);
@@ -215,9 +221,15 @@ export function createExplosionView(scene, tierName, { sunDir = null, seed = 7 }
     return s;
   }
 
+  // カメラが先回りする半径: じわじわ期は少し先、弾けたら最後の半径まで一気に
+  function goalOf(s) {
+    if (s.burst) return s.radius;
+    return frontAt(timeAtFront(s.front, s.radius) + LOOKAHEAD_SEC, s.radius);
+  }
+
   // 衝撃波が地面を走るとき、先頭で土煙が舞い上がる
   function ringDust(s, grow) {
-    const ratePerM = Math.min(0.5, (tier.dustMax * 0.35) / 2.2 / CONFIG.blast.speed); // 寿命 × 速さで上限の35%以内
+    const ratePerM = Math.min(0.5, (tier.dustMax * 0.35) / 2.2 / SPEED_REF); // 寿命 × 速さで上限の35%以内
     s.dustAcc += grow * ratePerM;
     const tint = [0.76, 0.68, 0.62];
     while (s.dustAcc >= 1) {
@@ -259,7 +271,14 @@ export function createExplosionView(scene, tierName, { sunDir = null, seed = 7 }
         const s = live.get(b.id) ?? startSphere(b);
         s.prev = s.front;
         s.front = b.front;
-        if (dt > 0) shakeWant += ((s.front - s.prev) / dt) * SHAKE_K * (0.35 + 0.65 * Math.sqrt(s.radius / CONFIG.radius.max));
+        if (!s.burst && s.front >= CONFIG.blast.creepFrac * s.radius) {
+          // 突然弾ける: 光が跳ね上がり、画面が一撃揺れ、輪の土煙が一気に増える
+          s.burst = true; s.burstAge = 0;
+          const big = Math.sqrt(s.radius / CONFIG.radius.max);
+          flash = Math.max(flash, 0.1 + 0.15 * big);
+          shake = Math.max(shake, BURST_SHAKE * (0.35 + 0.65 * big));
+        }
+        if (dt > 0 && s.burst) shakeWant += ((s.front - s.prev) / dt) * SHAKE_K * (0.35 + 0.65 * Math.sqrt(s.radius / CONFIG.radius.max));
       }
       for (const [id, s] of live) if (!seen.has(id)) { s.done = true; s.front = s.radius; live.delete(id); }
       for (const id of evicted) if (!seen.has(id)) evicted.delete(id);
@@ -268,7 +287,11 @@ export function createExplosionView(scene, tierName, { sunDir = null, seed = 7 }
       for (const s of spheres) {
         if (!s.active) continue;
         s.age += dt;
+        s.burstAge += dt;
         let fade = 1, r = Math.max(0.5, s.front);
+        // じわじわ期は球が低く唸るように脈打つ
+        const hum = s.burst || s.done ? 0 : 1;
+        const pulse = 1 + hum * 0.07 * Math.sin(time * Math.PI * 2 * HUM_HZ + s.id);
         if (s.done) {
           s.fadeAge += dt;
           const k = Math.min(1, s.fadeAge / FADE_SEC);
@@ -277,14 +300,14 @@ export function createExplosionView(scene, tierName, { sunDir = null, seed = 7 }
           if (k >= 1) { s.active = false; s.mesh.visible = s.ring.visible = false; continue; }
         }
         const prevRing = s.ringFront;
-        s.ringFront = s.done ? Math.max(s.ringFront, s.radius * RING_AHEAD) + CONFIG.blast.speed * 0.8 * dt : r * RING_AHEAD + 2;
+        s.ringFront = s.done ? Math.max(s.ringFront, s.radius * RING_AHEAD) + DONE_RING_SPEED * dt : r * RING_AHEAD + 2;
         if (s.ringFront > prevRing && fade > 0.4) ringDust(s, s.ringFront - prevRing);
-        s.mesh.scale.setScalar(r);
+        s.mesh.scale.setScalar(r * pulse);
         const u = s.uniforms;
         u.uTime.value = time;
-        u.uRadius.value = r;
+        u.uRadius.value = r * pulse;
         u.uFade.value = fade;
-        u.uBirth.value = Math.exp(-s.age / 0.12);
+        u.uBirth.value = (s.burst ? 1 : 0.3) * Math.exp(-(s.burst ? s.burstAge : s.age) / (s.burst ? BURST_FLARE_SEC : 0.12));
         u.uScale.value = 3.5 + r / 60;
         const ringR = s.ringFront * 1.25 + 10;
         s.ring.scale.setScalar(ringR);
@@ -292,7 +315,7 @@ export function createExplosionView(scene, tierName, { sunDir = null, seed = 7 }
         s.ringU.uTime.value = time;
         s.ringU.uFade.value = s.done ? Math.max(0, 1 - s.fadeAge / (FADE_SEC * 1.2)) : 1;
         maxFront = Math.max(maxFront, r);
-        maxGoal = Math.max(maxGoal, s.done ? r : Math.min(s.radius, s.front + CONFIG.blast.speed * LOOKAHEAD_SEC));
+        maxGoal = Math.max(maxGoal, s.done ? r : goalOf(s));
         cover = Math.max(cover, fade);
         lightI = Math.max(lightI, fade * (1 + 2 * u.uBirth.value) * r);
       }
