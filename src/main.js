@@ -9,6 +9,7 @@ import { createStyle } from './render/style.js';
 import { createCityView } from './render/cityView.js';
 import { createDestruction } from './world/destruction.js';
 import { createDebrisView } from './render/debrisView.js';
+import { createRubbleView } from './render/rubbleView.js';
 import { createExplosionView } from './render/explosionView.js';
 import { createFrontTracker } from './render/sphereDeform.js';
 import { createEnemyView } from './render/enemyView.js';
@@ -101,6 +102,9 @@ resize();
 const destruction = createDestruction({ cityView, getTier: () => TIERS[tier], seed });
 const debrisView = createDebrisView(style, destruction.pool, destruction.near, TIERS.high.debrisMax + TIERS.high.nearPhysicsMax);
 cityScene.add(debrisView.mesh);
+// 穴の底や斜面で止まった瓦礫（動かないので、置いた・消えたときだけ書き直す）
+const rubbleView = createRubbleView(style.props.debris, destruction.rubble);
+cityScene.add(rubbleView.mesh);
 
 // 爆発の見た目（光の球・衝撃波・閃光・粉・光に溶ける建物）
 const explosionView = createExplosionView(cityScene, tier, { sunDir: style.sunDir, seed });
@@ -184,6 +188,7 @@ function simulate(dt) {
   destruction.pool.setCrater(fronts.crater);
   if (wdt > 0) explosionView.dust(destruction.update(wdt, list));
   debrisView.update();
+  rubbleView.update();
   explosionView.update(wdt, live, cam, ps, fronts.crater);
   cityView.update(wdt, { fronts: list, heat: explosionView.ground.heat, ember: explosionView.ground.ember });
   enemyView.sync(game.enemies.list, { fronts: list, pointScale: ps, glow: explosionView.ground.heat, dt: wdt, pixelRatio: renderer.getPixelRatio() });

@@ -1,5 +1,5 @@
 import { test, expect } from 'vitest';
-import { deformPoint, craterDepth, crushPoint, packFronts, MAX_FRONTS, createFrontTracker, CRUSH_SQUASH, SPHERE_DEFORM_GLSL, groundHeight, CRATER_LIP } from '../../src/render/sphereDeform.js';
+import { deformPoint, craterDepth, crushPoint, packFronts, MAX_FRONTS, createFrontTracker, CRUSH_SQUASH, SPHERE_DEFORM_GLSL, groundHeight, CRATER_LIP, PILLAR } from '../../src/render/sphereDeform.js';
 
 const len = (p) => Math.hypot(p[0], p[1], p[2]);
 
@@ -38,8 +38,7 @@ test('球の内側の点は中心からの向きを保ったまま表面（距�
   expect(orig).toEqual([3, 4, 0]);
 });
 
-test('craterDepth: r < front で sqrt(front²-r²)、r ≥ front で 0、複数の球は深いほう', () => {
-  expect(craterDepth(0, [100])).toBeCloseTo(100, 9);
+test('craterDepth: r < front で sqrt(front²-r²)、r ≥ front で 0、複数の球は深いほう（主人公の柱の外）', () => {
   expect(craterDepth(60, [100])).toBeCloseTo(80, 9);
   expect(craterDepth(100, [100])).toBe(0);
   expect(craterDepth(150, [100])).toBe(0);
@@ -47,6 +46,27 @@ test('craterDepth: r < front で sqrt(front²-r²)、r ≥ front で 0、複数�
   expect(craterDepth(30, [50, 0, 40])).toBeCloseTo(40, 9); // 50 の球: sqrt(2500-900)=40, 40 の球: sqrt(1600-900)≈26.5
   expect(craterDepth(45, [50, 40])).toBeCloseTo(Math.sqrt(2500 - 2025), 9);
   expect(craterDepth(-60, [100])).toBeCloseTo(80, 9); // 距離なので符号は見ない
+});
+
+test('主人公の足元の柱: r < 4m は元の高さ（深さ 0）、柱の側面は 1m で穴の深さまで下がる', () => {
+  expect(PILLAR.radius).toBe(4);
+  for (const F of [10, 100, 440]) {
+    for (const r of [0, 1, 2.5, 3.99, -3.5]) {
+      expect(craterDepth(r, [F])).toBe(0);
+      expect(groundHeight(r, [F])).toBe(0);
+    }
+    const foot = PILLAR.radius + PILLAR.wall;
+    expect(craterDepth(foot, [F])).toBeCloseTo(Math.sqrt(F * F - foot * foot), 9);
+    // 側面はまっすぐに下がる（途中は 0 と穴の深さの間で、外へ行くほど深い）
+    let prev = 0;
+    for (let r = PILLAR.radius; r <= foot + 1e-9; r += PILLAR.wall / 8) {
+      const d = craterDepth(r, [F]);
+      expect(d).toBeGreaterThanOrEqual(prev - 1e-9);
+      expect(d).toBeLessThanOrEqual(Math.sqrt(F * F - r * r) + 1e-9);
+      prev = d;
+    }
+    expect(craterDepth(PILLAR.radius + PILLAR.wall / 2, [F])).toBeCloseTo(Math.sqrt(F * F - (PILLAR.radius + PILLAR.wall / 2) ** 2) / 2, 9);
+  }
 });
 
 test('crushPoint: k=0 は deformPoint と同じ。k が進むほど低くつぶれ、地面より下にも球の外にも出ない', () => {
@@ -104,15 +124,54 @@ test('GLSL の式は JS と同じ定数を使う（押しつぶしの割合・sm
   expect(SPHERE_DEFORM_GLSL).toContain('if (d < uFronts[i]) F = max(F, uFronts[i]);');
   expect(SPHERE_DEFORM_GLSL).toContain('if (abs(r) < f) best = max(best, sqrt(f * f - r * r));');
   expect(SPHERE_DEFORM_GLSL).toContain('return p * (F / d);');
+  // 主人公の柱（craterDepth の中）
+  expect(SPHERE_DEFORM_GLSL).toContain(`if (a < ${PILLAR.radius.toFixed(4)}) return 0.0;`);
+  expect(SPHERE_DEFORM_GLSL).toContain(`if (a < ${(PILLAR.radius + PILLAR.wall).toFixed(4)}) best *= (a - ${PILLAR.radius.toFixed(4)}) / ${PILLAR.wall.toFixed(4)};`);
+  // 地面の高さ: 最大の球の内側は穴（柱の上は 0）、外は縁の盛り上がり
+  expect(SPHERE_DEFORM_GLSL).toContain('if (abs(r) < F) return -craterDepth(r);');
 });
 
 test('groundHeight: 地面の高さ。穴の中は craterDepth だけ下がり、縁の外は盛り上がって遠くで 0 に戻る（地面のシェーダーと同じ式）', () => {
   expect(groundHeight(50, [])).toBe(0);
   expect(groundHeight(30, [100, 40])).toBeCloseTo(-craterDepth(30, [100, 40]), 9);
-  expect(groundHeight(0, [100])).toBeCloseTo(-100, 9);
+  expect(groundHeight(0, [100])).toBe(0); // 主人公の柱の上
+  expect(groundHeight(60, [100])).toBeCloseTo(-80, 9);
   const F = 100, L = CRATER_LIP.height * F + 0.5, W = CRATER_LIP.width * F + 3;
   expect(groundHeight(F + W, [F])).toBeCloseTo(L, 9); // 縁の外の一番高いところ
   expect(groundHeight(F + 1, [F])).toBeGreaterThan(0);
   expect(groundHeight(F + 40 * W, [F])).toBeLessThan(0.01);
   expect(SPHERE_DEFORM_GLSL).toContain('float groundHeight(float r)');
+});
+
+// GLSL の craterDepth / groundHeight をそのまま JS に直して動かし、JS の式と同じ値になることを確かめる
+function glslGround(fronts) {
+  const out = new Float32Array(MAX_FRONTS);
+  const count = packFronts(fronts, out);
+  const pick = (name) => {
+    const start = SPHERE_DEFORM_GLSL.indexOf(`float ${name}(float r) {`);
+    let depth = 0, i = SPHERE_DEFORM_GLSL.indexOf('{', start);
+    for (; i < SPHERE_DEFORM_GLSL.length; i++) {
+      if (SPHERE_DEFORM_GLSL[i] === '{') depth++;
+      if (SPHERE_DEFORM_GLSL[i] === '}' && --depth === 0) break;
+    }
+    return SPHERE_DEFORM_GLSL.slice(start, i + 1);
+  };
+  const src = [pick('craterDepth'), pick('groundHeight')].join('\n')
+    .replace(/float (\w+)\(float r\)/g, 'function $1(r)')
+    .replace(/\b(float|int) /g, 'let ')
+    .replace(/(?<!\.)\b(abs|sqrt|max|exp)\(/g, 'Math.$1(');
+  return new Function('uFronts', 'uFrontCount', `${src}\nreturn { craterDepth, groundHeight };`)(Array.from(out), count);
+}
+
+test('地面のシェーダーの式（GLSL）を動かすと、JS の craterDepth / groundHeight と同じ値になる（柱・穴・縁）', () => {
+  for (const fronts of [[100], [440, 60], [12], [200, 200, 30, 5]]) {
+    const g = glslGround(fronts);
+    const F = Math.max(...fronts);
+    for (const r of [0, 2, 3.999, 4, 4.3, 4.999, 5, 5.5, 30, F * 0.5, F - 0.01, F, F + 2, F * 1.2, F * 3]) {
+      const tol = 1e-3 * Math.max(1, F); // uFronts は Float32
+      expect(g.craterDepth(r)).toBeCloseTo(craterDepth(r, fronts), 1);
+      expect(Math.abs(g.groundHeight(r) - groundHeight(r, fronts))).toBeLessThan(tol);
+    }
+  }
+  expect(glslGround([]).groundHeight(10)).toBe(0);
 });

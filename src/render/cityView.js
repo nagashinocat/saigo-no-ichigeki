@@ -3,7 +3,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { createRng } from '../rng.js';
 import { GRID } from '../world/cityGen.js';
 import { CONFIG } from '../config.js';
-import { packFronts } from './sphereDeform.js';
+import { packFronts, PILLAR } from './sphereDeform.js';
 
 // 街の見た目: 地面、ビル（種類ごとに InstancedMesh）、屋上の設備、道路沿いの車・街灯・看板。
 // 壊れたビルや props は、インスタンスの拡大率を0にして隠す。
@@ -20,12 +20,19 @@ const BUILDING_SEGMENTS = { high: [4, 14, 4], mid: [3, 10, 3], low: [2, 6, 2] };
 const GROUND_RINGS = { high: [190, 320], mid: [140, 240], low: [90, 160] };
 const GROUND_FINE_R = CONFIG.cityRadius + 150;
 const GROUND_FAR_R = 8000, GROUND_FAR_RINGS = 30;
+// 主人公の柱の角を作る輪: 柱の上の縁・側面の上端・側面の下端・穴の底（側面の法線を上と底から分ける）
+const EDGE = 0.02;
+export const PILLAR_RINGS = [PILLAR.radius, PILLAR.radius + EDGE, PILLAR.radius + PILLAR.wall - EDGE, PILLAR.radius + PILLAR.wall];
 
 function radialGround(tier) {
   const [rings, seg] = GROUND_RINGS[tier] ?? GROUND_RINGS.mid;
   const step = GROUND_FINE_R / rings;
-  const radii = [];
-  for (let i = 1; i <= rings; i++) radii.push(i * step);
+  const radii = [...PILLAR_RINGS];
+  for (let i = 1; i <= rings; i++) {
+    const r = i * step;
+    if (PILLAR_RINGS.every((p) => Math.abs(p - r) > 0.1)) radii.push(r); // 柱の輪に近すぎる輪は省く
+  }
+  radii.sort((a, b) => a - b);
   for (let i = 1; i <= GROUND_FAR_RINGS; i++) radii.push(GROUND_FINE_R * (GROUND_FAR_R / GROUND_FINE_R) ** (i / GROUND_FAR_RINGS));
   const pos = new Float32Array((1 + radii.length * seg) * 3);
   let k = 3;
@@ -78,6 +85,8 @@ function roadInfo(x, z) {
   const alongZ = Math.abs(ox) <= ROAD / 2 + 0.01 && Math.abs(ox) <= Math.abs(oz);
   return alongZ ? { alongZ: true, offset: ox, center: x - ox } : { alongZ: false, offset: oz, center: z - oz };
 }
+
+export { radialGround };
 
 export function createCityView(city, style, tier) {
   const group = new THREE.Group();

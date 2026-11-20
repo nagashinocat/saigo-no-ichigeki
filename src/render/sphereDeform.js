@@ -1,6 +1,6 @@
 // 爆発の球（中心は原点）に沿って街をゆがめる式。JS の基準実装と、同じ式のシェーダー（GLSL）。
 // - deformPoint: 球の内側に入った点を、中心からの向きを保ったまま球の表面へ押し出す（ビルが球の壁に押し付けられて曲がる）
-// - craterDepth: 地面の水平距離 r の点が、球の形にえぐれる深さ
+// - craterDepth: 地面の水平距離 r の点が、球の形にえぐれる深さ（主人公の足元 PILLAR.radius の内側は柱として元の高さに残る）
 // - crushPoint: つぶれていく途中（k: 0→1）。高さを押しつぶしてから deformPoint をかける
 // fronts は球の半径の一覧。球はどれも原点が中心なので、点を含む球のうち一番大きなものが効く。
 
@@ -22,22 +22,27 @@ export function deformPoint(p, fronts) {
   return [p[0] * k, p[1] * k, p[2] * k];
 }
 
+// 主人公の足元の柱: 半径 radius の内側は元の地面の高さ（y=0）のまま残る。側面は水平に wall m で穴の深さまで下がる
+export const PILLAR = { radius: 4, wall: 1 };
+
 export function craterDepth(r, fronts) {
+  const a = Math.abs(r);
+  if (a < PILLAR.radius) return 0;
   const rr = r * r;
   let best = 0;
-  for (const f of fronts) if (Math.abs(r) < f) best = Math.max(best, Math.sqrt(f * f - rr));
+  for (const f of fronts) if (a < f) best = Math.max(best, Math.sqrt(f * f - rr));
+  if (a < PILLAR.radius + PILLAR.wall) best *= (a - PILLAR.radius) / PILLAR.wall;
   return best;
 }
 
-// 地面の高さ（地面のシェーダーと同じ式）。穴の中は craterDepth だけ下がり、最大の球の縁の外は少し盛り上がる。
+// 地面の高さ（地面のシェーダーと同じ式）。最大の球の内側は穴で craterDepth だけ下がり（柱の上は 0）、縁の外は少し盛り上がる。
 // 軍勢や主人公をえぐれた地面の上に立たせるために使う。
 export const CRATER_LIP = { height: 0.022, width: 0.045 }; // 縁の盛り上がり（球の半径に対する割合）
 export function groundHeight(r, fronts) {
   let F = 0;
   for (const f of fronts) if (f > F) F = f;
   if (F <= 0) return 0;
-  const d = craterDepth(r, fronts);
-  if (d > 0) return -d;
+  if (Math.abs(r) < F) return 0 - craterDepth(r, fronts); // 柱の上は +0
   const L = CRATER_LIP.height * F + 0.5, W = CRATER_LIP.width * F + 3;
   const x = (Math.abs(r) - F) / W;
   return L * x * Math.exp(1 - x);
@@ -84,6 +89,7 @@ export function createFrontTracker() {
 }
 
 const CRATER_LIP_GLSL = { h: CRATER_LIP.height.toFixed(4), w: CRATER_LIP.width.toFixed(4) };
+const PILLAR_GLSL = { r: PILLAR.radius.toFixed(4), foot: (PILLAR.radius + PILLAR.wall).toFixed(4), wall: PILLAR.wall.toFixed(4) };
 
 // 上と同じ式の GLSL。uniform: uFronts[4], uFrontCount
 export const SPHERE_DEFORM_GLSL = /* glsl */`
@@ -105,20 +111,22 @@ vec3 deformPoint(vec3 p) {
   return p * (F / d);
 }
 float craterDepth(float r) {
+  float a = abs(r);
+  if (a < ${PILLAR_GLSL.r}) return 0.0;
   float best = 0.0;
   for (int i = 0; i < ${MAX_FRONTS}; i++) {
     if (i >= uFrontCount) break;
     float f = uFronts[i];
     if (abs(r) < f) best = max(best, sqrt(f * f - r * r));
   }
+  if (a < ${PILLAR_GLSL.foot}) best *= (a - ${PILLAR_GLSL.r}) / ${PILLAR_GLSL.wall};
   return best;
 }
 // uFronts[0] は最大の球（packFronts が大きい順に詰める）
 float groundHeight(float r) {
   if (uFrontCount <= 0) return 0.0;
-  float d = craterDepth(r);
-  if (d > 0.0) return -d;
   float F = uFronts[0];
+  if (abs(r) < F) return -craterDepth(r);
   float L = ${CRATER_LIP_GLSL.h} * F + 0.5, W = ${CRATER_LIP_GLSL.w} * F + 3.0;
   float x = (abs(r) - F) / W;
   return L * x * exp(1.0 - x);

@@ -1,8 +1,12 @@
 import { createRng } from '../rng.js';
 import { fractureBox } from './fracture.js';
-import { createDebrisPool, pushVelocity, crushVelocity } from './debris.js';
+import { createDebrisPool, pushVelocity, crushVelocity, slumpVelocity } from './debris.js';
 import { createNearPhysics } from './nearPhysics.js';
+import { createRubble } from './rubble.js';
 import { crushPoint } from '../render/sphereDeform.js';
+import { TIERS } from '../render/quality.js';
+
+const TIER_RUBBLE_MAX = Object.fromEntries(Object.entries(TIERS).map(([k, t]) => [k, t.rubbleMax]));
 
 const NEAR_RANGE = 60; // 焦点からこの距離以内の破片だけ物理で動かす
 const PROP_CHUNKS = [2, 4];
@@ -10,13 +14,24 @@ const CRUSH_DELAY = [0.3, 0.6]; // s。球の表面が通ってから、つぶ�
 const CHIP_RATIO = 0.75;        // 割った破片の数に対する、足す小さい破片の割合
 const CHIP_SIZE = [0.4, 1.6];   // m
 const CRUSH_DUST = [3, 5];      // つぶれた瞬間に根元から上がる土煙の数
+const BIG_MAX = 28;             // m。建物ごとに残す大きな塊（建物の幅の半分ほど・階の厚みの板）の一辺の上限
+const SLUMP_FRAC = 0.55;        // 穴があるとき、押しつぶされたビルの破片のうち穴の中へ崩れ落ちる割合
+// 瓦礫は土ぼこりをかぶって白っぽくなる（焼けた暗い岩肌の上で見えるように）
+const RUBBLE_TINT = 0.55, RUBBLE_DUST = [0.30, 0.27, 0.24];
+const bigChunks = (tier) => Math.max(1, Math.round(tier.piecesPerBuilding / 8)); // high 3 / mid 2 / low 1
 
 // 壊れたものを破片に変える。getTier は「今使っている画質」の設定（TIERS[tier]）を返す。
+// 穴の中で止まった破片と建物の大きな塊は瓦礫（rubble）として残す。瓦礫は止まったまま動かさない。
 export function createDestruction({ cityView, getTier, seed = 1 }) {
   const rng = createRng(seed ^ 0xdeb15);
   const initial = getTier();
   const pool = createDebrisPool(initial.debrisMax, rng);
   const near = createNearPhysics(initial.nearPhysicsMax, rng);
+  const rubble = createRubble(Math.max(...Object.values(TIER_RUBBLE_MAX), initial.rubbleMax));
+  rubble.setLimit(initial.rubbleMax);
+  let pendingDust = [];
+  let rubbleLimit = initial.rubbleMax; // 上限を下げたときに消えた瓦礫（次の update で返す）
+  const settled = [];
   let focus = null;
   let time = 0;
   let hole = 0; // えぐれた地面の半径（今の球を含む）。手前の物理の地面は平らなので、この内側の破片はプールへ
@@ -34,15 +49,21 @@ export function createDestruction({ cityView, getTier, seed = 1 }) {
   }
 
   const shade = () => 0.8 + 0.3 * rng();
+  // 押しつぶされたビルの破片の初速: 縁のすぐ外まで穴があれば、半分ほどは穴の中へ崩れ落ちる（底や斜面の瓦礫になる）
+  const crushOrSlump = (p, frac = SLUMP_FRAC) => {
+    const c = pool.crater;
+    return c > 0 && Math.hypot(p[0], p[2]) <= c * 1.05 + 2 && rng() < frac ? slumpVelocity(p, rng) : crushVelocity(p, rng);
+  };
 
   return {
-    pool, near,
+    pool, near, rubble,
     setPhysicsFocus(pos) { focus = pos ? [pos[0], pos[1], pos[2]] : null; },
     // game の 'hit' を受ける
     onHit({ hit, target }) {
       const tier = getTier();
       pool.setLimit(tier.debrisMax);
       near.setBudget(tier.nearPhysicsMax);
+      if (tier.rubbleMax !== rubbleLimit) { rubbleLimit = tier.rubbleMax; pendingDust.push(...rubble.setLimit(rubbleLimit)); }
       const id = Number(hit.id.slice(1));
       const isBuilding = hit.id[0] === 'b';
       if (hit.kind === 'vaporize') { // 溶ける演出は Task 9
@@ -72,7 +93,15 @@ export function createDestruction({ cityView, getTier, seed = 1 }) {
     update(dt, fronts = []) {
       time += dt;
       hole = fronts.length ? Math.max(...fronts) : 0;
-      const dust = pool.update(dt);
+      const dust = pool.update(dt, settled);
+      if (pendingDust.length) { dust.push(...pendingDust); pendingDust = []; }
+      // 穴が広がって下の地面がなくなった瓦礫は消える。止まった破片を瓦礫として置く
+      dust.push(...rubble.sweep(pool.crater));
+      for (const p of settled) {
+        p.color = p.color.map((v, i) => v * RUBBLE_TINT + RUBBLE_DUST[i]);
+        rubble.add(p, dust);
+      }
+      settled.length = 0;
       for (let i = crushing.length - 1; i >= 0; i--) {
         if (crushing[i].at > time + 1e-9) continue;
         const c = crushing[i];
@@ -98,7 +127,7 @@ export function createDestruction({ cityView, getTier, seed = 1 }) {
       const center = at(cx, (ch.min[1] + ch.max[1]) / 2, cz);
       dims[1] = Math.max(0.5, Math.min(dims[1], Math.hypot(top[0] - bottom[0], top[1] - bottom[1], top[2] - bottom[2])));
       const k = shade();
-      emit(center, dims, crushVelocity(center, rng), [color[0] * k, color[1] * k, color[2] * k]);
+      emit(center, dims, crushOrSlump(center), [color[0] * k, color[1] * k, color[2] * k]);
     }
     // 小さい破片（壁のかけら）を表面のあちこちから
     const chips = Math.round(tier.piecesPerBuilding * CHIP_RATIO);
@@ -106,7 +135,20 @@ export function createDestruction({ cityView, getTier, seed = 1 }) {
       const s = CHIP_SIZE[0] + (CHIP_SIZE[1] - CHIP_SIZE[0]) * rng();
       const p = at((rng() - 0.5) * target.w, rng() * target.h, (rng() - 0.5) * target.d);
       const k = shade() * 0.9;
-      pool.spawn({ pos: p, vel: crushVelocity(p, rng), size: s, dims: [s, s * (0.5 + 0.7 * rng()), s * (0.6 + 0.6 * rng())], color: [color[0] * k, color[1] * k, color[2] * k] });
+      pool.spawn({ pos: p, vel: crushOrSlump(p), size: s, dims: [s, s * (0.5 + 0.7 * rng()), s * (0.6 + 0.6 * rng())], color: [color[0] * k, color[1] * k, color[2] * k] });
+    }
+    // 大きな塊: 瓦礫として残す（keep）。重いのでゆっくり崩れ落ちる
+    const big = bigChunks(tier);
+    for (let i = 0; i < big; i++) {
+      const dims = [
+        Math.min(BIG_MAX, target.w * (0.45 + 0.25 * rng())),
+        Math.min(BIG_MAX * 0.5, Math.max(2, target.h * (0.08 + 0.1 * rng()))),
+        Math.min(BIG_MAX, target.d * (0.45 + 0.25 * rng())),
+      ];
+      const p = at((rng() - 0.5) * target.w * 0.4, rng() * target.h * 0.3, (rng() - 0.5) * target.d * 0.4);
+      const v = crushOrSlump(p, 0.8).map((x) => x * 0.6);
+      const k = shade() * 0.85;
+      pool.spawn({ pos: p, vel: v, size: Math.max(...dims), dims, color: [color[0] * k, color[1] * k, color[2] * k], keep: true });
     }
     // 根元から土煙
     const n = CRUSH_DUST[0] + Math.floor(rng() * (CRUSH_DUST[1] - CRUSH_DUST[0] + 1));

@@ -12,9 +12,9 @@ test('PC は high、スマホは mid、メモリ4GB未満のスマホは low', (
 });
 
 test('TIERS の値と nextTier', () => {
-  expect(TIERS.high).toEqual({ pixelRatioMax: 2, debrisMax: 6000, nearPhysicsMax: 400, piecesPerBuilding: 24, dustMax: 3000, bloom: true, heatHaze: true, shadows: true });
-  expect(TIERS.mid).toEqual({ pixelRatioMax: 1.5, debrisMax: 2500, nearPhysicsMax: 120, piecesPerBuilding: 12, dustMax: 1200, bloom: true, heatHaze: false, shadows: false });
-  expect(TIERS.low).toEqual({ pixelRatioMax: 1, debrisMax: 800, nearPhysicsMax: 40, piecesPerBuilding: 6, dustMax: 400, bloom: false, heatHaze: false, shadows: false });
+  expect(TIERS.high).toEqual({ pixelRatioMax: 2, debrisMax: 6000, nearPhysicsMax: 400, piecesPerBuilding: 24, dustMax: 3000, rubbleMax: 3000, bloom: true, heatHaze: true, shadows: true });
+  expect(TIERS.mid).toEqual({ pixelRatioMax: 1.5, debrisMax: 2500, nearPhysicsMax: 120, piecesPerBuilding: 12, dustMax: 1200, rubbleMax: 1500, bloom: true, heatHaze: false, shadows: false });
+  expect(TIERS.low).toEqual({ pixelRatioMax: 1, debrisMax: 800, nearPhysicsMax: 40, piecesPerBuilding: 6, dustMax: 400, rubbleMax: 600, bloom: false, heatHaze: false, shadows: false });
   expect(nextTier('high')).toBe('mid');
   expect(nextTier('mid')).toBe('low');
   expect(nextTier('low')).toBe('low');
