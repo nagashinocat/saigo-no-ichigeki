@@ -15,7 +15,7 @@ const MAX_DT = 0.1;
 //        → 'finale'（最後の一発が街を壊していく） → 'over'（'released': その一発の破壊額 / 'blackhole': 時間切れまで放たなかった）
 export function createGame({ seed, cfg = CONFIG }) {
   const city = generateCity(seed, cfg);
-  const enemies = createEnemies(createRng(seed + 1), cfg);
+  const enemies = createEnemies(createRng(seed + 1), cfg, { buildings: city.buildings });
   const power = createPower(cfg.power);
   const charge = createCharge(power, cfg);
   const timer = createTimer(cfg.roundSeconds);

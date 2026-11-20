@@ -11,9 +11,22 @@ export const CONFIG = {
   // fadeSec: 前線が届いてから球が消えるまで（上空カメラが全体の構図で球を見せる間）
   blast:   { creepSec: 0.8, creepMin: 0.25, creepFrac: 0.06, burstSec: 1.6, burstMin: 0.2, vaporizeRatio: 0.18, fadeSec: 1.5 },
   cinematic: { freezeSec: 1.4, eyeBeatSec: 0.6 },
-  // 湧く速さは spawnPerSec から、rampSec 秒で spawnRamp 倍へ一直線に増える。掴んだ一人ごとに貯めた力が drainPerSec ずつ減る
-  // spawnDist は近い上空カメラの画面の端のすぐ外〜少し内（縦画面）。浮遊バイクは掴む手前の slowDist m で slowMin 倍まで速度を落とす。
-  // 主人公に届くまでの秒（約 10.7〜14 秒）は前とほぼ同じになるよう speed を合わせた
-  enemy:   { spawnPerSec: 0.8, spawnRamp: 3.5, rampSec: 60, spawnDist: [50, 66], speed: 4.9, slowDist: 10, slowMin: 0.45, grabRange: 2.5, drainPerSec: 1, maxGrabbing: 6 },
+  // 湧く速さは spawnPerSec から、rampSec 秒で spawnRamp 倍へ一直線に増える。掴んだ一人ごとに貯めた力が drainPerSec ずつ減る。
+  // 浮遊バイクは spawnDist（近い上空カメラの画面の端のすぐ外〜少し内）の道路に湧き、道路に沿って searchSpeed m/s で探し回る
+  // （交差点で曲がる。主人公に近づく向きは inwardBias 倍の重みで選ぶ。roamDist の外へは出ない。laneSpread: 道の中心線からのずれ）。
+  // spotDist の内側で建物にさえぎられずに見えたら（spotEvery 秒ごとに確かめる。sightMargin: 建物の足元を広げる）見つけ、
+  // 急に止まって spotPause 秒にらみ（見つけた一拍）、speed m/s へ chaseAccel で上げて一直線に近づく
+  // （掴む手前の slowDist m で slowMin 倍まで減速、grabRange で掴む。枠が埋まっていれば queueDist で待つ）。
+  // 探して alertAfter 秒たつか、毎秒 alertRate の確率で（湧いたときに alertAtSpawn の確率で）気配を感じ、主人公に近づく道だけを選ぶ。
+  // turnRate / chaseTurnRate: 曲がる速さ（rad/s）、lookAhead: 道の中心線からのずれをこの m 先で戻す、snapDist の内側では主人公へまっすぐ向く。accel / brake: m/s²。
+  // 釣り合い（scripts/balance-sim.mjs）: 届くまでの秒は平均 12 秒（前と同じ）で、探し回る分だけ長い者もいる。spotDist を払う半径（22m）の
+  // 少し外にしたので、払ったあと次に掴まれるまでの間が前と同じほどになり、最善の操作で満タンになる時刻も前（約 50 秒）とほぼ同じ
+  enemy:   {
+    spawnPerSec: 0.8, spawnRamp: 3.5, rampSec: 60, drainPerSec: 1, maxGrabbing: 6,
+    spawnDist: [50, 66], roamDist: 75, laneSpread: 1.6,
+    searchSpeed: 16, inwardBias: 0.8, turnRate: 7, lookAhead: 3, accel: 14, brake: 24,
+    spotDist: 26, spotEvery: 0.15, sightMargin: 0.8, alertAfter: 12, alertRate: 0.05, alertAtSpawn: 0.1,
+    spotPause: 1, speed: 9, chaseAccel: 5, chaseTurnRate: 5, snapDist: 6, slowDist: 12, slowMin: 0.35, grabRange: 2.5, queueDist: 3.75,
+  },
   score:   { comboStep: 0.1, comboMax: 3 },
 };

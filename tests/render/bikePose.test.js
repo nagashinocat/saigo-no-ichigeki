@@ -1,5 +1,6 @@
 import { test, expect } from 'vitest';
-import { bikePose, BIKE } from '../../src/render/bikePose.js';
+import { bikePose, BIKE, anchorFor } from '../../src/render/bikePose.js';
+import { ENEMY_LOOK } from '../../src/render/enemyView.js';
 import { groundHeight } from '../../src/render/sphereDeform.js';
 import { CONFIG } from '../../src/config.js';
 
@@ -59,16 +60,18 @@ test('掴む: バイクは主人公の横（水平 clingRadius）に y≈0 で�
   }
 });
 
-test('近づく → 掴むは切れ目なくつながる: 最後の数 m で横を向いて主人公のまわりの輪で待ち、掴んだら grabSettle 秒で横へ寄る', () => {
+test('近づく → 掴むは切れ目なくつながる: 最後の数 m で横を向き、掴んだら grabSettle 秒で横へ寄る。枠が埋まっていれば queueDist の輪で待つ', () => {
   for (const id of ids) {
     const a = bikePose(rider(id, E.grabRange), [], 3);
     const g0 = bikePose(rider(id, E.grabRange, 'grab', { grabTime: 0 }), [], 3);
     expect(Math.hypot(a.x - g0.x, a.y - g0.y, a.z - g0.z)).toBeLessThan(1e-9);
     expect(angDiff(a.yaw, g0.yaw)).toBeLessThan(1e-9);
-    // 待つ輪は、掴む者の外（重なりにくい）。高さは主人公の近く
-    expect(Math.hypot(a.x, a.z)).toBeCloseTo(BIKE.clingRadius + BIKE.queueGap, 6);
-    expect(a.y).toBeGreaterThanOrEqual(BIKE.queueY[0] - BIKE.bob);
-    expect(a.y).toBeLessThanOrEqual(BIKE.queueY[1] + BIKE.bob);
+    // 待つ者は判定の距離 queueDist のところ（掴む者の外。重なりにくい）。高さは主人公の近く
+    const w = bikePose(rider(id, E.queueDist), [], 3);
+    expect(Math.hypot(w.x, w.z)).toBeCloseTo(E.queueDist, 6);
+    expect(E.queueDist).toBeGreaterThan(BIKE.clingRadius + 2);
+    expect(w.y).toBeGreaterThanOrEqual(BIKE.queueY[0] - BIKE.bob - 0.3);
+    expect(w.y).toBeLessThanOrEqual(BIKE.queueY[1] + BIKE.bob + 0.3);
     // 寄っていく間、主人公へ近づき続ける
     let prev = Infinity;
     for (let t = 0; t <= BIKE.grabSettle + 0.05; t += 0.05) {
@@ -78,22 +81,55 @@ test('近づく → 掴むは切れ目なくつながる: 最後の数 m で横�
       prev = r;
     }
     expect(prev).toBeCloseTo(BIKE.clingRadius, 6);
-    // 近づく間も、見た目の半径は判定の距離とともに減り続ける（戻らない）
-    let pr = Infinity;
-    for (let d = 20; d >= E.grabRange; d -= 0.1) {
-      const q = bikePose(rider(id, d), [], 3);
-      const r = Math.hypot(q.x, q.z);
-      expect(r).toBeLessThan(pr);
-      pr = r;
-    }
-    // 遠くでは主人公の方を向く
+    // 遠くでは進む向き（heading がないときは主人公の方）を向く
     const far = bikePose(rider(id, 40), [], 3);
     const fwd = [Math.sin(far.yaw), Math.cos(far.yaw)];
     const toHero = [-far.x / 40, -far.z / 40];
     expect(fwd[0] * toHero[0] + fwd[1] * toHero[1]).toBeGreaterThan(0.999);
     expect(far.reach).toBe(0);
     expect(far.anchor).toBe(0);
+    const h = 0.4 + id;
+    const along = bikePose({ ...rider(id, 40), heading: h }, [], 3);
+    expect(Math.sin(along.yaw)).toBeCloseTo(Math.cos(h), 9);
+    expect(Math.cos(along.yaw)).toBeCloseTo(Math.sin(h), 9);
   }
+});
+
+test('位置は x, z のまま（道路を飛ぶ者）。曲がるときは内へ傾く', () => {
+  const e = { id: 3, x: 13, z: -30, dist: Math.hypot(13, 30), angle: Math.atan2(-30, 13), state: 'search', heading: Math.PI / 2, turn: 0 };
+  const p = bikePose(e, [], 1);
+  expect(p.x).toBe(13);
+  expect(p.z).toBe(-30);
+  const right = bikePose({ ...e, turn: 6 }, [], 1), left = bikePose({ ...e, turn: -6 }, [], 1);
+  expect(right.roll - p.roll).toBeGreaterThan(0.2);   // 右へ曲がる（heading が増える）→ 右（-x）へ傾く
+  expect(left.roll - p.roll).toBeLessThan(-0.2);
+  expect(Math.abs(bikePose({ ...e, turn: 1e3 }, [], 1).roll - p.roll)).toBeLessThanOrEqual(BIKE.bankMax + 1e-9);
+});
+
+// 描かれる位置（enemyView の頂点シェーダーと同じ: 中心を anchor だけ主人公へ寄せて boost 倍に大きく描く）
+const drawnR = (p, boost) => { const r = Math.hypot(p.x, p.z); return r + (boost - 1) * p.anchor * r; };
+
+test('近くまで来たバイクが一瞬離れて見えない: どの大きさで描いても、近づく → 掴む → 横へ寄るの間、描かれる位置は主人公へ近づき続ける', () => {
+  for (const boost of [1, 1.5, 2, 2.5, ENEMY_LOOK.maxBoost]) {
+    for (const id of [1, 7, 23]) {
+      let prev = Infinity;
+      for (let d = 30; d >= E.grabRange; d -= 0.05) {
+        const r = drawnR(bikePose(rider(id, Math.max(d, E.grabRange)), [], 2), boost);
+        expect(r).toBeLessThanOrEqual(prev + 1e-9);
+        prev = r;
+      }
+      for (let t = 0; t <= BIKE.grabSettle + 0.1; t += 0.02) {
+        const r = drawnR(bikePose(rider(id, E.grabRange, 'grab', { grabTime: t }), [], 2), boost);
+        expect(r).toBeLessThanOrEqual(prev + 1e-9);
+        prev = r;
+      }
+    }
+  }
+  // 主人公の横では主人公を中心に、遠くでは自分の足元を中心に大きく描く
+  expect(anchorFor(BIKE.clingRadius)).toBe(1);
+  expect(anchorFor(0.5)).toBe(1);
+  expect(anchorFor(BIKE.anchorFar)).toBe(0);
+  expect(anchorFor(40)).toBe(0);
 });
 
 test('倒れる: バイクごと外へ吹き飛び、上がってから落ち、deadFling 秒で消える', () => {
