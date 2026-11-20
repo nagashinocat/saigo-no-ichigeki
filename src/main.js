@@ -1,7 +1,10 @@
 import * as THREE from 'three';
 import { createGame } from './game/game.js';
 import { TIERS, pickTier, nextTier, createFpsGovernor } from './render/quality.js';
-import { createViews, createHandScene } from './render/views.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { createViews } from './render/views.js';
+import { createHandView } from './render/handView.js';
+import { CONFIG } from './config.js';
 import { createStyle } from './render/style.js';
 import { createCityView } from './render/cityView.js';
 import { createDestruction } from './world/destruction.js';
@@ -35,11 +38,20 @@ const cityView = createCityView(game.city, style, tier);
 
 const cityScene = new THREE.Scene();
 cityScene.add(style.sky, ...style.lights, cityView.group);
-const hand = createHandScene();
+// 手のモデル（読めなくても遊べるよう、そのときは球だけを描く）
+const handGltf = await new GLTFLoader().loadAsync(`${import.meta.env.BASE_URL}models/hand-right.glb`).catch((e) => {
+  console.warn('hand model failed to load', e);
+  return null;
+});
+const hand = createHandView(handGltf, tier);
 
 const views = createViews(renderer, () => TIERS[tier]);
 // CSS で決まったキャンバスの実寸に合わせる（スマホのアドレスバーで 100vh がずれる問題を避ける）
-const resize = () => views.resize(canvas.clientWidth || window.innerWidth, canvas.clientHeight || window.innerHeight);
+const resize = () => {
+  views.resize(canvas.clientWidth || window.innerWidth, canvas.clientHeight || window.innerHeight);
+  const r = views.layout.hand;
+  hand.resize(r.w / Math.max(1, r.h));
+};
 window.addEventListener('resize', resize);
 window.addEventListener('orientationchange', resize);
 resize();
@@ -60,7 +72,7 @@ cityScene.add(debrisView.mesh);
 // 爆発の見た目（光の球・衝撃波・閃光・粉・光に溶ける建物）
 const explosionView = createExplosionView(cityScene, tier, { sunDir: style.sunDir, seed });
 explosionView.warmup(renderer, views.cityCamera);
-game.on('shot', (shot) => explosionView.begin(shot));
+game.on('shot', (shot) => { explosionView.begin(shot); hand.release(shot); });
 
 // 光に溶ける対象の見た目の箱（隠す前に色と位置を読む）
 function vaporTarget({ hit, target }) {
@@ -91,6 +103,9 @@ const pointScale = () => views.layout.city.h * renderer.getPixelRatio() / (2 * M
 // 地面のえぐれ（爆発が終わっても残る）と、今の球の半径。ビルのつぶれ・地面・破片が同じものを使う
 const fronts = createFrontTracker();
 
+// 撮影用に手の画面への入力を固定する（null で実際のゲームの値に戻す）
+let handInput = null;
+
 function simulate(dt) {
   game.update(dt);
   const blasts = game.blasts;
@@ -101,8 +116,10 @@ function simulate(dt) {
   explosionView.update(dt, blasts, views.cityCamera, pointScale(), fronts.crater);
   cityView.update(dt, { fronts: list, heat: explosionView.ground.heat, ember: explosionView.ground.ember });
   views.updateCamera(dt, explosionView.cameraInfo);
+  const h = handInput ?? { level: game.charge.level(), active: game.charge.active, reserve: game.reserve.value / CONFIG.reserve.max };
+  hand.update(dt, h.level, h.active, h.reserve);
 }
-const draw = () => views.render(cityScene, hand.scene, explosionView.screen);
+const draw = () => views.render(cityScene, hand.scene, explosionView.screen, hand.camera);
 
 let last = performance.now();
 let paused = false;
@@ -132,6 +149,10 @@ window.__debug = {
     return { simMs: (t1 - t0) / n, drawMs: performance.now() - t1 };
   },
   draw,
+  // 手の画面の入力を固定する: { level, active, reserve }（reserve は器の残りの割合 0〜1）。null で戻す
+  hand(input) { handInput = input ? { level: 0, active: false, reserve: 1, ...input } : null; },
+  // 手の画面だけに、放つ瞬間を起こす（shot = { amount, isBig }）
+  handRelease(shot) { hand.release(shot); },
   // 実際のフレームと同じく毎フレーム進めて描いたときの時間 (ms)。
   // js: simulate+draw の JS の時間, sim: そのうち simulate の時間, gpu: 前のフレームの描画が終わるのを待った時間。
   // gl.finish だけでは Chrome は描画の完了を待ち切らず、ソフトウェア描画の遅れが次のフレームの JS に混ざる。
@@ -161,3 +182,4 @@ window.__cityView = cityView;
 window.__destruction = destruction;
 window.__explosionView = explosionView;
 window.__views = views;
+window.__hand = hand;

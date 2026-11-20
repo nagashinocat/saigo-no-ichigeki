@@ -1,12 +1,16 @@
 // 使い方: node scripts/snap.mjs <url> <out.png> [--wait ms] [--press ms] [--size WxH]
 //   [--step] [--idle s] [--at s,s,...] [--from release|blast] [--perf frames] [--cpu rate]
+//   [--hand level[,reserve]] [--hand-release amount]
 // ヘッドレスの Chrome（ソフトウェア WebGL）でページを開き、待ってから（必要なら長押しして）撮影する。
 // --step: 実時間ではなく window.__debug.step で決まった dt ずつ進める（ヘッドレスは遅いので、爆発の瞬間を正確に撮る）。
 //   --idle 秒だけ待って器を満たし、--press ミリ秒貯めて離し、--at の各時刻（--from の時点からの秒）で撮る。
 //   out の {t} は時刻に置き換わる（例 shots/t9-max-{t}.png）。
 // --perf N: 離した後の N フレームを毎フレーム進めて描き、1フレームの JS の時間（ms）の平均・p95・最大と、GPU を待った時間を出す。
 // --cpu R: CDP の Emulation.setCPUThrottlingRate で CPU を R 倍遅くする。
+// --hand L[,R]: 手の画面の入力を、貯め L・器の残りの割合 R に固定する（--step と使う）。
+// --hand-release A: 手の画面だけに、量 A の一発を放つ瞬間を起こす。--at はその時点からの秒。
 import { chromium } from 'playwright';
+import { CONFIG } from '../src/config.js';
 
 function parseArgs(argv) {
   const pos = [], opt = { wait: 1500, press: 0, size: '1280x720', idle: 0, at: '', from: 'release', perf: 0, cpu: 1 };
@@ -23,7 +27,8 @@ function parseArgs(argv) {
   }
   const at = String(opt.at).split(',').filter(Boolean).map(Number);
   return { url: pos[0], out: pos[1], wait: Number(opt.wait), press: Number(opt.press), width: w, height: h,
-    step: !!opt.step, idle: Number(opt.idle), at, from: opt.from, perf: Number(opt.perf), cpu: Number(opt.cpu) };
+    step: !!opt.step, idle: Number(opt.idle), at, from: opt.from, perf: Number(opt.perf), cpu: Number(opt.cpu),
+    hand: opt.hand ? String(opt.hand).split(',').map(Number) : null, handRelease: opt['hand-release'] !== undefined ? Number(opt['hand-release']) : null };
 }
 
 const args = parseArgs(process.argv.slice(2));
@@ -60,6 +65,17 @@ async function stepped(page) {
       if (await page.evaluate(() => window.__game.blasts.length > 0)) break;
       await step(1 / 60);
     }
+  }
+  if (args.hand) {
+    const [level, reserve = 1] = args.hand;
+    await page.evaluate((h) => window.__debug.hand(h), { level, reserve, active: level > 0 });
+    await step(1.0); // 貯めの見た目が追いつくまで
+  }
+  if (args.handRelease !== null) {
+    await page.evaluate((a) => {
+      window.__debug.handRelease({ amount: a.amount, isBig: a.amount >= a.big });
+      window.__debug.hand({ level: 0, reserve: 0.6, active: false }); // 放ったあとは貯めが 0 に戻る
+    }, { amount: args.handRelease, big: CONFIG.charge.maxDraw * CONFIG.bigShotRatio });
   }
   const info = await page.evaluate(() => ({ phase: window.__game.phase, blasts: window.__game.blasts.map((b) => ({ r: +b.shot.radius.toFixed(1), front: +b.front.toFixed(1) })), tier: window.__tier }));
   console.log('released', JSON.stringify(info));

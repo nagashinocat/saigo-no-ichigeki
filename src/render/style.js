@@ -63,13 +63,13 @@ const FOG_VERTEX = /* glsl */`
 `;
 
 // 直接光を3段（影・中間・日なた）に量子化し、元のなめらかさを少しだけ混ぜる
-const TOON_RAMP = /* glsl */`
+export const TOON_RAMP = /* glsl */`
 float toonRamp(float x) {
   float s = 0.5 * smoothstep(0.03, 0.10, x) + 0.5 * smoothstep(0.38, 0.46, x);
   return mix(s, x, 0.15);
 }
 `;
-const TOON_LIGHTS = THREE.ShaderChunk.lights_physical_pars_fragment.replace(
+export const TOON_LIGHTS = THREE.ShaderChunk.lights_physical_pars_fragment.replace(
   'vec3 irradiance = dotNL * directLight.color;',
   'vec3 irradiance = toonRamp( dotNL ) * directLight.color;',
 );

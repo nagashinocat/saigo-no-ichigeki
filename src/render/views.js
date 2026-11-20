@@ -140,8 +140,8 @@ export function createViews(renderer, getTier = () => ({ bloom: false, heatHaze:
       cityCamera.quaternion.copy(baseQuat).multiply(_q.setFromEuler(_e));
       cityCamera.updateMatrixWorld();
     },
-    // fx は screenFx の効果（閃光・熱のゆがみ）。街の画面だけに掛ける。
-    render(cityScene, handScene, fx) {
+    // fx は screenFx の効果（閃光・熱のゆがみ）。街の画面だけに掛ける。handCam は手の画面のカメラ（手の場面が持つもの）。
+    render(cityScene, handScene, fx, handCam = handCamera) {
       renderer.setScissorTest(true);
       const { hud, city, hand } = layout;
       if (hud.w > 0 && hud.h > 0) {
@@ -155,50 +155,9 @@ export function createViews(renderer, getTier = () => ({ bloom: false, heatHaze:
       }
       if (hand.w > 0 && hand.h > 0) {
         setRect(hand);
-        renderer.render(handScene, handCamera);
+        renderer.render(handScene, handCam);
       }
       renderer.setScissorTest(false);
     },
   };
-}
-
-// 手の画面の場面。今は暗いグラデーションの背景と、仮の光る球だけ（本物の手は Task 10）。
-export function createHandScene() {
-  const scene = new THREE.Scene();
-  const bg = new THREE.Mesh(
-    new THREE.SphereGeometry(50, 24, 12),
-    new THREE.ShaderMaterial({
-      side: THREE.BackSide, depthWrite: false, fog: false,
-      vertexShader: 'varying vec3 vDir; void main(){ vDir = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
-      fragmentShader: `varying vec3 vDir;
-        void main(){
-          float t = clamp(vDir.y * 0.5 + 0.5, 0.0, 1.0);
-          vec3 c = mix(vec3(0.010, 0.008, 0.018), vec3(0.06, 0.05, 0.11), smoothstep(0.2, 0.9, t));
-          c += vec3(0.10, 0.04, 0.02) * pow(max(0.0, 1.0 - length(vDir.xy - vec2(0.0, -0.1)) * 1.4), 3.0);
-          gl_FragColor = vec4(c, 1.0);
-          #include <colorspace_fragment>
-        }`,
-    }),
-  );
-  bg.renderOrder = -1;
-  scene.add(bg);
-
-  const placeholder = new THREE.Group();
-  const core = new THREE.Mesh(new THREE.SphereGeometry(0.22, 32, 16), new THREE.MeshBasicMaterial({ color: 0xfff1d6 }));
-  const halo = new THREE.Mesh(
-    new THREE.PlaneGeometry(1.6, 1.6),
-    new THREE.ShaderMaterial({
-      transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
-      vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
-      fragmentShader: `varying vec2 vUv;
-        void main(){
-          float r = length(vUv - 0.5) * 2.0;
-          float a = pow(max(0.0, 1.0 - r), 2.5);
-          gl_FragColor = vec4(vec3(1.0, 0.55, 0.25) * a, a);
-        }`,
-    }),
-  );
-  placeholder.add(halo, core);
-  scene.add(placeholder);
-  return { scene, placeholder };
 }
