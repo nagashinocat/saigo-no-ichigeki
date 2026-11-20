@@ -22,6 +22,8 @@ import { createAudio } from './audio/audio.js';
 const MAX_FRAME_DT = 0.1;
 
 const params = new URLSearchParams(location.search);
+// 撮影・計測用のフック（window.__debug など）は URL に ?debug があるときだけ公開する
+const debugMode = params.has('debug');
 const seedParam = Number.parseInt(params.get('seed') ?? '', 10);
 const seed = Number.isFinite(seedParam) ? seedParam : Math.floor(Math.random() * 2 ** 31);
 const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || navigator.maxTouchPoints > 1 && matchMedia('(pointer: coarse)').matches;
@@ -148,7 +150,7 @@ function lowerTier() {
   const next = nextTier(tier);
   if (next === tier) return;
   tier = next;
-  window.__tier = tier;
+  if (debugMode) window.__tier = tier;
   applyPixelRatio();
   resize();
 }
@@ -224,7 +226,7 @@ function frame(now) {
 requestAnimationFrame(frame);
 
 // 撮影スクリプト用: 実時間を止め、決まった dt で進めてから描く（ヘッドレスは実時間より遅いため）
-window.__debug = {
+const debugHooks = {
   pause() { paused = true; },
   resume() { paused = false; last = performance.now(); },
   // sec 秒ぶん dt 刻みで進め、最後に1回描く。1フレームあたりの JS の時間（ms、描画は最後の1回）を返す
@@ -263,13 +265,16 @@ window.__debug = {
   },
 };
 
-// 撮影スクリプトや調査用
-window.__game = game;
-window.__tier = tier;
-window.__cityView = cityView;
-window.__destruction = destruction;
-window.__explosionView = explosionView;
-window.__views = views;
-window.__hand = hand;
-window.__enemyView = enemyView;
-window.__cinematic = cinematic;
+// 撮影スクリプトや調査用（?debug のときだけ）
+if (debugMode) {
+  window.__debug = debugHooks;
+  window.__game = game;
+  window.__tier = tier;
+  window.__cityView = cityView;
+  window.__destruction = destruction;
+  window.__explosionView = explosionView;
+  window.__views = views;
+  window.__hand = hand;
+  window.__enemyView = enemyView;
+  window.__cinematic = cinematic;
+}

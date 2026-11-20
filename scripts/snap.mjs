@@ -113,7 +113,10 @@ try {
     if (FATAL.test(m.text())) failed = true;
   });
   page.on('pageerror', (e) => { failed = true; console.error('[pageerror]', e.message); });
-  await page.goto(url, { waitUntil: 'load' });
+  // 撮影用フック（window.__debug など）は ?debug のときだけ公開されるので、必ず付ける
+  const u = new URL(url);
+  u.searchParams.set('debug', '');
+  await page.goto(u.toString(), { waitUntil: 'load' });
   await page.waitForTimeout(wait);
   if (args.step) {
     await stepped(page);
