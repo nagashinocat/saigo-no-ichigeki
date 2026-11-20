@@ -120,3 +120,19 @@ test('cameraInfo と screen は毎フレーム同じオブジェクトを書き�
   expect(view.screen).toBe(s);
   expect(c.front).toBeGreaterThan(0);
 });
+
+test('ground: heat は球の不透明さ、ember は球の間は満ちて、球が消えてからゆっくり冷える（えぐれた地面の熾火）', () => {
+  const { view } = make();
+  const list = [{ id: 1, shot: shot(100), front: 0 }];
+  run(view, list, 0.3);
+  expect(view.ground.heat).toBeCloseTo(1, 5);
+  expect(view.ground.ember).toBeCloseTo(1, 5);
+  run(view, list, 2.0); // 前線が届き、球が消える
+  expect(view.ground.heat).toBe(0);
+  const e1 = view.ground.ember;
+  expect(e1).toBeGreaterThan(0.2);
+  expect(e1).toBeLessThan(1);
+  run(view, list, 3.0);
+  expect(view.ground.ember).toBeLessThan(e1 * 0.5);
+  expect(view.ground.ember).toBeGreaterThan(0);
+});

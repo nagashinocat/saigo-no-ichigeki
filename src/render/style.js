@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { TIERS } from './quality.js';
 import { GRID } from '../world/cityGen.js';
 import { CONFIG } from '../config.js';
+import { SPHERE_DEFORM_GLSL, MAX_FRONTS } from './sphereDeform.js';
 
 // 作風「写実的なアニメ調」: 夕方の空、強い一方向の太陽、3段に量子化した陰影、空を映す窓、遠景は空の色へ溶ける。
 
@@ -85,6 +86,51 @@ function patchCommon(shader, uniforms) {
     .replace('#include <lights_physical_pars_fragment>', TOON_LIGHTS);
 }
 
+// 爆発の球に沿ったゆがみ（sphereDeform.js の式）を使うシェーダーへ、共有の uniform を渡す
+const DEFORM_UNIFORMS = ['uFronts', 'uFrontCount', 'uTime', 'uHeat', 'uEmber', 'uCrater', 'uRingStep'];
+function patchDeform(shader, uniforms) {
+  for (const k of DEFORM_UNIFORMS) shader.uniforms[k] = uniforms[k];
+}
+const DEFORM_VERT_PARS = SPHERE_DEFORM_GLSL + /* glsl */`
+uniform float uTime;
+attribute vec2 aCrush; // x: つぶれ始めた時刻, y: つぶれきるまでの秒（0 はつぶれていない）
+float dfHash(vec3 p) { p = fract(p * 0.1031); p += dot(p, p.zyx + 31.32); return fract((p.x + p.y) * p.z); }
+// 押し付けられた壁のしわ（なめらかな値ノイズ -0.5〜0.5）
+float dfWrinkle(vec3 p) {
+  vec3 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(mix(dfHash(i), dfHash(i + vec3(1, 0, 0)), f.x), mix(dfHash(i + vec3(0, 1, 0)), dfHash(i + vec3(1, 1, 0)), f.x), f.y),
+             mix(mix(dfHash(i + vec3(0, 0, 1)), dfHash(i + vec3(1, 0, 1)), f.x), mix(dfHash(i + vec3(0, 1, 1)), dfHash(i + vec3(1, 1, 1)), f.x), f.y), f.z) - 0.5;
+}
+`;
+
+// ビルの頂点を、球の内側に入ったら球の面へ押し出し（deformPoint）、当たったあとは高さを押しつぶす（crushPoint）。
+// transformed（箱のローカル座標）を書き換えるので、後に続く投影・影・霧の計算はそのまま使える。
+// withNormal: 押し付けられた面の向きを球の面の向きへ寄せる（陰影がある材質だけ）
+function buildingDeform(withNormal) {
+  return /* glsl */`
+#ifdef USE_INSTANCING
+{
+  vec3 dS = vec3(length(instanceMatrix[0].xyz), length(instanceMatrix[1].xyz), length(instanceMatrix[2].xyz));
+  vec3 w0 = (instanceMatrix * vec4(transformed, 1.0)).xyz;
+  float ck = aCrush.y > 0.0 ? clamp((uTime - aCrush.x) / aCrush.y, 0.0, 1.0) : 0.0;
+  vec3 sq = crushSquash(w0, ck);
+  vec3 w1 = deformPoint(sq);
+  float pushed = length(w1 - sq);
+  // 見た目だけ: 押し付けられた面は、光の球の表面の波打ち（±2%）より少し外に置き、球に埋もれないようにする。
+  // さらに、押し付けられた量とつぶれの進みに応じて、壁をしわくちゃにする
+  if (pushed > 0.0) {
+    float crumple = min(pushed, 10.0) * (0.45 + 0.5 * ck);
+    w1 *= 1.0 + 0.022 * smoothstep(0.0, 2.0, pushed) + crumple * dfWrinkle(w0 * 0.22) / max(length(w1), 1.0);
+    w1.y = max(w1.y + crumple * 0.5 * dfWrinkle(w0 * 0.3 + 7.0), 0.0);
+  }
+  if (dS.y > 1e-4 && (ck > 0.0 || pushed > 0.0)) transformed = (w1 - instanceMatrix[3].xyz) / dS;
+  ${withNormal ? `vPress = max(smoothstep(0.0, 3.0, pushed), ck * 0.6);
+  if (pushed > 0.0) vNormal = normalize(mix(vNormal, normalize((viewMatrix * vec4(normalize(w1), 0.0)).xyz), smoothstep(0.0, 3.0, pushed) * 0.8));` : ''}
+}
+#endif
+`;
+}
+
 // 種類ごとのファサード（窓の格子）の決め方。単位は m。
 const FACADE = {
   house: { bay: 3.4, floor: 2.9, ground: 0.8, corner: 0.9, top: 0.9, wx: 0.42, wy: 0.46, refl: 0.30, lit: 0.34, shop: 0.0, glass: [0.10, 0.11, 0.14] },
@@ -92,6 +138,7 @@ const FACADE = {
   tower: { bay: 1.7, floor: 3.9, ground: 6.0, corner: 0.8, top: 3.0, wx: 0.86, wy: 0.74, refl: 0.85, lit: 0.13, shop: 0.8, glass: [0.06, 0.12, 0.17] },
 };
 const f = (x) => Number(x).toFixed(4);
+const CRATER_LIP = { height: 0.022, width: 0.045 }; // 縁の盛り上がり（球の半径に対する割合）
 
 const BUILDING_VERTEX = /* glsl */`
 #include <begin_vertex>
@@ -103,6 +150,7 @@ const BUILDING_VERTEX = /* glsl */`
   #endif
   vSize = bS; vB = position * bS; vObjN = normal;
   vSeed = hash12(bO * 0.137 + 3.1);
+  vPress = 0.0;
 }
 `;
 
@@ -184,6 +232,10 @@ float glassM = 0.0; vec3 winEmis = vec3(0.0);
   roofC = mix(srgb(vec3(0.78, 0.74, 0.72)), roofC, smoothstep(0.45, 0.7, edge));
   diffuseColor.rgb = mix(diffuseColor.rgb, roofC, roof);
   glassM *= 1.0 - roof; winEmis *= 1.0 - roof;
+
+  // 球の面に押し付けられたところは焦げて暗く、球の熱で赤く光る
+  diffuseColor.rgb *= mix(1.0, 0.6, vPress);
+  winEmis = winEmis * (1.0 - 0.5 * vPress) + srgb(vec3(1.0, 0.42, 0.14)) * vPress * (0.08 + 0.45 * uHeat);
 }
 `;
 }
@@ -193,11 +245,12 @@ function makeBuildingMaterial(kind, uniforms) {
   const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.82, metalness: 0.0 });
   mat.onBeforeCompile = (shader) => {
     patchCommon(shader, uniforms);
+    patchDeform(shader, uniforms);
     shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', '#include <common>\nvarying vec3 vB; flat varying vec3 vSize; varying vec3 vObjN; flat varying float vSeed;\nfloat hash12(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }')
-      .replace('#include <begin_vertex>', BUILDING_VERTEX);
+      .replace('#include <common>', '#include <common>\nvarying vec3 vB; flat varying vec3 vSize; varying vec3 vObjN; flat varying float vSeed; varying float vPress;\nfloat hash12(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }\n' + DEFORM_VERT_PARS)
+      .replace('#include <begin_vertex>', BUILDING_VERTEX + buildingDeform(true));
     shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', '#include <common>\nvarying vec3 vB; flat varying vec3 vSize; varying vec3 vObjN; flat varying float vSeed;')
+      .replace('#include <common>', '#include <common>\nvarying vec3 vB; flat varying vec3 vSize; varying vec3 vObjN; flat varying float vSeed; varying float vPress;\nuniform float uHeat;')
       .replace('#include <color_fragment>', buildingFragment(p))
       .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = mix(roughnessFactor, 0.18, glassM);')
       .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += winEmis;');
@@ -206,15 +259,63 @@ function makeBuildingMaterial(kind, uniforms) {
   return mat;
 }
 
+// 影の地図へ描くときも、つぶれた形で描く
+function makeBuildingDepthMaterial(uniforms) {
+  const mat = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking });
+  mat.onBeforeCompile = (shader) => {
+    patchDeform(shader, uniforms);
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\n' + DEFORM_VERT_PARS)
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\n' + buildingDeform(false));
+  };
+  mat.customProgramCacheKey = () => 'building-depth';
+  return mat;
+}
+
+// 地面のえぐれ: 最大の球（uFronts[0]）の下半分の形に掘り下げ、縁の外に盛り上がりを作る。
+// 縁にいちばん近い輪の頂点を縁の上へ寄せて、縁がきれいな円になるようにする（uRingStep: 輪の間隔）。
+const GROUND_VERTEX = /* glsl */`
+vec3 gPos = position;
+vec3 objectNormal = vec3(0.0, 1.0, 0.0);
+if (uFrontCount > 0) {
+  float F = uFronts[0];
+  float r = length(gPos.xz);
+  if (abs(r - F) < uRingStep * 0.5 && r > 1e-3) { gPos.xz *= F / r; r = F; }
+  float d = craterDepth(r);
+  if (d > 0.0) {
+    gPos.y = -d;
+    objectNormal = normalize(-gPos); // 穴の面は球の中心を向く
+  } else {
+    float L = ${f(CRATER_LIP.height)} * F + 0.5, W = ${f(CRATER_LIP.width)} * F + 3.0;
+    float x = (r - F) / W, e = exp(1.0 - x);
+    gPos.y = L * x * e;
+    float slope = L / W * e * (1.0 - x);
+    vec2 rad = r > 1e-3 ? gPos.xz / r : vec2(0.0);
+    objectNormal = normalize(vec3(-slope * rad.x, 1.0, -slope * rad.y));
+  }
+}
+`;
+
 // 地面: 道路の格子（車道・歩道・中央線・横断歩道）、主人公の立つ広場、街の外は野原へ
-function makeGroundMaterial(uniforms) {
+function makeGroundMaterial(uniforms, detail) {
   const { BLOCK, PITCH } = GRID;
   const R = CONFIG.cityRadius, plaza = CONFIG.plazaRadius;
   const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.95, metalness: 0.0 });
   mat.onBeforeCompile = (shader) => {
     patchCommon(shader, uniforms);
-    shader.fragmentShader = shader.fragmentShader.replace('#include <color_fragment>', /* glsl */`
+    patchDeform(shader, uniforms);
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\n' + SPHERE_DEFORM_GLSL + 'uniform float uRingStep;')
+      .replace('#include <beginnormal_vertex>', GROUND_VERTEX)
+      .replace('#include <begin_vertex>', 'vec3 transformed = gPos;');
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', '#include <common>\nuniform float uCrater, uHeat, uEmber, uTime;')
+      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += groundEmis;')
+      .replace('applyFog(gl_FragColor.rgb, vFogW)', 'applyFog(gl_FragColor.rgb, cameraPosition + (vFogW - cameraPosition) * groundFogK)')
+      .replace('#include <color_fragment>', /* glsl */`
 #include <color_fragment>
+vec3 groundEmis = vec3(0.0);
+float groundFogK = 1.0; // 穴の中は霞を薄くして、深さと岩肌を見せる
 {
   vec2 p = vFogW.xz;
   float px = max(fwidth(p.x), fwidth(p.y));
@@ -255,11 +356,60 @@ function makeGroundMaterial(uniforms) {
   // 街の外: 野原と畑へ
   vec3 field = mix(srgb(vec3(0.36, 0.42, 0.26)), srgb(vec3(0.50, 0.46, 0.30)), step(0.55, vnoise(p * 0.012))) * mix(0.85, 1.05, vnoise(p * 0.08));
   c = mix(c, field, smoothstep(${f(R + 20)}, ${f(R + 70)}, r));
+
+  // 爆発のえぐれ（球の下半分の穴）: 焼けた岩肌、縁の外は掘り返された明るい土の盛り上がりと放射状の焦げ跡、
+  // 縁に明るい筋。球が光っている間は割れ目が溶けて光り、消えたあとは熾火になって冷える。
+  if (uCrater > 0.0) {
+    float F = uCrater, y = vFogW.y;
+    float ang = atan(p.y, p.x);
+    float inC = 1.0 - smoothstep(F - 0.3 - px, F - 0.05, r);
+    float dn = clamp(-y / F, 0.0, 1.0);
+    // 穴の面の模様は、球の面の向きで3つの平面から取って混ぜる（壁で模様が伸びないように）
+    vec3 tw = vFogW / F; tw *= tw; tw /= tw.x + tw.y + tw.z + 1e-4;
+    #define TRI(s, o) (vnoise(vFogW.xz * (s) + (o)) * tw.y + vnoise(vFogW.xy * (s) + (o)) * tw.z + vnoise(vFogW.zy * (s) + (o)) * tw.x)
+    vec2 cq = vFogW.xz;
+    #ifdef CRATER_DETAIL
+    float strata = vnoise(vec2(y * 0.045, ang * 2.0 + vnoise(p * 0.015) * 3.0));
+    float grain = TRI(0.11, 0.0);
+    #else
+    float strata = 0.5 + 0.5 * sin(y * 0.14);
+    float grain = 0.5;
+    #endif
+    vec3 rock = mix(srgb(vec3(0.56, 0.43, 0.35)), srgb(vec3(0.30, 0.23, 0.23)), smoothstep(0.0, 0.7, dn));
+    rock *= mix(0.82, 1.08, smoothstep(0.35, 0.65, strata)) * mix(0.88, 1.06, grain);
+    float W = ${f(CRATER_LIP.width)} * F + 3.0;
+    float xo = max(r - F, 0.0);
+    float rays = smoothstep(0.45, 0.8, vnoise(vec2(ang * 14.0, 3.0)) * 0.7 + vnoise(vec2(ang * 45.0, 7.0)) * 0.3);
+    float ejecta = (1.0 - smoothstep(0.0, F * (0.06 + 0.28 * rays), xo)) * (1.0 - inC);
+    c = mix(c, srgb(vec3(0.22, 0.17, 0.16)), ejecta * 0.75);
+    c = mix(c, srgb(vec3(0.60, 0.49, 0.41)) * mix(0.9, 1.05, grain), (1.0 - smoothstep(W * 0.3, W * 1.3, xo)) * (1.0 - inC) * 0.8);
+    c = mix(c, rock, inC);
+    groundFogK = mix(1.0, 0.35, inC);
+    // 縁の明るい筋
+    float rw = max(0.7, F * 0.005) + px * 1.5;
+    float rim = 1.0 - smoothstep(0.0, rw, abs(r - F));
+    c = mix(c, srgb(vec3(1.0, 0.88, 0.74)), rim * 0.9);
+    groundEmis += srgb(vec3(1.0, 0.72, 0.48)) * rim * (0.3 + 1.4 * uHeat);
+    // 溶けた割れ目と熾火
+    #ifdef CRATER_DETAIL
+    float cr = abs(TRI(0.025, 0.0) - 0.5);
+    float crack = (1.0 - smoothstep(0.0, 0.03 + px * 0.01, cr)) * inC * smoothstep(0.03, 0.12, dn) * smoothstep(0.45, 0.65, TRI(0.006, 5.0));
+    float ember = smoothstep(0.78, 0.88, TRI(0.12, 11.0)) * inC;
+    #else
+    float crack = (1.0 - smoothstep(0.0, 0.03 + px * 0.01, abs(vnoise(cq * 0.025) - 0.5))) * inC * smoothstep(0.03, 0.12, dn);
+    float ember = smoothstep(0.78, 0.88, vnoise(cq * 0.12 + 11.0)) * inC;
+    #endif
+    float flick = 0.7 + 0.3 * sin(uTime * 3.0 + grain * 12.0);
+    groundEmis += srgb(vec3(1.0, 0.34, 0.07)) * (crack * (1.8 * uHeat + 0.8 * uEmber) + ember * uEmber * flick * 1.1);
+    // 球が光っている間は、穴の奥まで内側から照らされる
+    groundEmis += srgb(vec3(1.0, 0.52, 0.22)) * inC * uHeat * 0.3;
+  }
   diffuseColor.rgb = c;
 }
 `);
   };
-  mat.customProgramCacheKey = () => 'ground';
+  if (detail) mat.defines = { CRATER_DETAIL: '' };
+  mat.customProgramCacheKey = () => 'ground' + (detail ? '-detail' : '');
   return mat;
 }
 
@@ -282,17 +432,20 @@ function makeGlowMaterial(name, uniforms, params) {
 function makeOutlineMaterial(uniforms) {
   return new THREE.ShaderMaterial({
     side: THREE.BackSide,
-    uniforms: { uSunDir: uniforms.uSunDir, uWidth: { value: 0.0016 } },
+    uniforms: { uSunDir: uniforms.uSunDir, uWidth: { value: 0.0016 }, uFronts: uniforms.uFronts, uFrontCount: uniforms.uFrontCount, uTime: uniforms.uTime },
     vertexShader: /* glsl */`
       uniform float uWidth;
       varying vec3 vFogW;
+      ${DEFORM_VERT_PARS}
       void main() {
         vec3 s = vec3(1.0); vec3 o = vec3(0.0);
+        vec3 transformed = position;
+        ${buildingDeform(false)}
         #ifdef USE_INSTANCING
           s = vec3(length(instanceMatrix[0].xyz), length(instanceMatrix[1].xyz), length(instanceMatrix[2].xyz));
           o = instanceMatrix[3].xyz;
         #endif
-        vec4 wp = modelMatrix * vec4(o + position * s, 1.0);
+        vec4 wp = modelMatrix * vec4(o + transformed * s, 1.0);
         vec3 nAvg = normalize(sign(position - vec3(0.0, 0.5, 0.0)));
         float dist = length(cameraPosition - wp.xyz);
         wp.xyz += nAvg * min(dist * uWidth, 0.9) * step(1e-4, s.y);
@@ -311,25 +464,28 @@ function makeOutlineMaterial(uniforms) {
 
 // 影の地図を使わない画質向け: 建物の箱を太陽の方向へ地面に押しつぶして、平面の影を描く。
 // 重なりで二重に濃くならないよう、ステンシルで1画素1回にする。
-function makePlanarShadowMaterial() {
+function makePlanarShadowMaterial(uniforms) {
   return new THREE.ShaderMaterial({
     transparent: true, depthWrite: false,
     stencilWrite: true, stencilRef: 1, stencilFunc: THREE.NotEqualStencilFunc,
     stencilZPass: THREE.ReplaceStencilOp, stencilFail: THREE.KeepStencilOp, stencilZFail: THREE.KeepStencilOp,
     polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
-    uniforms: { uSun: { value: SUN_DIR.clone() } },
+    uniforms: { uSun: { value: SUN_DIR.clone() }, uFronts: uniforms.uFronts, uFrontCount: uniforms.uFrontCount, uTime: uniforms.uTime },
     vertexShader: /* glsl */`
       uniform vec3 uSun;
       varying float vFade;
+      ${DEFORM_VERT_PARS}
       void main() {
-        vec4 wp = vec4(position, 1.0);
+        vec3 transformed = position;
+        ${buildingDeform(false)}
+        vec4 wp = vec4(transformed, 1.0);
         #ifdef USE_INSTANCING
           wp = instanceMatrix * wp;
         #endif
         wp = modelMatrix * wp;
         wp.xz -= uSun.xz * (wp.y / uSun.y);
         vFade = 1.0 - smoothstep(600.0, 900.0, length(wp.xz));
-        wp.y = 0.03;
+        wp.y = 0.03 - craterDepth(length(wp.xz));
         gl_Position = projectionMatrix * viewMatrix * wp;
       }`,
     fragmentShader: /* glsl */`
@@ -388,7 +544,12 @@ const KIND_COLORS = {
 
 export function createStyle(tierName) {
   const tier = TIERS[tierName] ?? TIERS.mid;
-  const uniforms = { uSunDir: { value: SUN_DIR.clone() } };
+  const uniforms = {
+    uSunDir: { value: SUN_DIR.clone() },
+    // 爆発の球（cityView.update が毎フレーム書く）
+    uFronts: { value: new Float32Array(MAX_FRONTS) }, uFrontCount: { value: 0 }, uTime: { value: 0 },
+    uHeat: { value: 0 }, uEmber: { value: 0 }, uCrater: { value: 0 }, uRingStep: { value: 1 },
+  };
 
   const sun = new THREE.DirectionalLight(SUN_COLOR, 4.2);
   sun.position.copy(SUN_DIR).multiplyScalar(600);
@@ -412,12 +573,13 @@ export function createStyle(tierName) {
     uniforms,
     building,
     kindColors: KIND_COLORS,
-    ground: makeGroundMaterial(uniforms),
+    ground: makeGroundMaterial(uniforms, tierName !== 'low'),
     sky: makeSky(uniforms),
     lights: [sun, sun.target, fill],
     shadows: !!tier.shadows,
     outline: tier.shadows ? makeOutlineMaterial(uniforms) : null,
-    planarShadow: tier.shadows ? null : makePlanarShadowMaterial(),
+    planarShadow: tier.shadows ? null : makePlanarShadowMaterial(uniforms),
+    buildingDepth: tier.shadows ? makeBuildingDepthMaterial(uniforms) : null,
     props: {
       body: makeToonMaterial('car', uniforms, { color: 0xffffff, roughness: 0.35 }),
       metal: makeToonMaterial('metal', uniforms, { color: 0x4a4d57, roughness: 0.6 }),

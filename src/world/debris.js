@@ -10,23 +10,39 @@ export const DEBRIS = {
   maxRest: 1.2,             // s。地面で止まってからの時間
   horizontal: [25, 60],     // m/s
   upward: [8, 30],          // m/s
+  crushHorizontal: [8, 25], // m/s。球の線で押しつぶされたビルの破片（表面に沿ってゆっくり外へ流れる）
+  crushUpward: [2, 10],     // m/s
   explosionCenter: [0, 0],  // 爆心は常に主人公の位置
 };
 
 const clamp01 = (v) => Math.min(1, Math.max(0, v));
 
-// 破片の初速。中心から外向き（水平）と上向き。blastFront が大きい（大きな一発）ほど速くなりやすい。
-export function pushVelocity(chunkCenter, blastFront, rng) {
-  const dx = chunkCenter[0] - DEBRIS.explosionCenter[0], dz = chunkCenter[2] - DEBRIS.explosionCenter[1];
+// 中心から外向き（水平）の単位ベクトルを、少しばらした向きで返す
+function outward(c, rng) {
+  const dx = c[0] - DEBRIS.explosionCenter[0], dz = c[2] - DEBRIS.explosionCenter[1];
   const len = Math.hypot(dx, dz);
   let ux, uz;
   if (len < 1e-6) { const a = rng() * Math.PI * 2; ux = Math.cos(a); uz = Math.sin(a); } else { ux = dx / len; uz = dz / len; }
-  const spread = (rng() - 0.5) * 0.7; // 向きを少しばらす（ラジアン）
+  const spread = (rng() - 0.5) * 0.7; // ラジアン
   const cs = Math.cos(spread), sn = Math.sin(spread);
-  const dirX = ux * cs - uz * sn, dirZ = ux * sn + uz * cs;
+  return [ux * cs - uz * sn, ux * sn + uz * cs];
+}
+
+// 破片の初速。中心から外向き（水平）と上向き。blastFront が大きい（大きな一発）ほど速くなりやすい。
+export function pushVelocity(chunkCenter, blastFront, rng) {
+  const [dirX, dirZ] = outward(chunkCenter, rng);
   const t = clamp01(0.25 + 0.5 * (blastFront / 440) + (rng() - 0.5) * 0.5);
   const h = DEBRIS.horizontal[0] + (DEBRIS.horizontal[1] - DEBRIS.horizontal[0]) * t;
   const up = DEBRIS.upward[0] + (DEBRIS.upward[1] - DEBRIS.upward[0]) * rng();
+  return [dirX * h, up, dirZ * h];
+}
+
+// 球の線で押しつぶされたビルの破片の初速。飛び散らず、表面に沿って外へ崩れ流れる遅さ。
+export function crushVelocity(chunkCenter, rng) {
+  const [dirX, dirZ] = outward(chunkCenter, rng);
+  const [h0, h1] = DEBRIS.crushHorizontal, [u0, u1] = DEBRIS.crushUpward;
+  const h = h0 + (h1 - h0) * rng();
+  const up = u0 + (u1 - u0) * rng();
   return [dirX * h, up, dirZ * h];
 }
 
@@ -48,6 +64,7 @@ export function createDebrisPool(capacity, rng) {
   const fifo = new Int32Array(capacity * 2 + 2); // 古い順の slot 番号（リング）
   const fifoSeq = new Uint32Array(capacity * 2 + 2);
   let head = 0, tail = 0, fifoLen = 0, counter = 0, count = 0, limit = capacity;
+  let crater = 0; // えぐれた地面の半径（原点中心の球の下半分が穴になる）
   let evicted = []; // 上限で置き換えた破片。途中で消えたように見えないよう、次の update で粉にする
 
   const release = (s) => {
@@ -74,6 +91,8 @@ export function createDebrisPool(capacity, rng) {
     get capacity() { return capacity; },
     // 画質が下がったときに使う上限（確保済みの容量より大きくはできない）
     setLimit(n) { limit = Math.max(1, Math.min(capacity, Math.floor(n))); },
+    // 地面のえぐれ（半径）。穴の上の破片は球の面まで落ちる
+    setCrater(r) { crater = Math.max(0, r); },
     spawn(p) {
       let s;
       if (count >= limit) {
@@ -112,7 +131,11 @@ export function createDebrisPool(capacity, rng) {
         d.vy[s] -= g;
         d.px[s] += d.vx[s] * dt; d.py[s] += d.vy[s] * dt; d.pz[s] += d.vz[s] * dt;
         d.rx[s] += d.wx[s] * dt; d.ry[s] += d.wy[s] * dt; d.rz[s] += d.wz[s] * dt;
-        const floor = Math.min(d.sx[s], d.sy[s], d.sz[s]) * 0.5;
+        let floor = Math.min(d.sx[s], d.sy[s], d.sz[s]) * 0.5;
+        if (crater > 0) {
+          const rr = d.px[s] * d.px[s] + d.pz[s] * d.pz[s];
+          if (rr < crater * crater) floor -= Math.sqrt(crater * crater - rr);
+        }
         if (d.py[s] < floor) {
           d.py[s] = floor;
           if (d.vy[s] < -2) d.vy[s] = -d.vy[s] * DEBRIS.restitution; else d.vy[s] = 0;

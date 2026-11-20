@@ -11,6 +11,7 @@ attribute vec4 aVel;   // xyz: 初速, w: 抵抗
 attribute vec4 aLife;  // x: 生まれた時刻, y: 寿命, z: 大きさ, w: ふくらみ
 attribute vec4 aTint;  // rgb: 色, a: 上昇の速さ
 uniform float uTime;
+uniform float uCrater; // えぐれた地面の半径。穴の上の粒は球の面まで下りられる
 varying vec2 vUv;
 varying float vAge;
 varying vec3 vTint;
@@ -26,7 +27,8 @@ void main() {
   float t = age * aLife.y;
   float k = max(aVel.w, 1e-3);
   vec3 c = aPos + aVel.xyz * (1.0 - exp(-k * t)) / k + vec3(0.0, aTint.a * t, 0.0);
-  c.y = max(c.y, 0.0);
+  float rr = dot(c.xz, c.xz);
+  c.y = max(c.y, rr < uCrater * uCrater ? -sqrt(uCrater * uCrater - rr) : 0.0);
   float size = aLife.z * (1.0 + aLife.w * (1.0 - pow(1.0 - age, 2.2)));
   vWorld = c;
   vec4 mv = viewMatrix * vec4(c, 1.0);
@@ -113,6 +115,7 @@ export function createDustView(capacity) {
 
   const uniforms = {
     uTime: { value: 0 },
+    uCrater: { value: 0 },
     uSunView: { value: new THREE.Vector3(0.6, 0.5, 0.6).normalize() },
     uGlowColor: { value: new THREE.Color(1.0, 0.62, 0.32).multiplyScalar(1.6) },
     uFront: { value: 0 },
@@ -152,8 +155,9 @@ export function createDustView(capacity) {
       uniforms.uTime.value = time;
       if (sunDir && camera) uniforms.uSunView.value.copy(sunWorld.copy(sunDir).transformDirection(camera.matrixWorldInverse));
       if (hi >= 0) {
+        // 範囲は消さずに足していく。three が描くときにまとめて送り、送ったあとで消す
+        // （描く前に何度も update しても、前に書いた粒の範囲が失われない）
         for (const a of [aPos, aVel, aLife, aTint]) {
-          a.clearUpdateRanges();
           a.addUpdateRange(lo * a.itemSize, (hi - lo + 1) * a.itemSize);
           a.needsUpdate = true;
         }

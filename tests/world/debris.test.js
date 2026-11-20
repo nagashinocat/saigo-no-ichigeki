@@ -1,5 +1,5 @@
 import { test, expect } from 'vitest';
-import { createDebrisPool, pushVelocity, DEBRIS } from '../../src/world/debris.js';
+import { createDebrisPool, pushVelocity, crushVelocity, DEBRIS } from '../../src/world/debris.js';
 import { createRng } from '../../src/rng.js';
 
 const chunk = (over = {}) => ({ pos: [0, 50, 0], vel: [0, 0, 0], size: 2, ...over });
@@ -74,4 +74,41 @@ test('上限で古い破片を置き換えるときも、消える破片は次�
   expect(dust.map((e) => e.pos[0]).sort()).toEqual([0, 1]);
   expect(dust.map((e) => e.size).sort()).toEqual([1, 2]);
   expect(pool.update(1 / 60)).toHaveLength(0);
+});
+
+test('crushVelocity は外向き 8〜25 m/s、上向き 2〜10 m/s（押しつぶされた破片は表面に沿ってゆっくり流れる）', () => {
+  const rng = createRng(11);
+  expect(DEBRIS.crushHorizontal).toEqual([8, 25]);
+  expect(DEBRIS.crushUpward).toEqual([2, 10]);
+  for (let i = 0; i < 300; i++) {
+    const c = [-200 + rng() * 400, rng() * 60, -200 + rng() * 400];
+    const v = crushVelocity(c, rng);
+    expect(v[0] * c[0] + v[2] * c[2]).toBeGreaterThan(0);
+    expect(v[1]).toBeGreaterThanOrEqual(2);
+    expect(v[1]).toBeLessThanOrEqual(10);
+    const h = Math.hypot(v[0], v[2]);
+    expect(h).toBeGreaterThanOrEqual(8 - 1e-9);
+    expect(h).toBeLessThanOrEqual(25 + 1e-9);
+  }
+});
+
+test('えぐれた地面の上の破片は、穴の底（球の面）まで落ちる', () => {
+  const pool = createDebrisPool(4, createRng(1));
+  pool.setCrater(100);
+  pool.spawn(chunk({ pos: [96, 5, 0], size: 1 }));
+  const s = pool.active[0];
+  let minY = Infinity;
+  for (let t = 0; t < 3.5 && pool.count; t += 1 / 60) { pool.update(1 / 60); if (pool.count) minY = Math.min(minY, pool.data.py[s]); }
+  // r=96 の穴の深さは sqrt(100²-96²)=28。破片の半分の厚みより下へは行かない
+  const depth = Math.sqrt(100 * 100 - 96 * 96);
+  expect(minY).toBeLessThan(-depth + 2);
+  expect(minY).toBeGreaterThanOrEqual(-depth + 0.5 - 1e-4);
+  // 穴の外は今までどおり y=0 で止まる
+  const p2 = createDebrisPool(4, createRng(1));
+  p2.setCrater(100);
+  p2.spawn(chunk({ pos: [150, 5, 0], size: 1 }));
+  const s2 = p2.active[0];
+  let min2 = Infinity;
+  for (let t = 0; t < 2; t += 1 / 60) { p2.update(1 / 60); if (p2.count) min2 = Math.min(min2, p2.data.py[s2]); }
+  expect(min2).toBeGreaterThanOrEqual(0);
 });

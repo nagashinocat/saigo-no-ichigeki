@@ -2,15 +2,56 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { createRng } from '../rng.js';
 import { GRID } from '../world/cityGen.js';
+import { CONFIG } from '../config.js';
+import { packFronts } from './sphereDeform.js';
 
 // 街の見た目: 地面、ビル（種類ごとに InstancedMesh）、屋上の設備、道路沿いの車・街灯・看板。
 // 壊れたビルや props は、インスタンスの拡大率を0にして隠す。
+// 爆発の球に沿ったゆがみ（ビルが球の面へ押し付けられてつぶれる・地面が球の形にえぐれる）は style.js のシェーダーが描く。
 
 const KINDS = ['house', 'office', 'tower'];
 const CAR_COLORS = ['#f4f4f2', '#c9ccd2', '#26282e', '#b8322e', '#2f5d9e', '#e8b93a', '#5f7f6a', '#8d8f94'];
 const SIGN_COLORS = ['#ff5f7a', '#4fd6ff', '#ffd25a', '#7dff9a', '#ff9a3c', '#c99bff'];
 
 const unitBox = () => new THREE.BoxGeometry(1, 1, 1).translate(0, 0.5, 0);
+// ビルの箱は、球の線に沿って曲がれるよう細かく分ける（縦を多めに）
+const BUILDING_SEGMENTS = { high: [4, 14, 4], mid: [3, 10, 3], low: [2, 6, 2] };
+// 地面: 中心が細かい放射状のメッシュ（えぐれの縁がなめらかな円になるように）。街の外は粗く地平まで
+const GROUND_RINGS = { high: [190, 320], mid: [140, 240], low: [90, 160] };
+const GROUND_FINE_R = CONFIG.cityRadius + 150;
+const GROUND_FAR_R = 8000, GROUND_FAR_RINGS = 30;
+
+function radialGround(tier) {
+  const [rings, seg] = GROUND_RINGS[tier] ?? GROUND_RINGS.mid;
+  const step = GROUND_FINE_R / rings;
+  const radii = [];
+  for (let i = 1; i <= rings; i++) radii.push(i * step);
+  for (let i = 1; i <= GROUND_FAR_RINGS; i++) radii.push(GROUND_FINE_R * (GROUND_FAR_R / GROUND_FINE_R) ** (i / GROUND_FAR_RINGS));
+  const pos = new Float32Array((1 + radii.length * seg) * 3);
+  let k = 3;
+  for (const r of radii) {
+    for (let j = 0; j < seg; j++) {
+      const a = (j / seg) * Math.PI * 2;
+      pos[k++] = Math.cos(a) * r; pos[k++] = 0; pos[k++] = Math.sin(a) * r;
+    }
+  }
+  const idx = [];
+  const v = (ring, j) => 1 + ring * seg + (j % seg);
+  for (let j = 0; j < seg; j++) idx.push(0, v(0, j + 1), v(0, j));
+  for (let i = 0; i + 1 < radii.length; i++) {
+    for (let j = 0; j < seg; j++) {
+      const a = v(i, j), b = v(i, j + 1), c = v(i + 1, j), d = v(i + 1, j + 1);
+      idx.push(a, b, c, b, d, c);
+    }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  const nrm = new Float32Array(pos.length);
+  for (let i = 1; i < nrm.length; i += 3) nrm[i] = 1;
+  geo.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
+  geo.setIndex(idx);
+  return { geo, step };
+}
 const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _p = new THREE.Vector3(), _s = new THREE.Vector3();
 const ZERO = new THREE.Matrix4().makeScale(0, 0, 0);
 const UP = new THREE.Vector3(0, 1, 0);
@@ -45,19 +86,27 @@ export function createCityView(city, style, tier) {
   const rng = createRng(0x5eed + city.buildings.length);
   const pick = (arr) => arr[Math.floor(rng() * arr.length)];
 
-  // 地面（地平まで届く広さ。大きな三角形の補間の誤差で霧に継ぎ目が出ないよう細かく分ける）
-  const ground = new THREE.Mesh(new THREE.PlaneGeometry(16000, 16000, 64, 64).rotateX(-Math.PI / 2), style.ground);
+  // 地面（地平まで届く広さ。えぐれの縁がなめらかな円になるよう中心を細かく分ける）
+  const groundGeo = radialGround(tier);
+  const ground = new THREE.Mesh(groundGeo.geo, style.ground);
   ground.receiveShadow = shadows;
+  ground.frustumCulled = false; // えぐれで頂点が下がるので、元の平らな境界では判定しない
   group.add(ground);
+  const u = style.uniforms;
+  u.uRingStep.value = groundGeo.step;
 
-  // ビル
-  const geo = unitBox();
+  // ビル（種類ごとに箱の形を持ち、つぶれ始めた時刻をインスタンスごとの aCrush に書く）
+  const segs = BUILDING_SEGMENTS[tier] ?? BUILDING_SEGMENTS.mid;
   const byId = new Map(); // building id -> { mesh, index, extras: [{mesh, index}] }
   const meshes = {};
   const color = new THREE.Color();
   for (const kind of KINDS) {
     const list = city.buildings.filter((b) => b.kind === kind);
+    const geo = new THREE.BoxGeometry(1, 1, 1, ...segs).translate(0, 0.5, 0);
+    const crush = new THREE.InstancedBufferAttribute(new Float32Array(Math.max(1, list.length) * 2), 2);
+    geo.setAttribute('aCrush', crush);
     const mesh = instanced(geo, style.building(kind), list.length, { cast: shadows, receive: shadows });
+    if (style.buildingDepth) mesh.customDepthMaterial = style.buildingDepth;
     mesh.name = 'buildings-' + kind;
     list.forEach((b, i) => {
       mesh.setMatrixAt(i, boxMatrix(b.x, 0, b.z, b.w, b.h, b.d));
@@ -81,6 +130,8 @@ export function createCityView(city, style, tier) {
       group.add(sh);
     }
   }
+
+  const geo = unitBox();
 
   // 屋上の設備（空調・塔屋・高層の赤い航空灯）
   const roofSpecs = [], beaconSpecs = [];
@@ -171,6 +222,7 @@ export function createCityView(city, style, tier) {
     mesh.setMatrixAt(index, ZERO);
     mesh.instanceMatrix.needsUpdate = true;
   };
+  let time = 0;
 
   return {
     group,
@@ -187,6 +239,26 @@ export function createCityView(city, style, tier) {
       const c = new THREE.Color();
       e.mesh.getColorAt(e.index, c);
       return [c.r, c.g, c.b];
+    },
+    // 爆発の球に沿ったゆがみを進める。fronts: [えぐれの半径, ...今の球の半径]（createFrontTracker）、
+    // heat: 球の明るさ（0〜1。押し付けられた面と穴の割れ目が光る）、ember: 熾火の残り（0〜1）
+    update(dt, { fronts = [], heat = 0, ember = 0 } = {}) {
+      time += dt;
+      u.uTime.value = time;
+      u.uFrontCount.value = packFronts(fronts, u.uFronts.value);
+      u.uCrater.value = u.uFronts.value[0];
+      u.uHeat.value = heat;
+      u.uEmber.value = ember;
+    },
+    // 球の表面が通ったビル: 屋上の設備はすぐ隠し、ビルは delay 秒かけて球の線に沿ってつぶれていく（隠すのは hideBuilding）
+    crushBuilding(id, delay) {
+      const e = byId.get(id);
+      if (!e) return;
+      const attr = e.mesh.geometry.getAttribute('aCrush');
+      attr.setXY(e.index, time, Math.max(1e-3, delay));
+      attr.addUpdateRange(e.index * 2, 2);
+      attr.needsUpdate = true;
+      e.extras.forEach(hide);
     },
     hideBuilding(id) {
       const e = byId.get(id);

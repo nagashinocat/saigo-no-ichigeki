@@ -130,27 +130,6 @@ void main() {
   #include <colorspace_fragment>
 }`;
 
-// 焼けた地面: 球が届いた範囲を焦がし、しばらく熾火が光る
-const SCORCH_FRAG = /* glsl */`
-uniform float uScorch, uEmber, uTime;
-varying vec3 vWorld;
-${NOISE_GLSL}
-void main() {
-  float d = length(vWorld.xz);
-  if (d > uScorch * 1.04) discard;
-  float n = xnoise2(vWorld.xz * 0.025) * 0.6 + xnoise2(vWorld.xz * 0.09) * 0.4;
-  float inside = 1.0 - smoothstep(uScorch * (0.82 + 0.1 * n), uScorch * 1.02, d);
-  float a = inside * (0.5 + 0.3 * n);
-  vec3 col = vec3(0.05, 0.035, 0.03) * a;
-  // 熾火: 模様の明るいところだけ、橙に光って冷えていく
-  float e = smoothstep(0.74, 0.84, xnoise2(vWorld.xz * 0.16 + 11.0)) * smoothstep(0.35, 0.6, n) * inside * uEmber;
-  e *= 0.6 + 0.4 * sin(uTime * 3.0 + n * 12.0);
-  col += vec3(1.0, 0.3, 0.05) * e * 1.4;
-  gl_FragColor = vec4(col, a);
-  #include <tonemapping_fragment>
-  #include <colorspace_fragment>
-}`;
-
 const linear = (r, g, b, k = 1) => new THREE.Color().setRGB(r, g, b, THREE.SRGBColorSpace).multiplyScalar(k);
 
 export function createExplosionView(scene, tierName, { sunDir = null, seed = 7 } = {}) {
@@ -209,18 +188,6 @@ export function createExplosionView(scene, tierName, { sunDir = null, seed = 7 }
     ring.renderOrder = 4;
     return { mesh, ring, uniforms, ringU, id: null, active: false };
   }
-  const scorchU = { uScorch: { value: 0 }, uEmber: { value: 0 }, uTime: { value: 0 } };
-  const scorch = new THREE.Mesh(ringGeo, new THREE.ShaderMaterial({
-    uniforms: scorchU, vertexShader: RING_VERT, fragmentShader: SCORCH_FRAG,
-    transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1,
-    blending: THREE.CustomBlending, blendSrc: THREE.OneFactor, blendDst: THREE.OneMinusSrcAlphaFactor,
-  }));
-  scorch.position.y = 0.1;
-  scorch.frustumCulled = false;
-  scorch.renderOrder = 3;
-  scorch.visible = false;
-  group.add(scorch);
-
   const spheres = Array.from({ length: MAX_SPHERES }, makeSphere);
   for (const s of spheres) { s.mesh.visible = s.ring.visible = false; group.add(s.mesh, s.ring); }
 
@@ -229,6 +196,8 @@ export function createExplosionView(scene, tierName, { sunDir = null, seed = 7 }
   const cameraInfo = { front: 0, goal: 0, shake: 0 };
   const heat = { center: [0, 0, 0], radius: 0, strength: 0 };
   const screen = { flash: 0, time: 0, heat: null };
+  // 地面のえぐれへ: 球の明るさ（穴の中が内側から照らされ、割れ目が溶けて光る）と熾火の残り
+  const ground = { heat: 0, ember: 0 };
   const live = new Map(); // blast id -> sphere slot
   const seen = new Set();
   const evicted = new Set(); // 球を取られた一発（もう球を作り直さない）
@@ -278,8 +247,9 @@ export function createExplosionView(scene, tierName, { sunDir = null, seed = 7 }
       flash = Math.max(flash, 0.55 + 0.45 * shot.radius / CONFIG.radius.max);
     },
     // blasts: game.blasts（[{ id, shot, front }]）。一発ごとに球を描く。
-    // camera は上空カメラ（粉の陰影の向き）、pointScale は 1m を画素へ直す係数（光の粒の大きさ）
-    update(dt, blasts, camera, pointScale) {
+    // camera は上空カメラ（粉の陰影の向き）、pointScale は 1m を画素へ直す係数（光の粒の大きさ）、
+    // crater は地面のえぐれの半径（粉が穴の中まで下りられる）
+    update(dt, blasts, camera, pointScale, crater = 0) {
       time += dt;
       seen.clear();
       let shakeWant = 0;
@@ -327,15 +297,10 @@ export function createExplosionView(scene, tierName, { sunDir = null, seed = 7 }
         lightI = Math.max(lightI, fade * (1 + 2 * u.uBirth.value) * r);
       }
 
-      // 焦げた地面は届いた最大の範囲まで広がり、熾火は球が消えてからゆっくり冷える
-      if (maxFront > 0) {
-        scorchU.uScorch.value = Math.max(scorchU.uScorch.value, maxFront * 0.98);
-        scorchU.uEmber.value = Math.max(scorchU.uEmber.value, cover);
-      }
-      if (cover === 0) scorchU.uEmber.value *= Math.exp(-dt / 2.5);
-      scorchU.uTime.value = time;
-      scorch.scale.setScalar(scorchU.uScorch.value * 1.05 + 1);
-      scorch.visible = scorchU.uScorch.value > 0;
+      // えぐれた地面の熾火は、球が消えてからゆっくり冷える
+      if (maxFront > 0) ground.ember = Math.max(ground.ember, cover);
+      if (cover === 0) ground.ember *= Math.exp(-dt / 2.5);
+      ground.heat = cover;
 
       // 爆心の光: 球が大きいほど強く、球の上の方から街を照らす
       light.intensity = lightI * 0.7;
@@ -349,6 +314,7 @@ export function createExplosionView(scene, tierName, { sunDir = null, seed = 7 }
       shake += (shakeWant - shake) * (1 - Math.exp(-dt / (shakeWant > shake ? 0.05 : 0.3)));
 
       dust.uniforms.uFront.value = maxFront;
+      dust.uniforms.uCrater.value = crater;
       dust.uniforms.uCover.value = cover;
       dust.uniforms.uGlow.value = cover;
       dust.update(time, camera, sunDir);
@@ -376,5 +342,7 @@ export function createExplosionView(scene, tierName, { sunDir = null, seed = 7 }
     get cameraInfo() { return cameraInfo; },
     // 画面効果へ: 閃光・熱のゆがみ
     get screen() { return screen; },
+    // 地面のえぐれへ: { heat, ember }
+    get ground() { return ground; },
   };
 }

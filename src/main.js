@@ -7,6 +7,7 @@ import { createCityView } from './render/cityView.js';
 import { createDestruction } from './world/destruction.js';
 import { createDebrisView } from './render/debrisView.js';
 import { createExplosionView } from './render/explosionView.js';
+import { createFrontTracker } from './render/sphereDeform.js';
 
 const MAX_FRAME_DT = 0.1;
 
@@ -87,11 +88,18 @@ function lowerTier() {
 // 1m を光の粒の画素の大きさへ直す係数
 const pointScale = () => views.layout.city.h * renderer.getPixelRatio() / (2 * Math.tan(THREE.MathUtils.degToRad(views.cityCamera.fov) / 2));
 
+// 地面のえぐれ（爆発が終わっても残る）と、今の球の半径。ビルのつぶれ・地面・破片が同じものを使う
+const fronts = createFrontTracker();
+
 function simulate(dt) {
   game.update(dt);
-  explosionView.dust(destruction.update(dt));
+  const blasts = game.blasts;
+  const list = fronts.update(blasts);
+  destruction.pool.setCrater(fronts.crater);
+  explosionView.dust(destruction.update(dt, list));
   debrisView.update();
-  explosionView.update(dt, game.blasts, views.cityCamera, pointScale());
+  explosionView.update(dt, blasts, views.cityCamera, pointScale(), fronts.crater);
+  cityView.update(dt, { fronts: list, heat: explosionView.ground.heat, ember: explosionView.ground.ember });
   views.updateCamera(dt, explosionView.cameraInfo);
 }
 const draw = () => views.render(cityScene, hand.scene, explosionView.screen);
