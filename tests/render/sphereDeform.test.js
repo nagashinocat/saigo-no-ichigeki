@@ -1,5 +1,5 @@
 import { test, expect } from 'vitest';
-import { deformPoint, craterDepth, crushPoint, packFronts, MAX_FRONTS, createFrontTracker } from '../../src/render/sphereDeform.js';
+import { deformPoint, craterDepth, crushPoint, packFronts, MAX_FRONTS, createFrontTracker, CRUSH_SQUASH, SPHERE_DEFORM_GLSL } from '../../src/render/sphereDeform.js';
 
 const len = (p) => Math.hypot(p[0], p[1], p[2]);
 
@@ -93,4 +93,15 @@ test('createFrontTracker: えぐれは届いた最大の半径で残り、終わ
   tr.update([b(3, 50, 60)]);
   tr.update([]);
   expect(tr.crater).toBe(200);
+});
+
+test('GLSL の式は JS と同じ定数を使う（押しつぶしの割合・smoothstep・球の数）', () => {
+  // JS の crushPoint が使う割合から、シェーダーの式を組み立てて、そのまま含まれていることを確かめる
+  const t = 0.4, js = crushPoint([0, 10, 0], [], t)[1];
+  expect(js).toBeCloseTo(10 * (1 - CRUSH_SQUASH * t * t * (3 - 2 * t)), 9);
+  expect(SPHERE_DEFORM_GLSL).toContain(`p.y *= 1.0 - ${CRUSH_SQUASH.toFixed(4)} * t * t * (3.0 - 2.0 * t);`);
+  expect(SPHERE_DEFORM_GLSL).toContain(`uniform float uFronts[${MAX_FRONTS}];`);
+  expect(SPHERE_DEFORM_GLSL).toContain('if (d < uFronts[i]) F = max(F, uFronts[i]);');
+  expect(SPHERE_DEFORM_GLSL).toContain('if (abs(r) < f) best = max(best, sqrt(f * f - r * r));');
+  expect(SPHERE_DEFORM_GLSL).toContain('return p * (F / d);');
 });

@@ -359,50 +359,67 @@ float groundFogK = 1.0; // 穴の中は霞を薄くして、深さと岩肌を�
 
   // 爆発のえぐれ（球の下半分の穴）: 焼けた岩肌、縁の外は掘り返された明るい土の盛り上がりと放射状の焦げ跡、
   // 縁に明るい筋。球が光っている間は割れ目が溶けて光り、消えたあとは熾火になって冷える。
+  // 重い模様は、穴の中（inC > 0）と縁の外の帯（焦げ跡が届く範囲）だけで計算する。それより外の地面では何もしない
   if (uCrater > 0.0) {
     float F = uCrater, y = vFogW.y;
-    float ang = atan(p.y, p.x);
-    float inC = 1.0 - smoothstep(F - 0.3 - px, F - 0.05, r);
-    float dn = clamp(-y / F, 0.0, 1.0);
+    float W = ${f(CRATER_LIP.width)} * F + 3.0;
+    float rw = max(0.7, F * 0.005) + px * 1.5;
+    float inLo = F - 0.3 - px;
+    float inC = 1.0 - smoothstep(inLo, F - 0.05, r);
+    float bandOut = F * 1.35 + W * 1.5; // 焦げ跡（最大 0.34F）と土の盛り上がり（1.3W）の外
     // 穴の面の模様は、球の面の向きで3つの平面から取って混ぜる（壁で模様が伸びないように）
     vec3 tw = vFogW / F; tw *= tw; tw /= tw.x + tw.y + tw.z + 1e-4;
     #define TRI(s, o) (vnoise(vFogW.xz * (s) + (o)) * tw.y + vnoise(vFogW.xy * (s) + (o)) * tw.z + vnoise(vFogW.zy * (s) + (o)) * tw.x)
     vec2 cq = vFogW.xz;
-    #ifdef CRATER_DETAIL
-    float strata = vnoise(vec2(y * 0.045, ang * 2.0 + vnoise(p * 0.015) * 3.0));
-    float grain = TRI(0.11, 0.0);
-    #else
-    float strata = 0.5 + 0.5 * sin(y * 0.14);
-    float grain = 0.5;
-    #endif
-    vec3 rock = mix(srgb(vec3(0.56, 0.43, 0.35)), srgb(vec3(0.30, 0.23, 0.23)), smoothstep(0.0, 0.7, dn));
-    rock *= mix(0.82, 1.08, smoothstep(0.35, 0.65, strata)) * mix(0.88, 1.06, grain);
-    float W = ${f(CRATER_LIP.width)} * F + 3.0;
-    float xo = max(r - F, 0.0);
-    float rays = smoothstep(0.45, 0.8, vnoise(vec2(ang * 14.0, 3.0)) * 0.7 + vnoise(vec2(ang * 45.0, 7.0)) * 0.3);
-    float ejecta = (1.0 - smoothstep(0.0, F * (0.06 + 0.28 * rays), xo)) * (1.0 - inC);
-    c = mix(c, srgb(vec3(0.22, 0.17, 0.16)), ejecta * 0.75);
-    c = mix(c, srgb(vec3(0.60, 0.49, 0.41)) * mix(0.9, 1.05, grain), (1.0 - smoothstep(W * 0.3, W * 1.3, xo)) * (1.0 - inC) * 0.8);
-    c = mix(c, rock, inC);
-    groundFogK = mix(1.0, 0.35, inC);
+    float ang = atan(p.y, p.x);
+    // 縁の外: 掘り返された明るい土の盛り上がりと放射状の焦げ跡（穴の中だけのピクセルでは計算しない）
+    if (inC < 1.0 && r < bandOut) {
+      float xo = max(r - F, 0.0);
+      float rays = smoothstep(0.45, 0.8, vnoise(vec2(ang * 14.0, 3.0)) * 0.7 + vnoise(vec2(ang * 45.0, 7.0)) * 0.3);
+      float ejecta = (1.0 - smoothstep(0.0, F * (0.06 + 0.28 * rays), xo)) * (1.0 - inC);
+      c = mix(c, srgb(vec3(0.22, 0.17, 0.16)), ejecta * 0.75);
+      float soil = (1.0 - smoothstep(W * 0.3, W * 1.3, xo)) * (1.0 - inC);
+      if (soil > 0.0) {
+        #ifdef CRATER_DETAIL
+        float sg = TRI(0.11, 0.0);
+        #else
+        float sg = 0.5;
+        #endif
+        c = mix(c, srgb(vec3(0.60, 0.49, 0.41)) * mix(0.9, 1.05, sg), soil * 0.8);
+      }
+    }
+    // 穴の中: 焼けた岩肌、溶けた割れ目と熾火
+    if (inC > 0.0) {
+      float dn = clamp(-y / F, 0.0, 1.0);
+      #ifdef CRATER_DETAIL
+      float strata = vnoise(vec2(y * 0.045, ang * 2.0 + vnoise(p * 0.015) * 3.0));
+      float grain = TRI(0.11, 0.0);
+      #else
+      float strata = 0.5 + 0.5 * sin(y * 0.14);
+      float grain = 0.5;
+      #endif
+      vec3 rock = mix(srgb(vec3(0.56, 0.43, 0.35)), srgb(vec3(0.30, 0.23, 0.23)), smoothstep(0.0, 0.7, dn));
+      rock *= mix(0.82, 1.08, smoothstep(0.35, 0.65, strata)) * mix(0.88, 1.06, grain);
+      c = mix(c, rock, inC);
+      groundFogK = mix(1.0, 0.35, inC);
+      #ifdef CRATER_DETAIL
+      float cr = abs(TRI(0.025, 0.0) - 0.5);
+      float crack = (1.0 - smoothstep(0.0, 0.03 + px * 0.01, cr)) * inC * smoothstep(0.03, 0.12, dn) * smoothstep(0.45, 0.65, TRI(0.006, 5.0));
+      float ember = smoothstep(0.78, 0.88, TRI(0.12, 11.0)) * inC;
+      #else
+      float crack = (1.0 - smoothstep(0.0, 0.03 + px * 0.01, abs(vnoise(cq * 0.025) - 0.5))) * inC * smoothstep(0.03, 0.12, dn);
+      float ember = smoothstep(0.78, 0.88, vnoise(cq * 0.12 + 11.0)) * inC;
+      #endif
+      float flick = 0.7 + 0.3 * sin(uTime * 3.0 + grain * 12.0);
+      groundEmis += srgb(vec3(1.0, 0.34, 0.07)) * (crack * (1.8 * uHeat + 0.8 * uEmber) + ember * uEmber * flick * 1.1);
+      // 球が光っている間は、穴の奥まで内側から照らされる
+      groundEmis += srgb(vec3(1.0, 0.52, 0.22)) * inC * uHeat * 0.3;
+    }
     // 縁の明るい筋
-    float rw = max(0.7, F * 0.005) + px * 1.5;
     float rim = 1.0 - smoothstep(0.0, rw, abs(r - F));
     c = mix(c, srgb(vec3(1.0, 0.88, 0.74)), rim * 0.9);
     groundEmis += srgb(vec3(1.0, 0.72, 0.48)) * rim * (0.3 + 1.4 * uHeat);
-    // 溶けた割れ目と熾火
-    #ifdef CRATER_DETAIL
-    float cr = abs(TRI(0.025, 0.0) - 0.5);
-    float crack = (1.0 - smoothstep(0.0, 0.03 + px * 0.01, cr)) * inC * smoothstep(0.03, 0.12, dn) * smoothstep(0.45, 0.65, TRI(0.006, 5.0));
-    float ember = smoothstep(0.78, 0.88, TRI(0.12, 11.0)) * inC;
-    #else
-    float crack = (1.0 - smoothstep(0.0, 0.03 + px * 0.01, abs(vnoise(cq * 0.025) - 0.5))) * inC * smoothstep(0.03, 0.12, dn);
-    float ember = smoothstep(0.78, 0.88, vnoise(cq * 0.12 + 11.0)) * inC;
-    #endif
-    float flick = 0.7 + 0.3 * sin(uTime * 3.0 + grain * 12.0);
-    groundEmis += srgb(vec3(1.0, 0.34, 0.07)) * (crack * (1.8 * uHeat + 0.8 * uEmber) + ember * uEmber * flick * 1.1);
-    // 球が光っている間は、穴の奥まで内側から照らされる
-    groundEmis += srgb(vec3(1.0, 0.52, 0.22)) * inC * uHeat * 0.3;
+    #undef TRI
   }
   diffuseColor.rgb = c;
 }
