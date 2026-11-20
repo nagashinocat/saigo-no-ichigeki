@@ -13,13 +13,13 @@ import { poseFor, HAND_JOINTS, CLASP_POSE, TREMOR_FROM } from './handPose.js';
 
 const HAND_SCALE = 10;           // 手のモデル（メートル。手首から中指の先まで約 20cm）を、この場面の単位で約 2 にする
 const ORB_R = [0.13, 0.4];       // level 0 と 1 の球の半径
-const PALM_D = [1.15, 1.75];     // 球の中心から各手のひらの中心まで（貯めるほど両手の間が広がる）
+const PALM_D = [1.0, 1.5];     // 球の中心から各手のひらの中心まで（貯めるほど両手の間が広がる）
 const ORB_C = new THREE.Vector3(0, 0, 0);
 // 構え（右手で書く。左手は x を鏡に映す）: 手のひらから球への向きと、指先の向き。
-// 指先は前（少し内・少し上）なので、前腕は画面の下の左右から斜めに入る。手のひらは内へ向け、上（目の側）へ傾けて、
-// 見下ろす目から手のひらの内側が見えるようにする
-const STANCE_N = new THREE.Vector3(-0.8, 0.6, 0.1);
-const STANCE_F = new THREE.Vector3(-0.45, 0.35, -1);
+// 手のひらはほぼ垂直に立て、左右から真横に球へ向ける（親指が上、小指が下）。わずかに下・奥へ傾けて、
+// 見下ろす目から手の甲の側が少しだけ見え、指の側面がはっきり見えるようにする。指先は前（少し上）で、前腕は画面の下から入る
+const STANCE_N = new THREE.Vector3(-1, -0.3, -0.3);
+const STANCE_F = new THREE.Vector3(-0.2, 0.15, -1);
 // 組み合わさった形: 手のひらをまっすぐ向かい合わせ、指先は前へ（少し上）。右手の手のひらの中心の位置（少し手前へ引き寄せる）。
 // 指を互い違いに組むため、両手を親指〜小指の向きへ指の間隔の半分だけずらす（右手は小指の側へ、左手も自分の小指の側へ）
 const JOIN_N = new THREE.Vector3(-1, 0, 0);
@@ -28,12 +28,12 @@ const JOIN_AT = new THREE.Vector3(0.06, -0.3, 0.45);
 const HALO_BACK = 1.0;           // 組み合わさったとき、光の板を手の向こうへ下げる距離
 const LIGHT_OUT = new THREE.Vector3(0, 0.5, 0.6); // 組み合わさったときの光源の逃がし先
 const JOIN_STAGGER = 0.0053 * HAND_SCALE; // 手の空間の X（小指の側）へ。指の間隔（約 2.1cm）の 1/4 ずつ、合わせて半分
-// 目の位置と見る所
-const EYE = new THREE.Vector3(0, 2.3, 2.9);
-const LOOK = new THREE.Vector3(0, -0.05, 0);
+// 目の位置と見る所。手のひらを真横に向けても手の甲の側が目へ向くよう、目は少し高く・後ろに置く
+const EYE = new THREE.Vector3(0, 3.0, 3.9);
+const LOOK = new THREE.Vector3(0, 0.2, 0);
 // 縦の画角と、確保する横の画角（度）。下の横長の帯（約 1.3:1〜5:1）では、帯が細いほど縦の画角 FOV で寄り、
 // 帯が四角に近いほど横の画角 FOV_H_MIN を確保して両手の指先が横で切れないようにする
-const FOV = 32, FOV_MAX = 72, FOV_H_MIN = 58;
+const FOV = 32, FOV_MAX = 72, FOV_H_MIN = 48;
 const KEY_LIGHT = 2.0;
 const JOIN_SEC = 0.25;           // 放ってから両手が合わさりきるまで
 const SMALL_HOLD_SEC = 0.05;     // 小さな一発: 合わさったまま止まる時間

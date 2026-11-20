@@ -76,6 +76,35 @@ test('両手のモデルを渡すと、両方が場面に入り、手のひら�
   }
 });
 
+test('構えでは、手のひらがほぼ垂直に立って左右から真横に球へ向き、親指が上・小指が下、目からは手の甲が少しだけ見える', () => {
+  for (const level of [0, 0.5, 0.9]) {
+    const m = hands('low');
+    const view = createHandView(m, 'low');
+    view.resize(390 / 295);
+    run(view, 1.2, level, level > 0, 1);
+    const cam = view.camera.position;
+    const p = new THREE.Vector3();
+    for (const [side, model] of Object.entries(m)) {
+      const label = `${level} ${side}`;
+      const q = model.bones.wrist.getWorldQuaternion(new THREE.Quaternion());
+      const palmDir = new THREE.Vector3(0, -1, 0).applyQuaternion(q);
+      // ほぼ真横（水平）に、内側（球の側）へ向く
+      const inward = side === 'right' ? -1 : 1;
+      expect(palmDir.x * inward, label).toBeGreaterThan(0.9);
+      expect(Math.abs(palmDir.y), label).toBeLessThan(0.35);
+      // 親指は上、小指は下
+      const y = (n) => model.bones[n].getWorldPosition(p).y;
+      expect(y('thumb-metacarpal'), label).toBeGreaterThan(y('pinky-finger-metacarpal'));
+      expect(y('index-finger-metacarpal'), label).toBeGreaterThan(y('pinky-finger-metacarpal'));
+      // 目から手の甲が少しだけ見える（手の甲が目へ少し向くが、正面ではない。指の側面が主に見える）
+      const toEye = cam.clone().sub(view.palms[side]).normalize();
+      const backDot = palmDir.clone().negate().dot(toEye);
+      expect(backDot, label).toBeGreaterThan(0.02);
+      expect(backDot, label).toBeLessThan(0.5);
+    }
+  }
+});
+
 test('貯め0.9で、両手の10本の指先がすべてカメラから見える（画角内で、球に隠れない）', () => {
   for (const [detail, aspect] of [['high', 390 / 295], ['low', 390 / 295], ['high', 1280 / 252], ['low', 375 / 233], ['high', 768 / 358]]) {
     const m = hands(detail);
