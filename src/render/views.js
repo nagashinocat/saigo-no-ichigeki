@@ -26,25 +26,35 @@ export function layoutViews(width, height) {
   };
 }
 
-// 上空カメラ: 主人公（原点）の斜め上、高さ約380m・水平距離約180m から広場を見下ろす。
-// 広場と、軍勢が現れる 60〜90m の輪が、縦長でも横長でも画面に収まる高さにしてある。
-export const CITY_CAMERA = { height: 380, distance: 180, azimuthDeg: 32, minHFovDeg: 60, vFovDeg: 50 };
+// 上空カメラ: 主人公（原点）の斜め上から街を見下ろす。広場は画面の中ほどより下、
+// 街の遠い端の先に地平があり、画面の上 15% ほどに夕空が入るよう、向きは画角から決める。
+// 広場と、軍勢が現れる 60〜90m の輪は、縦長でも横長でも画面に収まる（tests/render/cityCamera.test.js）。
+// 道路の格子にまっすぐ沿って見下ろすと、通りが地平の夕空へ吸い込まれ、輪の上の道路も見通しやすい。
+export const CITY_CAMERA = { height: 280, distance: 260, azimuthDeg: 0, minHFovDeg: 62, vFovDeg: 74, horizonNdc: 0.7 };
 
-export function createCityCamera() {
-  const cam = new THREE.PerspectiveCamera(CITY_CAMERA.vFovDeg, 1, 1, 6000);
-  const az = THREE.MathUtils.degToRad(CITY_CAMERA.azimuthDeg);
-  cam.position.set(Math.sin(az) * CITY_CAMERA.distance, CITY_CAMERA.height, Math.cos(az) * CITY_CAMERA.distance);
-  cam.lookAt(0, 0, 0);
+export function createCityCamera(opts = CITY_CAMERA) {
+  const cam = new THREE.PerspectiveCamera(opts.vFovDeg, 1, 1, 6000);
+  const az = THREE.MathUtils.degToRad(opts.azimuthDeg);
+  cam.position.set(Math.sin(az) * opts.distance, opts.height, Math.cos(az) * opts.distance);
+  cam.userData.cityOpts = opts;
+  fitCityCamera(cam, 1);
   return cam;
 }
 
-// 縦長の画面でも街の横幅が切れすぎないよう、横の画角に下限を設ける
+// 縦長の画面でも街の横幅が切れすぎないよう、横の画角に下限を設ける。
+// 見下ろす角度は「地平が画面の高さの horizonNdc（-1〜1）の位置に来る」ように決める。
 export function fitCityCamera(cam, aspect) {
+  const opts = cam.userData.cityOpts ?? CITY_CAMERA;
   cam.aspect = aspect;
-  const hHalf = THREE.MathUtils.degToRad(CITY_CAMERA.minHFovDeg) / 2;
+  const hHalf = THREE.MathUtils.degToRad(opts.minHFovDeg) / 2;
   const vNeeded = THREE.MathUtils.radToDeg(2 * Math.atan(Math.tan(hHalf) / aspect));
-  cam.fov = Math.min(80, Math.max(CITY_CAMERA.vFovDeg, vNeeded));
+  cam.fov = Math.min(84, Math.max(opts.vFovDeg, vNeeded));
   cam.updateProjectionMatrix();
+  const pitch = Math.atan(opts.horizonNdc * Math.tan(THREE.MathUtils.degToRad(cam.fov) / 2));
+  const az = THREE.MathUtils.degToRad(opts.azimuthDeg);
+  const p = cam.position;
+  cam.lookAt(p.x - Math.sin(az) * Math.cos(pitch), p.y - Math.sin(pitch), p.z - Math.cos(az) * Math.cos(pitch));
+  cam.updateMatrixWorld();
 }
 
 const HUD_CLEAR = new THREE.Color(0x0b0d16);

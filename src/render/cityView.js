@@ -45,8 +45,8 @@ export function createCityView(city, style, tier) {
   const rng = createRng(0x5eed + city.buildings.length);
   const pick = (arr) => arr[Math.floor(rng() * arr.length)];
 
-  // 地面
-  const ground = new THREE.Mesh(new THREE.PlaneGeometry(3600, 3600).rotateX(-Math.PI / 2), style.ground);
+  // 地面（地平まで届く広さ。大きな三角形の補間の誤差で霧に継ぎ目が出ないよう細かく分ける）
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(16000, 16000, 64, 64).rotateX(-Math.PI / 2), style.ground);
   ground.receiveShadow = shadows;
   group.add(ground);
 

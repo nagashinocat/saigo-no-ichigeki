@@ -5,12 +5,12 @@ import { CONFIG } from '../config.js';
 
 // 作風「写実的なアニメ調」: 夕方の空、強い一方向の太陽、3段に量子化した陰影、空を映す窓、遠景は空の色へ溶ける。
 
-// 太陽は低い夕日。カメラから見て右手にあり、見えている東向きの面を照らし、長い影を左手前へ落とす。
-const SUN_DIR = new THREE.Vector3(0.86, 0.50, -0.26).normalize();
+// 太陽は低い夕日。カメラから見て右奥にあり、右上の空を橙に染め、長い影を左手前へ落とす。
+const SUN_DIR = new THREE.Vector3(0.80, 0.42, -0.45).normalize();
 const SUN_COLOR = new THREE.Color(1.0, 0.66, 0.40);
 const SKY_FILL = new THREE.Color(0.46, 0.54, 1.0);    // 影側に回る空の青紫
 const GROUND_FILL = new THREE.Color(0.55, 0.40, 0.42); // 地面からの照り返し
-const FOG_DENSITY = 0.0011;
+const FOG_DENSITY = 0.0015;
 const FOG_START = 320;
 
 // sRGB で決めた色をシェーダーの線形値へ（見た目の色で調整しやすくするため）
@@ -46,7 +46,7 @@ vec3 applyFog(vec3 col, vec3 worldPos) {
   // 上空カメラから街までの約400mは澄ませ、その先から霞ませる
   float f = 1.0 - exp(-pow(max(dist - ${FOG_START.toFixed(1)}, 0.0) * ${FOG_DENSITY.toFixed(5)}, 1.6));
   vec2 hz = v.xz + uSunDir.xz * 1e-3;
-  vec3 fc = skyColor(normalize(vec3(hz, 0.015 * length(hz))));
+  vec3 fc = skyColor(normalize(vec3(hz.x, 0.015 * length(hz), hz.y)));
   return mix(col, fc, clamp(f, 0.0, 1.0));
 }
 `;
