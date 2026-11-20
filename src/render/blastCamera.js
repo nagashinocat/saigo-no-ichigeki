@@ -31,12 +31,14 @@ export function pullbackDistance(pos, dir, minDist) {
   return pd + Math.sqrt(pd * pd - pp + minDist * minDist);
 }
 
-// 地面の上に出ている球（原点が中心、半径 radius の上半分）の上の点。7 段 × 24 方位
+// 地面の上に出ている球（原点が中心、半径 radius の上半分）の上の点。13 段 × 48 方位
+// （近い上空カメラは見下ろす角度が深く、球の見かけの端が点の間に来やすいので細かめ）
+const DOME_EL = 12, DOME_AZ = 48;
 const DOME = [];
-for (let i = 0; i < 7; i++) {
-  const el = (i / 6) * Math.PI / 2;
-  for (let j = 0; j < (i === 6 ? 1 : 24); j++) {
-    const az = (j / 24) * Math.PI * 2;
+for (let i = 0; i <= DOME_EL; i++) {
+  const el = (i / DOME_EL) * Math.PI / 2;
+  for (let j = 0; j < (i === DOME_EL ? 1 : DOME_AZ); j++) {
+    const az = (j / DOME_AZ) * Math.PI * 2;
     DOME.push([Math.cos(el) * Math.cos(az), Math.sin(el), Math.cos(el) * Math.sin(az)]);
   }
 }

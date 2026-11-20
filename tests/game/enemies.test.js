@@ -6,15 +6,15 @@ import { CONFIG } from '../../src/config.js';
 const E = CONFIG.enemy;
 const cfgWith = (enemy) => ({ ...CONFIG, enemy: { ...E, ...enemy } });
 
-test('軍勢は spawnPerSec で spawnDist の範囲（中心から60〜90m）に湧き、speed で近づく', () => {
+test('軍勢は spawnPerSec で spawnDist の範囲に湧き、speed で近づく', () => {
   const e = createEnemies(createRng(1), cfgWith({ spawnPerSec: 1.2, spawnRamp: 1 }));
   e.update(10); // 約12体
   expect(e.list.length).toBe(12);
   expect(new Set(e.list.map((x) => x.id)).size).toBe(12);
-  for (const x of e.list) { expect(x.dist).toBeGreaterThanOrEqual(60 - E.speed * 10); expect(x.dist).toBeLessThanOrEqual(90); }
+  for (const x of e.list) { expect(x.dist).toBeGreaterThanOrEqual(E.spawnDist[0] - E.speed * 10); expect(x.dist).toBeLessThanOrEqual(E.spawnDist[1]); }
   const e2 = createEnemies(createRng(2), cfgWith({ spawnPerSec: 10 }));
   e2.update(0.1); // 1体、湧いた直後
-  const d0 = e2.list[0].dist; expect(d0).toBeGreaterThanOrEqual(60); expect(d0).toBeLessThanOrEqual(90);
+  const d0 = e2.list[0].dist; expect(d0).toBeGreaterThanOrEqual(E.spawnDist[0]); expect(d0).toBeLessThanOrEqual(E.spawnDist[1]);
   const e3 = createEnemies(createRng(2), cfgWith({ spawnPerSec: 10 }));
   e3.update(0.1);
   const before = e3.list[0].dist; e3.update(0.05);

@@ -20,12 +20,18 @@ export function layoutViews(width, height) {
   };
 }
 
-// 上空カメラ: 主人公（原点）の斜め上から街を見下ろす。広場は画面の中ほどより下、
-// 街の遠い端の先に地平があり、画面の上 15% ほどに夕空が入るよう、向きは画角から決める。
-// 広場と、軍勢が現れる 60〜90m の輪は、縦長でも横長でも画面に収まる（tests/render/cityCamera.test.js）。
-// 街と軍勢が大きく見えるよう近め（高さ 175m・後ろ 160m）。輪の見通しは広場のまわりのビルの高さ制限（cityGen.js）と合わせて決めた。
-// 道路の格子にまっすぐ沿って見下ろすと、通りが地平の夕空へ吸い込まれ、輪の上の道路も見通しやすい。
-export const CITY_CAMERA = { height: 175, distance: 160, azimuthDeg: 0, minHFovDeg: 62, vFovDeg: 80, horizonNdc: 0.7 };
+// 上空カメラ: 主人公（原点）の斜め上から、広場とそれを囲む最初の一周の 8 つの街区を見下ろす（持ち主の決定、仕様 12 章）。
+// 8 つの街区（±frameHalf m の正方形、屋上は frameTop m まで）がしっかり画面に入り、その外の一周は切れるくらいまで寄る。
+// 広場の中心は画面の高さの plazaNdc（上端の HUD の帯の分だけ中央より少し下）。距離は画面の縦横比ごとに解く:
+// 正方形と屋上の点が、横は ±marginX、縦は ndcBottom〜ndcTop（HUD の帯より下）に収まる一番近い距離（tests/render/cityCamera.test.js）。
+// 仰角は、手前の街区の建物（cityGen.js の高さ制限）が広場を隠さないよう高め。道路の格子にまっすぐ沿って見下ろす。
+// 縦画面の横の画角は minHFovDeg（縦は約 69°）、横長の画面の縦の画角は vFovDeg（横の端のゆがみを抑える）。
+// 縦画面では広場まで約 115m（小さな一発でカメラが押されない遠さ。blastCamera.js）。
+export const CITY_CAMERA = {
+  elevationDeg: 62, azimuthDeg: 0, minHFovDeg: 52, vFovDeg: 46,
+  frameHalf: 35, frameTop: 22,
+  marginX: 0.92, ndcTop: 0.7, ndcBottom: -0.94, plazaNdc: -0.1,
+};
 
 export function createCityCamera(opts = CITY_CAMERA) {
   const cam = new THREE.PerspectiveCamera(opts.vFovDeg, 1, 1, 6000);
@@ -34,8 +40,38 @@ export function createCityCamera(opts = CITY_CAMERA) {
   return cam;
 }
 
-// 縦長の画面でも街の横幅が切れすぎないよう、横の画角に下限を設ける。
-// 見下ろす角度は「地平が画面の高さの horizonNdc（-1〜1）の位置に来る」ように決める。
+// 正方形の角・辺の中点（地面と屋上の高さ）
+function framePoints(half, top) {
+  const pts = [];
+  for (const x of [-half, 0, half]) for (const z of [-half, 0, half]) {
+    if (!x && !z) continue;
+    pts.push(new THREE.Vector3(x, 0, z), new THREE.Vector3(x, top, z));
+  }
+  return pts;
+}
+
+const _v = new THREE.Vector3();
+
+// 距離 dist、見下ろしの向きのずれ tilt（ラジアン、正で上を向く）に置いたとき、枠の点が収まるか
+function place(cam, opts, dist, tilt) {
+  const el = THREE.MathUtils.degToRad(opts.elevationDeg), az = THREE.MathUtils.degToRad(opts.azimuthDeg);
+  cam.position.set(Math.sin(az) * Math.cos(el) * dist, Math.sin(el) * dist, Math.cos(az) * Math.cos(el) * dist);
+  // 原点を見て、そこから tilt だけ上を向く
+  const pitch = el - tilt;
+  cam.lookAt(cam.position.x - Math.sin(az) * Math.cos(pitch), cam.position.y - Math.sin(pitch), cam.position.z - Math.cos(az) * Math.cos(pitch));
+  cam.updateMatrixWorld();
+}
+
+function fits(cam, opts, pts) {
+  for (const p of pts) {
+    _v.copy(p).project(cam);
+    if (_v.z > 1 || Math.abs(_v.x) > opts.marginX || _v.y > opts.ndcTop || _v.y < opts.ndcBottom) return false;
+  }
+  return true;
+}
+
+// 縦長の画面でも横が切れすぎないよう、横の画角に下限を設ける。向きは広場の中心が画面の高さの plazaNdc に来るように、
+// 距離は枠が収まる一番近いものを探す。
 export function fitCityCamera(cam, aspect) {
   const opts = cam.userData.cityOpts ?? CITY_CAMERA;
   cam.aspect = aspect;
@@ -43,12 +79,16 @@ export function fitCityCamera(cam, aspect) {
   const vNeeded = THREE.MathUtils.radToDeg(2 * Math.atan(Math.tan(hHalf) / aspect));
   cam.fov = Math.min(84, Math.max(opts.vFovDeg, vNeeded));
   cam.updateProjectionMatrix();
-  const pitch = Math.atan(opts.horizonNdc * Math.tan(THREE.MathUtils.degToRad(cam.fov) / 2));
-  const az = THREE.MathUtils.degToRad(opts.azimuthDeg);
-  cam.position.set(Math.sin(az) * opts.distance, opts.height, Math.cos(az) * opts.distance);
-  const p = cam.position;
-  cam.lookAt(p.x - Math.sin(az) * Math.cos(pitch), p.y - Math.sin(pitch), p.z - Math.cos(az) * Math.cos(pitch));
-  cam.updateMatrixWorld();
+  // 原点が画面の高さ plazaNdc に来る、視線の上向きのずれ（距離によらない）
+  const tilt = -Math.atan(opts.plazaNdc * Math.tan(THREE.MathUtils.degToRad(cam.fov) / 2));
+  const pts = framePoints(opts.frameHalf, opts.frameTop);
+  let lo = 1, hi = 2000;
+  for (let i = 0; i < 40; i++) {
+    const mid = (lo + hi) / 2;
+    place(cam, opts, mid, tilt);
+    if (fits(cam, opts, pts)) hi = mid; else lo = mid;
+  }
+  place(cam, opts, hi, tilt);
   // 爆発に合わせて下がる・揺れるときの基準の姿勢
   cam.userData.basePos = cam.position.clone();
   cam.userData.baseQuat = cam.quaternion.clone();

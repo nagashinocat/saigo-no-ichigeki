@@ -14,6 +14,11 @@ const TOWER_H = 60;          // これ以上は tower
 const OFFICE_H = 20;         // これ以上は office、未満は house
 const NEAR_DIST = 110;       // 中心からこの距離未満は低くする（上空から広場と軍勢が見えるように）
 const NEAR_MAX_H = 28;       // その範囲の最大の高さ m
+// 広場のまわりは、近いほど低い上限（広場に面する最初の一周は 5〜6 階建てほど）。上空カメラが近くても手前の建物が
+// 広場を隠さず、広場から外へ街がせり上がって見える。上限 = NEAR_BASE_H + NEAR_SLOPE × 中心からの距離（NEAR_MAX_H まで）
+const NEAR_BASE_H = 6;
+const NEAR_SLOPE = 0.4;
+const NEAR_VARY = 0.45;      // 近くの建物は上限の (1 - NEAR_VARY)〜1 倍にばらつく（同じ高さが並ばない）
 
 // 体積(m³)あたりの金額（円）
 const RATE = { house: 20000, office: 60000, tower: 120000 };
@@ -46,8 +51,12 @@ export function generateCity(seed, cfg = CONFIG) {
         // 建物なし
       } else {
         const t = dist / R;
-        const maxH = dist < NEAR_DIST ? NEAR_MAX_H : CENTER_MAX_H;
-        const h = Math.max(EDGE_H[0], Math.min(maxH, edge + (CENTER_MAX_H - edge) * (1 - t) ** 2 * noise));
+        let h = Math.max(EDGE_H[0], edge + (CENTER_MAX_H - edge) * (1 - t) ** 2 * noise);
+        if (dist < NEAR_DIST) {
+          const cap = Math.min(NEAR_MAX_H, NEAR_BASE_H + NEAR_SLOPE * dist);
+          const vary = (noise - 0.55) / 0.45; // 0〜1
+          h = Math.max(EDGE_H[0], Math.min(h, cap * (1 - NEAR_VARY * (1 - vary))));
+        }
         const kind = kindOf(h);
         buildings.push({ id: buildings.length, x, z, w, d, h, dist, value: w * h * d * RATE[kind], kind });
       }

@@ -18,14 +18,14 @@ function cityCam(w = 390, h = 844) {
 const view = cityCam();
 const distAt = (t) => Math.hypot(...view.pos.map((p, i) => p - view.dir[i] * t));
 
-// 地面の上の球の点が、t 下がったカメラの画角にすべて入るか
+// 地面の上の球の点が、t 下がったカメラの画角にすべて入るか（wholeFitPullback の 13 段 × 48 方位の間の点も調べる）
 function domeInView(radius, t, { cam, pos, dir } = view) {
   const c = cam.clone();
   c.position.fromArray(pos).addScaledVector(new THREE.Vector3().fromArray(dir), -t);
   c.updateMatrixWorld();
   const fr = new THREE.Frustum().setFromProjectionMatrix(new THREE.Matrix4().multiplyMatrices(c.projectionMatrix, c.matrixWorldInverse));
-  for (let i = 0; i <= 8; i++) for (let j = 0; j < 48; j++) {
-    const el = (i / 8) * Math.PI / 2, az = (j / 48) * Math.PI * 2;
+  for (let i = 0; i <= 24; i++) for (let j = 0; j < 48; j++) {
+    const el = (i / 24) * Math.PI / 2, az = (j / 48) * Math.PI * 2;
     const p = new THREE.Vector3(Math.cos(el) * Math.cos(az), Math.sin(el), Math.cos(el) * Math.sin(az)).multiplyScalar(radius);
     if (!fr.containsPoint(p)) return false;
   }

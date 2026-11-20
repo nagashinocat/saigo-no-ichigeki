@@ -74,3 +74,14 @@ test('広場の近く（中心から 100m 未満）の建物は高さ 35m 以下
     for (const b of near) expect(b.h).toBeLessThanOrEqual(35);
   }
 });
+
+test('広場のまわりの建物は高さがばらつき、広場に面する最初の一周（中心から 40m 未満）は 22m 以下で、その外より低め', () => {
+  for (const seed of [1, 2, 3, 42, 999]) {
+    const bs = generateCity(seed).buildings;
+    const ring1 = bs.filter((b) => b.dist < 40), ring2 = bs.filter((b) => b.dist >= 50 && b.dist < 100);
+    for (const b of ring1) expect(b.h).toBeLessThanOrEqual(22);
+    expect(avg(ring1.map((b) => b.h))).toBeLessThan(avg(ring2.map((b) => b.h)));
+    const near = bs.filter((b) => b.dist < 100).map((b) => Math.round(b.h));
+    expect(new Set(near).size).toBeGreaterThanOrEqual(6); // 同じ高さが並ばない
+  }
+});

@@ -4,13 +4,13 @@ import { groundHeight } from './sphereDeform.js';
 
 // 街の中の人の姿: 謎の軍勢（InstancedMesh、歩く・しがみつく動きは頂点シェーダー）と、広場に立つ主人公。
 // 軍勢は揃いの暗い装備で、顔はヘルメットと覆面でほぼ隠れ、目の部分だけ開いている。目は光を受けて光る。
-// 上空カメラ（約 380m 先）では 2m の人は 2px ほどにしかならないので、遠いほど少し大きく描き（最大 ENEMY_LOOK.maxBoost 倍）、
+// 上空カメラ（広場まで約 110m）でも 2m の人は 6px ほどにしかならないので、遠いほど大きく描き（最大 ENEMY_LOOK.maxBoost 倍）、
 // ビルに隠れた者は、隠れた部分だけ暗い青の影絵で上に重ねる（深さが奥のときだけ描くもう一つのパス）。
 
 export const ENEMY_LOOK = {
   height: 1.8,      // m
-  minPx: 9,         // 画面の上でこの高さ（px）より小さければ大きく描く
-  maxBoost: 2.6,
+  minPx: 16,         // 画面の上でこの高さ（CSS の px）より小さければ大きく描く
+  maxBoost: 3,
   clingRadius: 0.55, // 掴んでいる者は主人公のこの距離にしがみつく（m）
   deadFling: 1.1,    // 倒れた者が吹き飛んで消えるまで（s）
 };
@@ -184,13 +184,14 @@ void main() {
 // 遠くの者の目印: 頭の位置に、画面の上で決まった大きさの暗い丸と、光る目の横線。
 // 見えている者は濃く、ビルに隠れた者は薄く（深さが奥のときだけ描くもう一つのパス）。近くでは消える。
 const MARKER_VERT = /* glsl */`
-uniform float uPx, uMinPx, uHeight, uMarker;
+uniform float uPx, uMinPx, uMaxBoost, uHeight, uMarker;
 varying float vFar;
 void main() {
   vec4 wp = modelMatrix * vec4(position, 1.0);
   float dist = max(1.0, distance(wp.xyz, cameraPosition));
   float px = uHeight * uPx / dist;
-  vFar = smoothstep(uMinPx * 3.0, uMinPx * 1.2, px);
+  // 大きく描いても小さいままの遠い者だけ（大きく描いた姿が読める近さでは消す）
+  vFar = smoothstep(uMinPx * 1.0, uMinPx * 0.6, px * uMaxBoost);
   gl_PointSize = uMarker * vFar;
   gl_Position = projectionMatrix * viewMatrix * wp;
 }`;
@@ -404,6 +405,7 @@ export function createEnemyView(scene, tier, { sunDir = new THREE.Vector3(0.8, 0
       uniforms.uTime.value = time;
       uniforms.uMarker.value = 11 * pixelRatio;
       uniforms.uPx.value = pointScale;
+      uniforms.uMinPx.value = ENEMY_LOOK.minPx * pixelRatio; // pointScale は画素の px なので、基準も CSS の px から直す
       uniforms.uGlow.value = glow;
       let n = 0;
       const a = anim.array;
