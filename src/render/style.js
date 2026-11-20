@@ -421,6 +421,7 @@ export function createStyle(tierName) {
     props: {
       body: makeToonMaterial('car', uniforms, { color: 0xffffff, roughness: 0.35 }),
       metal: makeToonMaterial('metal', uniforms, { color: 0x4a4d57, roughness: 0.6 }),
+      debris: makeToonMaterial('debris', uniforms, { color: 0xffffff, roughness: 0.9 }),
       roofBox: makeToonMaterial('roofBox', uniforms, { color: 0xb8b6b4, roughness: 0.85 }),
       lampHead: makeGlowMaterial('lamp', uniforms, { color: new THREE.Color(1.0, 0.82, 0.55).multiplyScalar(1.6) }),
       signPanel: makeGlowMaterial('sign', uniforms, { color: 0xffffff }),

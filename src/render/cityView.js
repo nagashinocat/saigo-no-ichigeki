@@ -181,11 +181,28 @@ export function createCityView(city, style, tier) {
       const e = byId.get(id);
       return e ? { mesh: e.mesh, index: e.index } : null;
     },
+    getBuildingColor(id) {
+      const e = byId.get(id);
+      if (!e) return null;
+      const c = new THREE.Color();
+      e.mesh.getColorAt(e.index, c);
+      return [c.r, c.g, c.b];
+    },
     hideBuilding(id) {
       const e = byId.get(id);
       if (!e) return;
       hide(e);
       e.extras.forEach(hide);
+    },
+    // 破片の出発点と色。props は道路沿いに数 m ずらして置いているので、見えている位置を返す。
+    getPropVisual(id) {
+      const part = (propParts.get('p' + id) ?? [])[0];
+      if (!part) return null;
+      part.mesh.getMatrixAt(part.index, _m);
+      _p.setFromMatrixPosition(_m);
+      const c = new THREE.Color(0.45, 0.46, 0.5);
+      if (part.mesh.instanceColor) part.mesh.getColorAt(part.index, c);
+      return { x: _p.x, z: _p.z, color: [c.r, c.g, c.b] };
     },
     hideProp(id) {
       for (const part of propParts.get('p' + id) ?? []) hide(part);

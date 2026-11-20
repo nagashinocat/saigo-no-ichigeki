@@ -4,6 +4,8 @@ import { TIERS, pickTier, nextTier, createFpsGovernor } from './render/quality.j
 import { createViews, createHandScene } from './render/views.js';
 import { createStyle } from './render/style.js';
 import { createCityView } from './render/cityView.js';
+import { createDestruction } from './world/destruction.js';
+import { createDebrisView } from './render/debrisView.js';
 
 const MAX_FRAME_DT = 0.1;
 
@@ -48,11 +50,11 @@ function bindTemporaryInput(target) {
 }
 bindTemporaryInput(canvas);
 
-// 壊れたものを隠す（破片の演出は Task 8 で足す）
-game.on('hit', ({ hit }) => {
-  const id = Number(hit.id.slice(1));
-  if (hit.id[0] === 'b') cityView.hideBuilding(id); else cityView.hideProp(id);
-});
+// 壊れたものは破片になる（手前の物理の焦点は Task 11 で演出カメラに合わせる。null なら全部プール）
+const destruction = createDestruction({ cityView, getTier: () => TIERS[tier], seed });
+const debrisView = createDebrisView(style, destruction.pool, destruction.near, TIERS.high.debrisMax + TIERS.high.nearPhysicsMax);
+cityScene.add(debrisView.mesh);
+game.on('hit', (e) => destruction.onHit(e));
 
 // 画質の自動調整。ここでは画素比だけを下げる（破片数などの他の値は後の Task が TIERS[tier] から読む）
 const governor = createFpsGovernor({ target: isMobile ? 30 : 55 });
@@ -71,6 +73,8 @@ function frame(now) {
   last = now;
   if (governor.sample(dt) === 'down') lowerTier();
   game.update(dt);
+  destruction.update(dt);
+  debrisView.update();
   views.render(cityScene, hand.scene);
   requestAnimationFrame(frame);
 }
@@ -80,3 +84,4 @@ requestAnimationFrame(frame);
 window.__game = game;
 window.__tier = tier;
 window.__cityView = cityView;
+window.__destruction = destruction;
