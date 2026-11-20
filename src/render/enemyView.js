@@ -437,7 +437,7 @@ export function createEnemyView(scene, tier, { sunDir = new THREE.Vector3(0.8, 0
       markerPos.needsUpdate = true;
       mesh.instanceMatrix.needsUpdate = true;
       anim.needsUpdate = true;
-      _p.set(0, groundHeight(0, fronts), 0);
+      _p.set(0, 0, 0); // 主人公は浮いている（足元の地面が下がっても y=0）
       hero.setMatrixAt(0, _m.compose(_p, _q.setFromEuler(_e.set(0, heroYaw, 0)), _s));
       hero.instanceMatrix.needsUpdate = true;
     },

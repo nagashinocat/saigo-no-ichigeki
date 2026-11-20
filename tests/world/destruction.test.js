@@ -150,7 +150,7 @@ test('止まった瓦礫は毎フレーム動かさない（位置も変更の�
   expect(Array.from(d.rubble.data.px)).toEqual(Array.from(snapX));
 });
 
-test('大きな一発で穴が広がると、下の地面がなくなった瓦礫は消える（土煙）。主人公の塔の斜面の瓦礫は残る', () => {
+test('大きな一発で穴が広がると、下の地面がなくなった瓦礫は消える（土煙）。まだ下の地面がある瓦礫は残る', () => {
   const { d } = make();
   settleIn(d, 4);
   const n = d.rubble.count;
@@ -159,7 +159,7 @@ test('大きな一発で穴が広がると、下の地面がなくなった瓦�
   const dust = d.update(1 / 60, [300]);
   expect(dust.length).toBeGreaterThan(0);
   expect(d.rubble.count).toBeLessThan(n);
-  // 残った瓦礫は、どれも下の地面が残っている（塔の斜面の上）
+  // 残った瓦礫は、どれも下の地面が残っている（穴の面の上）
   const { data } = d.rubble;
   for (let s = 0; s < d.rubble.capacity; s++) {
     if (!d.rubble.isLive(s)) continue;
