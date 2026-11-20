@@ -427,6 +427,43 @@ test('どの level でも関節の角度は自然な範囲（曲げ 0〜100°）
 
 ---
 
+### Task 10b: 手のモデルを自作し直す（手の形へのこだわり）
+
+背景: 持ち主は「手の形」に特にこだわる。Task 10 では無料の generic-hand（WebXR, MIT）を使ったが、作りが粗く、貯め0.9では中指〜小指が球の後ろに隠れて手袋のように見え、手首の切れ目も暖色の塊として見える。手の形を主役にできる、自作の手に置き換える。
+
+**Files:**
+- Create: `src/render/handModel.js`（コードで手のメッシュとボーンを組み立てる）
+- Modify: `src/render/handView.js`, `src/main.js`（glb の読み込みをやめる）, `src/render/handPose.js`（関節名が変わる場合のみ）
+- Delete: `public/models/hand-right.glb`, `public/models/LICENSE-hand.txt`（使わなくなるため）
+- Test: `tests/render/handModel.test.js`
+
+**Interfaces:**
+- Consumes: `poseFor(level, t)`（関節名 → 回転）。関節名は WebXR の名前（`wrist`, `thumb-metacarpal`, `thumb-phalanx-proximal`, `thumb-phalanx-distal`, `thumb-tip`, `index-finger-metacarpal`, `index-finger-phalanx-proximal`, `index-finger-phalanx-intermediate`, `index-finger-phalanx-distal`, `index-finger-tip`, middle/ring/pinky も同様）をそのまま使う。
+- Produces: `buildHandModel({ detail: 'high'|'low' }) -> { root: Object3D, mesh: SkinnedMesh, bones: Record<jointName, Bone> }`。`createHandView(model, tier)` は glb の代わりにこれを受け取る（`null` でも従来どおり球だけで動く）。
+
+**作り方の決めごと:**
+- 指は関節ごとのカプセルを滑らかにつないだ形にする。各指は付け根から先へ細くし、関節は少しふくらませる。爪は指先の甲側に平たい板を置き、少し明るい色にする。手のひらには親指の付け根のふくらみを入れ、指の付け根に小さな段差をつける。手首は前腕へ自然に細くつなげ、画面の外まで伸ばして切れ目を見せない。
+- 力強く表情のある大人の手にする。指は長めで、関節がはっきりわかる形にする。リアル寄りの比率で、陰影は既存のアニメ調の3段に合わせる。
+- 1つの SkinnedMesh で、各頂点を最も近い2本のボーンに重みづけする。頂点数の上限は high 約6000、low 約2500。
+- 貯め0.9でも、5本の指すべてが球の手前か横に見えるようにする。手の向き、カメラ、球の位置を合わせて調整する。指が球をつかもうとして、こわばり鉤爪のように曲がる形を見せる。
+- 元の作品の手やキャラクターの意匠をまねしない。手袋・装飾品・特徴的な衣装はつけない。
+
+- [ ] **Step 1: 失敗するテストを書く**
+
+```js
+test('25関節（wrist と各指の metacarpal〜tip）すべてのボーンがある', () => {});
+test('頂点数が上限内（high ≤ 6000, low ≤ 2500）', () => {});
+test('スキンの重みは各頂点で合計1、参照するボーンの番号は範囲内', () => {});
+test('poseFor(0.9) を当てると、どの指先も手首から一定以上離れ、球の中心より手前（カメラ側）か横にある', () => {});
+```
+
+- [ ] **Step 2〜4: 失敗確認 → 実装 → 成功確認**
+- [ ] **Step 5: 置き換え**　handView と main を自作の手に切り替え、glb の読み込みと、そのタイムアウト処理を消す（球だけで動く経路は残す）。
+- [ ] **Step 6: 目で確認**　貯め 0 / 0.5 / 0.9、0.9で器0.1、放つ瞬間、大きな一発の開いたまま、を 1280×720 と 390×844 で撮る。次の3点を確かめる: 5本の指が見えること、関節の曲がりと鉤爪のこわばりがはっきりわかること、手首に切れ目がないこと。Task 10 の画像（shots/t10-*.png）と並べて比べ、良くなっていることを確かめる。
+- [ ] **Step 7: コミット**
+
+---
+
 ### Task 11: 軍勢の見た目・放つ瞬間のカメラ・目が映る一拍
 
 **Files:**
