@@ -235,58 +235,60 @@ varying vec2 vUv;
 float h21(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
 float vn(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
   return mix(mix(h21(i), h21(i + vec2(1, 0)), f.x), mix(h21(i + vec2(0, 1)), h21(i + vec2(1, 1)), f.x), f.y); }
-// 片目。q は目の中心からの位置（横 ±0.36 が目の幅）。side: 外側（目じり）の向き
+// 片目。q は目の中心からの位置（横 ±0.36 が目の幅）。side: 外側（目じり）の向き。
+// uOpen 0: 重く平らな上まぶたを目頭へ下げた、細く硬いにらみ。1: 黒目の上下に白目が見える、凍りついた見開き。
 vec4 eye(vec2 q, float side, inout vec3 col) {
   float x = q.x * side; // 正が目じり
   float a = 0.36;
   float t = clamp(x / a, -1.0, 1.0);
-  float w = 1.0 - t * t;
-  // まぶたの線: 上は目じりへ少し上がる鋭い形、下はゆるい弧
-  // 目頭の側が下がった、にらむ形（uOpen が大きいと見開く）
-  float up = (0.17 * uOpen + 0.035) * pow(max(w, 0.0), 0.55) + 0.06 * t - 0.015;
-  float lo = -0.085 * pow(max(w, 0.0), 0.9) + 0.03 * t;
+  float w = max(1.0 - t * t, 0.0);
+  float up = mix(0.045, 0.15, uOpen) * pow(w, 0.35) + mix(0.06, 0.02, uOpen) * t - mix(0.012, 0.0, uOpen);
+  float lo = -mix(0.05, 0.1, uOpen) * pow(w, 0.8) + 0.015 * t;
   float inside = step(abs(x), a) * step(lo, q.y) * step(q.y, up);
-  // 上まぶたの影と線（太いまつ毛の線、目じりで太く跳ねる）
-  float upLine = 1.0 - smoothstep(0.0, 0.022 + 0.018 * max(t, 0.0), abs(q.y - up - 0.006));
-  upLine *= smoothstep(a + 0.03, a - 0.05, abs(x)) + step(0.0, t) * smoothstep(a + 0.08, a, x) * step(up, q.y);
-  float loLine = (1.0 - smoothstep(0.0, 0.008, abs(q.y - lo))) * smoothstep(a, a * 0.3, abs(x)) * 0.7;
-  float crease = (1.0 - smoothstep(0.0, 0.007, abs(q.y - up - 0.07 - 0.02 * w))) * smoothstep(a, 0.0, abs(x - 0.05)) * 0.5;
-  // 白目: 上まぶたの影で上が暗い
-  vec3 white = mix(vec3(0.55, 0.58, 0.66), vec3(0.93, 0.92, 0.9), smoothstep(up, up - 0.12, q.y));
+  // 上まぶたの太く平らな線（目じりで跳ねずに切れる）と、まぶたの影
+  float upLine = (1.0 - smoothstep(0.0, 0.016 + 0.01 * w, abs(q.y - up - 0.008))) * smoothstep(a + 0.02, a - 0.04, abs(x));
+  float loLine = (1.0 - smoothstep(0.0, 0.006, abs(q.y - lo))) * smoothstep(a, a * 0.2, abs(x)) * 0.8;
+  // 白目: くすんだ色。上まぶたの影、目じりと目頭に細い血の筋
+  vec3 white = mix(vec3(0.42, 0.42, 0.44), vec3(0.78, 0.76, 0.72), smoothstep(up, up - 0.1, q.y));
+  float vein = smoothstep(0.86, 0.97, vn(vec2(q.x * 46.0 + side * 3.0, q.y * 14.0 + uSeed * 9.0))) * smoothstep(0.35, 0.95, abs(t));
+  white = mix(white, vec3(0.55, 0.12, 0.1), vein * 0.75);
   vec3 c = white;
-  // 黒目: 上が暗く、下が明るい。光を受けて縁が光り、瞳は光が強いほど小さい
-  vec2 ic = vec2(uLook * 0.05 * side + 0.01 * sin(uTime * 23.0) * uGlow, 0.02);
-  float ri = 0.115;
+  // 黒目は小さく、瞳は光が迫るほど点になる。細かく震える
+  vec2 ic = vec2(uLook * 0.04 * side, -0.004);
+  float ri = 0.074;
   vec2 d = (q - ic) * vec2(side, 1.0);
   float r = length(d) / ri;
   if (r < 1.0) {
-    vec3 iris = mix(uIris * 0.35, uIris * 1.25, smoothstep(0.6, -0.8, d.y / ri));
+    vec3 iris = mix(uIris * 0.3, uIris * 0.95, smoothstep(0.7, -0.8, d.y / ri));
     float ang = atan(d.y, d.x);
-    iris *= 0.82 + 0.3 * vn(vec2(ang * 7.0, r * 3.0)); // 放射状の筋
-    iris = mix(iris, uIris * 0.15, smoothstep(0.78, 0.98, r)); // 縁の暗い輪
-    iris += vec3(1.0, 0.72, 0.4) * uGlow * 0.6 * smoothstep(0.2, 0.9, -d.y / ri) * (1.0 - r); // 下から差す爆発の光
-    float pr = mix(0.42, 0.2, uGlow);
-    iris = mix(vec3(0.015), iris, smoothstep(pr - 0.04, pr + 0.04, r));
+    iris *= 0.8 + 0.3 * vn(vec2(ang * 9.0, r * 4.0));
+    iris = mix(iris, vec3(0.02), smoothstep(0.75, 0.97, r)); // 縁の黒い輪
+    float pr = mix(0.4, 0.14, uGlow);
+    iris = mix(vec3(0.008), iris, smoothstep(pr - 0.05, pr + 0.05, r));
     c = iris;
   }
-  // 映り込みの光: 大きな白い光（左上）と、小さな橙の光（爆心の球）
-  vec2 hl = d - vec2(-0.045, 0.045);
-  c = mix(c, vec3(3.0), 1.0 - smoothstep(0.018, 0.026, length(hl * vec2(1.0, 1.3))));
-  vec2 hb = d - vec2(0.04, -0.035);
-  c = mix(c, vec3(4.0, 2.4, 1.1), (1.0 - smoothstep(0.006 + 0.012 * uGlow, 0.012 + 0.016 * uGlow, length(hb))) * (0.4 + 0.6 * uGlow));
-  c *= 1.0 - 0.6 * smoothstep(up - 0.05, up, q.y); // まぶたの下の影
+  // 小さく鋭い光ひとつ（左上）と、迫る爆発の橙の点（育つ）
+  c = mix(c, vec3(2.6), 1.0 - smoothstep(0.008, 0.012, length(d - vec2(-0.03, 0.03))));
+  float ob = 1.0 - smoothstep(0.003 + 0.016 * uGlow, 0.006 + 0.02 * uGlow, length(d - vec2(0.022, -0.02)));
+  c = mix(c, vec3(4.0, 1.9, 0.6) * (0.6 + uGlow), ob * (0.3 + 0.7 * uGlow));
+  c *= 1.0 - 0.7 * smoothstep(up - 0.045, up, q.y); // 上まぶたが落とす濃い影
   col = mix(col, c, inside);
-  col = mix(col, vec3(0.03, 0.02, 0.025), clamp(upLine, 0.0, 1.0));
-  col = mix(col, uSkin * 0.35, loLine + crease);
+  col = mix(col, vec3(0.02, 0.015, 0.018), clamp(upLine, 0.0, 1.0));
+  col = mix(col, uSkin * 0.3, loLine);
+  // 下まぶたの下の暗いくま
+  float bag = smoothstep(0.0, -0.03, q.y - lo) * smoothstep(-0.11, -0.03, q.y - lo) * smoothstep(a, 0.0, abs(x));
+  col *= 1.0 - 0.45 * bag;
   return vec4(col, inside);
 }
 void main() {
   vec2 p = (vUv - 0.5) * vec2(2.0, 1.0); // x: -1..1, y: -0.5..0.5
+  p += vec2(sin(uTime * 61.0), cos(uTime * 47.0)) * 0.0025 * (0.4 + uGlow); // こわばった細かい震え
   // ヘルメットのつばの下端と、覆面の上端（目の開きの上下）。ゆるい弧
   float top = 0.24 - 0.05 * p.x * p.x;
   float bot = -0.2 + 0.06 * p.x * p.x;
   // 目の開きの中: 肌。上はつばの影で暗く、下から爆発の光
-  vec3 skin = uSkin * mix(0.55, 0.95, smoothstep(top, bot, p.y));
+  vec3 sk = mix(uSkin, vec3(dot(uSkin, vec3(0.3, 0.59, 0.11))), 0.45); // くすんだ肌
+  vec3 skin = sk * mix(0.4, 0.8, smoothstep(top, bot, p.y));
   skin += vec3(1.0, 0.6, 0.3) * uGlow * 0.35 * smoothstep(0.0, bot, p.y);
   vec3 col = skin;
   // 目（左右）
@@ -311,8 +313,11 @@ void main() {
     mask += vec3(1.0, 0.65, 0.35) * uGlow * 0.12 * (1.0 - smoothstep(0.0, 0.1, bot - p.y));
     col = mask;
   }
-  // 周りを暗く絞る
+  // 周りを暗く絞り、全体の色を少し抜く（爆発の橙の点だけが色を持つ）
   col *= 1.0 - 0.45 * smoothstep(0.5, 1.05, length(p * vec2(0.85, 1.5)));
+  float lum = dot(col, vec3(0.3, 0.59, 0.11));
+  float hot = smoothstep(0.6, 1.4, col.r - col.b);
+  col = mix(mix(col, vec3(lum), 0.3), col, hot);
   gl_FragColor = vec4(col, 1.0);
 }`;
 

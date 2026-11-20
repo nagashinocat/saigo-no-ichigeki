@@ -1,5 +1,7 @@
 import { test, expect } from 'vitest';
-import { chooseShot, CINE, pathPoint, chaseLook, leadFor, minLeadFor, createChase } from '../../src/render/cinematic.js';
+import * as THREE from 'three';
+import { chooseShot, CINE, pathPoint, chaseLook, sphereWall, leadFor, minLeadFor, createChase, createCinematic } from '../../src/render/cinematic.js';
+import { buildEyeCloseup } from '../../src/render/enemyView.js';
 import { generateCity } from '../../src/world/cityGen.js';
 import { radiusFor } from '../../src/game/charge.js';
 import { createRng } from '../../src/rng.js';
@@ -62,7 +64,7 @@ test('カメラは地面より上を通り、ビルの中を通らない（目�
     const bad = [];
     for (let s = 1; s <= end; s += 2) {
       const p = pathPoint(plan.path, s);
-      if (p[1] <= 1 || city.buildings.some((b) => inside(p, b, 1))) bad.push(s);
+      if (p[1] <= 1 || city.buildings.some((b) => inside(p, b, CINE.clearance - 0.01))) bad.push(s);
     }
     expect(bad).toEqual([]);
     expect(plan.camPos).toEqual(pathPoint(plan.path, CINE.beatDist[plan.reflector.type]));
@@ -140,4 +142,94 @@ test('追われて引くカメラ: 生きた front を読み、常に front + mi
   // 大きな dt でも front を追い越されない
   const c2 = createChase(10);
   expect(c2.update(0.5, 200)).toBeGreaterThanOrEqual(200 + minLeadFor(200));
+});
+
+// 線分 a→c がビルの箱を通るか
+function segHits(a, c, b) {
+  const lo = [b.x - b.w / 2, 0, b.z - b.d / 2], hi = [b.x + b.w / 2, b.h, b.z + b.d / 2];
+  let t0 = 0, t1 = 1;
+  for (let i = 0; i < 3; i++) {
+    const d = c[i] - a[i];
+    if (Math.abs(d) < 1e-9) { if (a[i] < lo[i] || a[i] > hi[i]) return false; continue; }
+    let u = (lo[i] - a[i]) / d, v = (hi[i] - a[i]) / d;
+    if (u > v) [u, v] = [v, u];
+    t0 = Math.max(t0, u); t1 = Math.min(t1, v);
+    if (t0 > t1) return false;
+  }
+  return true;
+}
+
+test('追われ始め（front が狙うビルに届くまで）は、カメラから迫る球の壁への見通しを、まだ飲み込まれていないビルがふさがない', () => {
+  for (const { plan } of cases()) {
+    const b = city.buildings.find((x) => x.id === plan.targetId);
+    for (const front of CINE.losFronts.map((k) => k * b.dist)) {
+      const cam = pathPoint(plan.path, front + leadFor(front)), wall = sphereWall(plan.path, front);
+      const blockers = city.buildings.filter((o) => o.dist > front * 1.05 && o !== b && segHits(cam, wall, o));
+      expect(blockers.map((o) => o.id)).toEqual([]);
+    }
+  }
+});
+
+// createCinematic の進み方（描画の部品は小さな身代わり）
+function makeCinematic() {
+  const views = { size: { w: 1280, h: 720 }, cityCamera: new THREE.PerspectiveCamera(60, 16 / 9, 1, 6000) };
+  const enemyView = { setHeroYaw() {}, eyeCloseup: (id) => buildEyeCloseup(id) };
+  const explosionView = { screen: { flash: 0.3, time: 0, heat: null } };
+  const renderer = { getRenderTarget: () => null, setRenderTarget() {}, render() {} };
+  const cin = createCinematic(views, enemyView, explosionView, { renderer, scene: new THREE.Scene() });
+  const plan = chooseShot({ shot: SHOTS[1], buildings: city.buildings, enemies: ARMY, rng: createRng(3) });
+  return { cin, plan };
+}
+const advance = (cin, sec, blasts = [], dt = 1 / 60) => { for (let t = 0; t < sec - 1e-9; t += dt) cin.update(dt, blasts); };
+
+test('createCinematic: 手の画面 → 真っ白 → 全画面で止まった時間 → 動き出し → 追う → 上空へなじんで終わる', () => {
+  const { cin, plan } = makeCinematic();
+  expect(cin.active).toBe(false);
+  expect(cin.fullscreen).toBe(false);
+  expect(cin.worldScale).toBe(1);
+  cin.play(plan, SHOTS[1]);
+  expect(cin.active).toBe(true);
+  expect(cin.frozen).toBe(true);
+  advance(cin, 0.1);
+  expect(cin.fullscreen).toBe(false); // 両手が組み合わさる間は2画面
+  expect(cin.white).toBe(false);
+  expect(cin.worldScale).toBe(0);
+  advance(cin, 0.2); // 0.3 s
+  expect(cin.white).toBe(true);
+  expect(cin.fullscreen).toBe(true);
+  advance(cin, 0.3); // 0.6 s
+  expect(cin.white).toBe(false);
+  expect(cin.fullscreen).toBe(true);
+  expect(cin.worldScale).toBe(0);
+  expect(cin.screen.flash).toBeLessThan(0.05);
+  advance(cin, CONFIG.cinematic.freezeSec - 0.6); // 一拍が終わり、世界が動き出している
+  expect(cin.worldScale).toBeCloseTo(1, 5);
+  cin.end();
+  expect(cin.frozen).toBe(false);
+  expect(cin.fullscreen).toBe(true);
+  expect(cin.screen.flash).toBe(0.3); // 追う間は本爆発の閃光
+  const blast = { id: 9, shot: SHOTS[1], front: 0 };
+  for (let i = 0; i < 60; i++) { blast.front += 3; cin.update(1 / 60, [blast]); }
+  expect(cin.phase).toBe('chase');
+  // カメラは front より先（目から引いた横の距離が front + minLead 以上）
+  const p = cin.camera.position;
+  expect(Math.hypot(p.x, p.z)).toBeGreaterThanOrEqual(blast.front + minLeadFor(blast.front) - 1e-6);
+  advance(cin, 0.1, []); // 追っていた一発が終わる
+  expect(cin.phase).toBe('settle');
+  advance(cin, 2);
+  expect(cin.active).toBe(false);
+  expect(cin.fullscreen).toBe(false);
+});
+
+test('createCinematic: 追う一発が見つからないままでも、決まった時間で上空へ戻る', () => {
+  const { cin, plan } = makeCinematic();
+  cin.play(plan, SHOTS[1]);
+  advance(cin, CONFIG.cinematic.freezeSec);
+  cin.end();
+  advance(cin, CINE.chaseMaxSec - 0.1);
+  expect(cin.phase).toBe('chase');
+  advance(cin, 0.2);
+  expect(cin.phase).toBe('settle');
+  advance(cin, 2);
+  expect(cin.active).toBe(false);
 });

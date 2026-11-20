@@ -67,9 +67,12 @@ void main() {
   #else
   float inPic = 1.0;
   #endif
+  // 映った像は、ガラスのわずかなゆがみでゆれ、空の映り込みと重なる（貼り紙ではなく映り込みに見えるように）
+  e += vec2(sin(vUv.y * 17.0 + vUv.x * 5.0) * 0.008, sin(vUv.x * 13.0 - vUv.y * 4.0) * 0.006);
   vec3 eye = texture2D(tEye, clamp(e, 0.0, 1.0)).rgb;
-  col = mix(col, uBase * 0.5 + eye * uTint, uReflect * inPic * (1.0 - 0.35 * fres));
-  a = mix(a, 0.96, uReflect);
+  float k = uReflect * inPic;
+  col = col * (1.0 - 0.72 * k) + eye * uTint * 0.9 * k;
+  a = mix(a, 0.82, uReflect);
   #ifndef PUDDLE
   // ひび（目の像の上を一本走る）
   vec2 c1 = vUv - vec2(0.62, 0.4);

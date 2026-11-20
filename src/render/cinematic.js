@@ -20,10 +20,14 @@ export const CINE = {
   beatDist: { glass: 16, visor: 16, puddle: 11 }, // 目の一拍のとき、カメラが目から引いた横の距離（m）
   // 道の形: 横に x 引いたときの高さ = 目の高さ + rise·(1 − e^(−x/riseLen)) + slope·x。
   // 最初に急に上がって広場のまわりのビル（〜35m）を越え、そのあとはゆるい角度で街の上を引く。
-  rises: [3, 8, 16, 26, 38, 50, 64, 80], // 低い順に試す（低いほど、迫る球の壁が大きく見える）
+  rises: [3, 8, 16, 26, 38, 50, 64, 80, 100, 125], // 低い順に試す（低いほど、迫る球の壁が大きく見える）
   riseLen: 10,
   slope: [0.12, 0.42],
   puddleMaxRise: 3,     // 水たまりは、最初にほとんど上がらない道のときだけ
+  clearance: 8,         // 道はビルからこの距離（m）より離れる（近くの壁で画面が埋まらないように）
+  losFronts: [0.3, 0.5, 0.75, 1.0], // 球が狙うビルのこの割合まで来たとき、カメラから迫る球の壁への見通しがあること
+  riseWeight: 1 / 40,   // 低い道を好む強さ（上がる高さ 1m あたりの減点）
+  chaseMaxSec: 6,       // 追う一発が見つからなくても、この秒数で上空へ戻る
   sideAz: 0.2,          // 道の向きを、狙うビルの向きからずらす最大（rad。ビルの横をかすめる）
   reflectAhead: 2.8,    // ガラス片・バイザー片は一拍のカメラのこの距離の前で止まる（m）
   puddleAhead: 4.2,
@@ -52,6 +56,12 @@ export function pathPoint(path, x) {
 export function chaseLook(path, front) {
   const h = path.look;
   return [h[0] * front * 0.9, 1.2 + front * 0.3, h[2] * front * 0.9];
+}
+
+// 迫る球の壁の、カメラ側の中ほどの高さの点（見通しを確かめる先）。仰角 50°
+export function sphereWall(path, front) {
+  const h = path.look, c = Math.cos(0.87), sn = Math.sin(0.87);
+  return [h[0] * front * c, front * sn, h[2] * front * c];
 }
 
 // 点 p が、cam から look を向いたカメラの横・縦の何度にあるか
@@ -83,27 +93,49 @@ function pickTarget(buildings, R, enemy, rng) {
   return best;
 }
 
-// 道の採点: ビルを通る（または地面すれすれの）点があれば使わない（Infinity）。
+// 線分 a→c がビルの箱を通るか（スラブ法）
+function segHitsBox(a, c, b) {
+  const lo = [b.x - b.w / 2, 0, b.z - b.d / 2], hi = [b.x + b.w / 2, b.h, b.z + b.d / 2];
+  let t0 = 0, t1 = 1;
+  for (let i = 0; i < 3; i++) {
+    const d = c[i] - a[i];
+    if (Math.abs(d) < 1e-9) { if (a[i] < lo[i] || a[i] > hi[i]) return false; continue; }
+    let u = (lo[i] - a[i]) / d, v = (hi[i] - a[i]) / d;
+    if (u > v) [u, v] = [v, u];
+    t0 = Math.max(t0, u); t1 = Math.min(t1, v);
+    if (t0 > t1) return false;
+  }
+  return true;
+}
+
+// 道の採点: ビルに clearance より近づく（または地面すれすれの）点があれば使わない（Infinity）。
+// 追われ始め（球が狙うビルに届くまで）に、迫る球の壁への見通しを、まだ飲み込まれていないビルがふさぐと大きく減点。
 // あとは、球がビルに届く瞬間にビルが画面からはみ出す角度（度）。
-function scorePath(path, b, near, R, ground) {
+function scorePath(path, b, near, wide, R, ground) {
   const end = R + leadFor(R);
   for (let s = 1; s <= end; s += 2) {
     const p = pathPoint(path, s);
     if (p[1] <= ground(p) + 1.5) return Infinity;
-    for (const o of near) if (inBox(p, o, 1.5)) return Infinity;
+    for (const o of near) if (inBox(p, o, CINE.clearance)) return Infinity;
+  }
+  let blocked = 0;
+  for (const k of CINE.losFronts) {
+    const front = k * b.dist;
+    const cam = pathPoint(path, front + leadFor(front)), wall = sphereWall(path, front);
+    if (wide.some((o) => o.dist > front * 1.05 && o.id !== b.id && segHitsBox(cam, wall, o))) blocked++;
   }
   const cam = pathPoint(path, b.dist + leadFor(b.dist));
   const a = viewAngles(cam, chaseLook(path, b.dist), [b.x, b.h * 0.5, b.z]);
   if (!a) return 1000;
-  return Math.max(0, a.up - CINE.fitUpDeg + 2) + Math.max(0, a.side - CINE.fitSideDeg + 1.5) * 2;
+  return blocked * 30 + Math.max(0, a.up - CINE.fitUpDeg + 2) + Math.max(0, a.side - CINE.fitSideDeg + 1.5) * 2;
 }
 
-// 向き az の道の近く（横に 25m 以内、前側）のビルだけを選ぶ（当たり判定を軽くする）
-function nearPath(buildings, az) {
+// 向き az の道の近く（横に width m 以内、前側）のビルだけを選ぶ（当たり判定を軽くする）
+function nearPath(buildings, az, width = 25) {
   const c = Math.cos(az), s = Math.sin(az);
   return buildings.filter((o) => {
     const along = o.x * c + o.z * s, across = Math.abs(-o.x * s + o.z * c);
-    return along > -15 && across < 25 + Math.max(o.w, o.d);
+    return along > -15 && across < width + Math.max(o.w, o.d);
   });
 }
 
@@ -125,13 +157,14 @@ export function chooseShot({ shot, buildings, enemies = [], rng, crater = 0 }) {
     let best = null;
     for (let k = 0; k < CINE.candidates; k++) {
       const az = baseAz + (k === 0 ? 0 : (rng() * 2 - 1) * CINE.sideAz);
-      const near = nearPath(buildings, az);
+      const near = nearPath(buildings, az), wide = nearPath(buildings, az, 90);
       const slope = CINE.slope[0] + (CINE.slope[1] - CINE.slope[0]) * rng();
       for (const rise of rises) {
         const path = makePath(az, rise, slope);
-        const score = scorePath(path, b, near, R, ground);
+        const score = scorePath(path, b, near, wide, R, ground);
         if (score === Infinity) continue;
-        if (!best || score + rise / 12 < best.score) best = { path, score: score + rise / 12 };
+        const total = score + rise * CINE.riseWeight;
+        if (!best || total < best.score) best = { path, score: total };
         break;
       }
     }
@@ -232,7 +265,7 @@ export function createCinematic(views, enemyView, explosionView, { renderer, sce
 
   // phase: 'off' | 'freeze'（ゲームが止まっている間） | 'chase' | 'settle'
   let phase = 'off', t = 0, plan = null, shot = null, eye = null;
-  let chase = null, trackedId = null, front = 0, settleT = 0, chaseS = 0;
+  let chase = null, trackedId = null, front = 0, settleT = 0, chaseS = 0, chaseT = 0;
   const V = (a) => new THREE.Vector3().fromArray(a);
   const P = { eye: new THREE.Vector3(), fwdLook: new THREE.Vector3(), hero: new THREE.Vector3(), cam: new THREE.Vector3(), refl: new THREE.Vector3(), beatPos: new THREE.Vector3(), beatEndPos: new THREE.Vector3() };
   const _pos = new THREE.Vector3(), _look = new THREE.Vector3(), _q = new THREE.Quaternion();
@@ -347,6 +380,7 @@ export function createCinematic(views, enemyView, explosionView, { renderer, sce
     end() {
       if (phase !== 'freeze') return;
       phase = 'chase';
+      chaseT = 0;
       chase = createChase(Math.max(CINE.beatDist[plan.reflector.type], P.cam.distanceTo(P.eye)));
     },
     // blasts: game.blasts（追う一発の front を読む）
@@ -354,7 +388,9 @@ export function createCinematic(views, enemyView, explosionView, { renderer, sce
       if (phase === 'off') return;
       t += dt;
       if (phase === 'chase' || phase === 'settle') {
-        const finished = chasePose(dt, blasts);
+        chaseT += dt;
+        // 追う一発が見つからない・終わらないときも、決まった時間で上空へ戻る
+        const finished = chasePose(dt, blasts) || chaseT >= CINE.chaseMaxSec;
         let fov = CINE.fovDeg;
         if (phase === 'chase' && finished) { phase = 'settle'; settleT = 0; }
         if (phase === 'settle') {
@@ -409,8 +445,13 @@ export function createCinematic(views, enemyView, explosionView, { renderer, sce
         const b = Math.min(1, Math.max(0, (t - BEAT) / (beatEnd - BEAT)));
         u.uTime.value = t;
         u.uGlow.value = 0.12 + 0.88 * b * b;
-        u.uOpen.value = 0.4 + 0.5 * ease((b - 0.5) / 0.18); // にらむ目が、光が迫ると見開かれる
-        u.uLook.value = ease((b - 0.25) / 0.1) * 0.8;
+        // 細く硬くにらんでいた目が、光が迫った瞬間に凍りついたように見開かれる
+        u.uOpen.value = 0.08 + 0.87 * ease((b - 0.55) / 0.08);
+        u.uLook.value = ease((b - 0.3) / 0.06) * 0.7;
+        // 一拍のうちに、片方の目へ寄っていく
+        const z = ease(b / 0.9), hw = 1 - 0.3 * z, cx = -0.3 * z;
+        eyeCam.left = cx - hw; eyeCam.right = cx + hw; eyeCam.top = hw / 2; eyeCam.bottom = -hw / 2;
+        eyeCam.updateProjectionMatrix();
         const prev = renderer.getRenderTarget();
         renderer.setRenderTarget(rt);
         renderer.render(eyeScene, eyeCam);
