@@ -26,16 +26,31 @@ export function layoutViews(width, height) {
   };
 }
 
-// 上空カメラ: 主人公（原点）の斜め上、高さ約120m・水平距離約160m から街の中心を見下ろす
-// 注視点は広場の少し上に置き、画面の上端に地平と夕空がわずかに入るようにする
-export const CITY_CAMERA = { height: 120, distance: 160, azimuthDeg: 32, lookAtY: 55, minHFovDeg: 60, vFovDeg: 52 };
+// 上空カメラ: 主人公（原点）の斜め上、高さ約380m・水平距離約180m から広場を見下ろす。
+// 広場と、軍勢が現れる 60〜90m の輪が、縦長でも横長でも画面に収まる高さにしてある。
+export const CITY_CAMERA = { height: 380, distance: 180, azimuthDeg: 32, minHFovDeg: 60, vFovDeg: 50 };
+
+export function createCityCamera() {
+  const cam = new THREE.PerspectiveCamera(CITY_CAMERA.vFovDeg, 1, 1, 6000);
+  const az = THREE.MathUtils.degToRad(CITY_CAMERA.azimuthDeg);
+  cam.position.set(Math.sin(az) * CITY_CAMERA.distance, CITY_CAMERA.height, Math.cos(az) * CITY_CAMERA.distance);
+  cam.lookAt(0, 0, 0);
+  return cam;
+}
+
+// 縦長の画面でも街の横幅が切れすぎないよう、横の画角に下限を設ける
+export function fitCityCamera(cam, aspect) {
+  cam.aspect = aspect;
+  const hHalf = THREE.MathUtils.degToRad(CITY_CAMERA.minHFovDeg) / 2;
+  const vNeeded = THREE.MathUtils.radToDeg(2 * Math.atan(Math.tan(hHalf) / aspect));
+  cam.fov = Math.min(80, Math.max(CITY_CAMERA.vFovDeg, vNeeded));
+  cam.updateProjectionMatrix();
+}
+
 const HUD_CLEAR = new THREE.Color(0x0b0d16);
 
 export function createViews(renderer) {
-  const cityCamera = new THREE.PerspectiveCamera(CITY_CAMERA.vFovDeg, 1, 1, 6000);
-  const az = THREE.MathUtils.degToRad(CITY_CAMERA.azimuthDeg);
-  cityCamera.position.set(Math.sin(az) * CITY_CAMERA.distance, CITY_CAMERA.height, Math.cos(az) * CITY_CAMERA.distance);
-  cityCamera.lookAt(0, CITY_CAMERA.lookAtY, 0);
+  const cityCamera = createCityCamera();
 
   const handCamera = new THREE.PerspectiveCamera(40, 1, 0.05, 100);
   handCamera.position.set(0, 0.2, 3);
@@ -43,16 +58,7 @@ export function createViews(renderer) {
 
   let layout = layoutViews(1, 1);
 
-  function fitCamera(cam, rect, minHFovDeg) {
-    cam.aspect = rect.w / Math.max(1, rect.h);
-    if (minHFovDeg) {
-      // 縦長の画面でも街の横幅が切れすぎないよう、横の画角に下限を設ける
-      const hHalf = THREE.MathUtils.degToRad(minHFovDeg) / 2;
-      const vNeeded = THREE.MathUtils.radToDeg(2 * Math.atan(Math.tan(hHalf) / cam.aspect));
-      cam.fov = Math.min(80, Math.max(CITY_CAMERA.vFovDeg, vNeeded));
-    }
-    cam.updateProjectionMatrix();
-  }
+  const aspectOf = (rect) => rect.w / Math.max(1, rect.h);
 
   function drawRect(rect, scene, camera) {
     if (rect.w <= 0 || rect.h <= 0) return;
@@ -67,8 +73,9 @@ export function createViews(renderer) {
     resize(w, h) {
       renderer.setSize(w, h, false);
       layout = layoutViews(w, h);
-      fitCamera(cityCamera, layout.city, CITY_CAMERA.minHFovDeg);
-      fitCamera(handCamera, layout.hand);
+      fitCityCamera(cityCamera, aspectOf(layout.city));
+      handCamera.aspect = aspectOf(layout.hand);
+      handCamera.updateProjectionMatrix();
     },
     render(cityScene, handScene) {
       renderer.setScissorTest(true);

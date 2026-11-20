@@ -66,3 +66,11 @@ test('props は半径内・広場の外で、建物と重ならない', () => {
     }
   }
 });
+
+test('広場の近く（中心から 100m 未満）の建物は高さ 35m 以下（上空から広場が隠れない）', () => {
+  for (const seed of [1, 2, 3, 42, 999]) {
+    const near = generateCity(seed).buildings.filter((b) => b.dist < 100);
+    expect(near.length).toBeGreaterThan(0);
+    for (const b of near) expect(b.h).toBeLessThanOrEqual(35);
+  }
+});

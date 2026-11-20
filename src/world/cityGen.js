@@ -12,6 +12,8 @@ const CENTER_MAX_H = 150;    // 中心付近の最大の高さ m
 const EDGE_H = [6, 15];      // 街の端の高さ m
 const TOWER_H = 60;          // これ以上は tower
 const OFFICE_H = 20;         // これ以上は office、未満は house
+const NEAR_DIST = 100;       // 中心からこの距離未満は低くする（上空から広場と軍勢が見えるように）
+const NEAR_MAX_H = 35;       // その範囲の最大の高さ m
 
 // 体積(m³)あたりの金額（円）
 const RATE = { house: 20000, office: 60000, tower: 120000 };
@@ -44,7 +46,8 @@ export function generateCity(seed, cfg = CONFIG) {
         // 建物なし
       } else {
         const t = dist / R;
-        const h = Math.max(EDGE_H[0], Math.min(CENTER_MAX_H, edge + (CENTER_MAX_H - edge) * (1 - t) ** 2 * noise));
+        const maxH = dist < NEAR_DIST ? NEAR_MAX_H : CENTER_MAX_H;
+        const h = Math.max(EDGE_H[0], Math.min(maxH, edge + (CENTER_MAX_H - edge) * (1 - t) ** 2 * noise));
         const kind = kindOf(h);
         buildings.push({ id: buildings.length, x, z, w, d, h, dist, value: w * h * d * RATE[kind], kind });
       }

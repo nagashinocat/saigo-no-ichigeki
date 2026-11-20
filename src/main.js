@@ -34,7 +34,8 @@ cityScene.add(style.sky, ...style.lights, cityView.group);
 const hand = createHandScene();
 
 const views = createViews(renderer);
-const resize = () => views.resize(window.innerWidth, window.innerHeight);
+// CSS で決まったキャンバスの実寸に合わせる（スマホのアドレスバーで 100vh がずれる問題を避ける）
+const resize = () => views.resize(canvas.clientWidth || window.innerWidth, canvas.clientHeight || window.innerHeight);
 window.addEventListener('resize', resize);
 window.addEventListener('orientationchange', resize);
 resize();

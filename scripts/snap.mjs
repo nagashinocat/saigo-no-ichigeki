@@ -26,7 +26,13 @@ const browser = await chromium.launch({
 let failed = false;
 try {
   const page = await browser.newPage({ viewport: { width, height } });
-  page.on('console', (m) => { if (m.type() === 'error') console.error('[console.error]', m.text()); });
+  // シェーダーや WebGL のエラーは console.error にしか出ないので、それも失敗として扱う
+  const FATAL = /Shader Error|WebGL|THREE/;
+  page.on('console', (m) => {
+    if (m.type() !== 'error') return;
+    console.error('[console.error]', m.text());
+    if (FATAL.test(m.text())) failed = true;
+  });
   page.on('pageerror', (e) => { failed = true; console.error('[pageerror]', e.message); });
   await page.goto(url, { waitUntil: 'load' });
   await page.waitForTimeout(wait);
