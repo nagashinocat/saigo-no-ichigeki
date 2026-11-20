@@ -1,6 +1,6 @@
 // 破片の演出用の動き（物理ではなく、決めた式で動かす）。three には依存しない。
 // 手前の破片だけは nearPhysics.js の物理を使う。
-import { groundHeight, PILLAR } from '../render/sphereDeform.js';
+import { groundHeight } from '../render/sphereDeform.js';
 
 export const DEBRIS = {
   gravity: 9.8 * 1.5,       // 「アニメの重さ」: 少し強めの重力
@@ -65,7 +65,7 @@ export function slumpVelocity(chunkCenter, rng) {
 // 固定容量の破片プール。active[0..count) が生きている破片の slot。
 // spawn: { pos, vel, size, dims?: [w,h,d], color?: [r,g,b], keep? }
 // 止まった破片は、穴の中（えぐれた半径の内側）なら瓦礫として update の settled へ渡す（土煙にしない）。
-// keep（建物の大きな塊）は穴の外でも瓦礫として残す。主人公の柱の上（r < 4m）で止まったものは足元を空けるため土煙にする。塔の斜面には瓦礫が残る。
+// keep（建物の大きな塊）は穴の外でも瓦礫として残す。穴の底・斜面に止まったものはどれも瓦礫として残る。
 export function createDebrisPool(capacity, rng) {
   const F = (n = capacity) => new Float32Array(n);
   const data = {
@@ -158,7 +158,6 @@ export function createDebrisPool(capacity, rng) {
       evicted = [];
       const d = data;
       const g = DEBRIS.gravity * dt;
-      const top = PILLAR.radius; // 主人公の柱の上（ここで止まった破片は瓦礫にしない）
       for (let i = count - 1; i >= 0; i--) {
         const s = active[i];
         d.age[s] += dt;
@@ -181,7 +180,7 @@ export function createDebrisPool(capacity, rng) {
               d.vx[s] -= j * nx; d.vy[s] -= j * ny; d.vz[s] -= j * nz;
             }
             const rr = Math.hypot(d.px[s], d.pz[s]);
-            steep = rr > top && rr / Math.max(1e-6, -d.py[s]) > DEBRIS.reposeTan;
+            steep = rr / Math.max(1e-6, -d.py[s]) > DEBRIS.reposeTan;
             const fr = steep ? DEBRIS.slideFriction : DEBRIS.groundFriction;
             // 面に沿った速さに摩擦を掛ける
             const vt = d.vx[s] * nx + d.vy[s] * ny + d.vz[s] * nz;
@@ -195,7 +194,7 @@ export function createDebrisPool(capacity, rng) {
         }
         const r = Math.hypot(d.px[s], d.pz[s]);
         const overHole = r < crater;
-        // 穴の外（主人公の柱・縁の盛り上がり・平らな地面）は地面のシェーダーと同じ groundHeight の上に止まる
+        // 穴の外（縁の盛り上がり・平らな地面）は地面のシェーダーと同じ groundHeight の上に止まる
         const floor = half + groundHeight(r, craterList);
         let onGround = false;
         if (d.py[s] <= floor) {
@@ -211,7 +210,7 @@ export function createDebrisPool(capacity, rng) {
         const tx = d.px[s] - d.ox[s], ty = d.py[s] - d.oy[s], tz = d.pz[s] - d.oz[s];
         const far = !overHole && tx * tx + ty * ty + tz * tz > DEBRIS.maxTravel ** 2;
         const maxAge = overHole || keep[s] ? DEBRIS.maxAgeFalling : DEBRIS.maxAge;
-        if (d.rest[s] > DEBRIS.maxRest && settled && (overHole || keep[s]) && r >= top) {
+        if (d.rest[s] > DEBRIS.maxRest && settled && (overHole || keep[s])) {
           settled.push({
             pos: [d.px[s], d.py[s], d.pz[s]], rot: [d.rx[s], d.ry[s], d.rz[s]],
             dims: [d.sx[s], d.sy[s], d.sz[s]], size: d.size[s], color: [d.cr[s], d.cg[s], d.cb[s]],

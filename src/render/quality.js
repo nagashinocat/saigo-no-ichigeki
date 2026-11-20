@@ -1,9 +1,9 @@
 // 画質の段階と、FPS による自動調整(純粋なロジック。DOM には触れない)
 
 export const TIERS = {
-  high: { pixelRatioMax: 2, debrisMax: 6000, nearPhysicsMax: 400, piecesPerBuilding: 24, dustMax: 3000, rubbleMax: 3000, bloom: true, heatHaze: true, shadows: true },
-  mid: { pixelRatioMax: 1.5, debrisMax: 2500, nearPhysicsMax: 120, piecesPerBuilding: 12, dustMax: 1200, rubbleMax: 1500, bloom: true, heatHaze: false, shadows: false },
-  low: { pixelRatioMax: 1, debrisMax: 800, nearPhysicsMax: 40, piecesPerBuilding: 6, dustMax: 400, rubbleMax: 600, bloom: false, heatHaze: false, shadows: false },
+  high: { pixelRatioMax: 2, debrisMax: 6000, nearPhysicsMax: 400, piecesPerBuilding: 24, dustMax: 3000, rubbleMax: 3000, auraMax: 48, auraShell: true, bloom: true, heatHaze: true, shadows: true },
+  mid: { pixelRatioMax: 1.5, debrisMax: 2500, nearPhysicsMax: 120, piecesPerBuilding: 12, dustMax: 1200, rubbleMax: 1500, auraMax: 24, auraShell: true, bloom: true, heatHaze: false, shadows: false },
+  low: { pixelRatioMax: 1, debrisMax: 800, nearPhysicsMax: 40, piecesPerBuilding: 6, dustMax: 400, rubbleMax: 600, auraMax: 10, auraShell: false, bloom: false, heatHaze: false, shadows: false },
 };
 
 export function pickTier({ isMobile, deviceMemory, cores } = {}) {

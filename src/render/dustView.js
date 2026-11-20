@@ -12,7 +12,7 @@ attribute vec4 aVel;   // xyz: 初速, w: 抵抗
 attribute vec4 aLife;  // x: 生まれた時刻, y: 寿命, z: 大きさ, w: ふくらみ
 attribute vec4 aTint;  // rgb: 色, a: 上昇の速さ
 uniform float uTime;
-uniform float uCrater; // えぐれた地面の半径。穴の上の粒は穴の面（主人公の塔を含む）まで下りられる
+uniform float uCrater; // えぐれた地面の半径。穴の上の粒は穴の面まで下りられる
 ${CRATER_FLOOR_GLSL}
 varying vec2 vUv;
 varying float vAge;

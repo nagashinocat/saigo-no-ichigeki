@@ -421,7 +421,7 @@ export function createEnemyView(scene, tier, { sunDir = new THREE.Vector3(0.8, 0
         }
         const [x, z] = enemyXZ(e, r);
         const yaw = Math.atan2(-Math.cos(e.angle), -Math.sin(e.angle)); // 主人公の方を向く
-        _p.set(x, groundHeight(r, fronts) + lift, z);
+        _p.set(x, (e.state === 'grab' ? 0 : groundHeight(r, fronts)) + lift, z); // しがみつく者は浮いた主人公と同じ高さ
         _q.setFromEuler(_e.set(-fall, yaw, 0, 'YXZ'));
         mesh.setMatrixAt(n, _m.compose(_p, _q, _s));
         markerPos.setXYZ(n, _p.x, _p.y + ENEMY_LOOK.height * (e.state === 'grab' ? 1.6 : 2.2), _p.z);

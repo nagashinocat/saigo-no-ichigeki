@@ -12,6 +12,7 @@ import { createDebrisView } from './render/debrisView.js';
 import { createRubbleView } from './render/rubbleView.js';
 import { createExplosionView } from './render/explosionView.js';
 import { createFrontTracker } from './render/sphereDeform.js';
+import { createHeroAura } from './render/heroAura.js';
 import { createEnemyView } from './render/enemyView.js';
 import { chooseShot, createCinematic } from './render/cinematic.js';
 import { createRng } from './rng.js';
@@ -141,6 +142,8 @@ game.on('puff', (shot) => { explosionView.begin(shot); hand.release(shot); });
 
 // 軍勢と主人公の姿
 const enemyView = createEnemyView(cityScene, tier, { sunDir: style.sunDir });
+const heroAura = createHeroAura(tier); // 浮いている主人公のまわりの力のゆらぎ
+cityScene.add(heroAura.group);
 
 // 大きな一発を放つ瞬間の演出（画面全体）: 白くなり、主人公の目から後ろ上へ引き、ガラスに軍団の一人の目が映り、
 // 追ってくる爆発の front を読みながら引き続けて、上空のカメラへ戻る（cinematic.js）
@@ -182,6 +185,7 @@ function lowerTier() {
   if (next === tier) return;
   tier = next;
   if (debugMode) window.__tier = tier;
+  heroAura.setTier(tier);
   applyPixelRatio();
   resize();
 }
@@ -216,6 +220,7 @@ function simulate(dt) {
   explosionView.update(wdt, live, cam, ps, fronts.crater);
   cityView.update(wdt, { fronts: list, heat: explosionView.ground.heat, ember: explosionView.ground.ember });
   enemyView.sync(game.enemies.list, { fronts: list, pointScale: ps, glow: explosionView.ground.heat, dt: wdt, pixelRatio: renderer.getPixelRatio() });
+  heroAura.update(wdt, ps);
   // 上空カメラは、ゲームが動いている間はいつも進める（演出の終わりにこの姿勢へなじむ）
   // 大きな一発の演出の間は、終わった一発の「保つ」時間を進めない（演出が全体の構図で止まったあと、2画面でも保ってから戻る）
   if (!cinematic.frozen) views.updateCamera(dt, explosionView.cameraInfo, live, cinematic.active);

@@ -155,17 +155,16 @@ test('穴の外で止まった破片は今までどおり土煙。keep の破片
   expect(settled.map((e) => e.size)).toEqual([4]);
 });
 
-test('主人公の柱の上（r < 4m）は元の高さで止まり、瓦礫は残さない（足元を空けておく）', () => {
+test('主人公の真下（r < 4m）に落ちた破片も、穴の底まで落ちて瓦礫として残る（土煙にしない）', () => {
   const pool = createDebrisPool(4, createRng(1));
   pool.setCrater(100);
   pool.spawn(chunk({ pos: [1, 5, 0], size: 1, keep: true }));
-  const s = pool.active[0];
-  let minY = Infinity;
-  const dust = [], settled = [];
-  for (let t = 0; t < 4; t += 1 / 60) { dust.push(...pool.update(1 / 60, settled)); if (pool.count) minY = Math.min(minY, pool.data.py[s]); }
-  expect(minY).toBeGreaterThanOrEqual(0.5 - 1e-4);
-  expect(settled).toHaveLength(0);
-  expect(dust).toHaveLength(1);
+  const { dust, settled } = settle(pool, 14);
+  expect(dust).toHaveLength(0);
+  expect(settled).toHaveLength(1);
+  const [x, y, z] = settled[0].pos;
+  expect(y).toBeLessThan(-90);
+  expect(Math.hypot(x, y, z)).toBeLessThanOrEqual(100);
 });
 
 test('深い穴へ落ちていく破片は、時間や距離の上限で途中で消えずに底まで落ちて瓦礫になる', () => {
@@ -175,7 +174,7 @@ test('深い穴へ落ちていく破片は、時間や距離の上限で途中�
   const { dust, settled } = settle(pool, 14);
   expect(dust).toHaveLength(0);
   expect(settled).toHaveLength(1);
-  // r=100 は主人公の塔の斜面（深さ 3.5·96 = 336m）。塔の面に厚みの半分だけ浮いて止まる
+  // 穴の面に厚みの半分だけ浮いて止まる
   const [x, y, z] = settled[0].pos;
   expect(y).toBeLessThan(-300);
   expect(y).toBeCloseTo(groundHeight(Math.hypot(x, z), [440]) + 1, 0);
