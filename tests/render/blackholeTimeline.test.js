@@ -134,20 +134,29 @@ test('値はどこでも有限（t が範囲の外・NaN でも）', () => {
   }
 });
 
-test('飲まれていく画の縁: 黒い球からの距離だけで消える（四角でなく丸い）。始めは消さず、進むと遠い所から何もない空間へ溶ける', async () => {
+test('飲まれていく画の縁: 画に内接する楕円に沿って丸く消え、小さな進みでもう画のどの辺・角にも届かない（まっすぐな縁が見えない）', async () => {
   const { sourceFade, SOURCE_FADE: F } = await import('../../src/render/blackholeTimeline.js');
+  // 辺の点と角（uv）
+  const edge = [];
+  for (let i = 0; i <= 20; i++) { const t = i / 20; edge.push([t, 0], [t, 1], [0, t], [1, t]); }
   // k = 0: どこも残る（切り替わった瞬間の画は端まで見える）
-  for (const p of [[0, 0], [0.5, 0.9], [1.1, 0], [0.9, -1.0]]) expect(sourceFade(p, 0)).toBe(1);
-  // 同じ距離なら向きによらない（丸い）
-  for (const k of [0.2, 0.5, 1]) {
-    const d = 0.7, vals = [0, 1, 2, 3, 4, 5].map((i) => sourceFade([d * Math.cos(i), d * Math.sin(i)], k));
-    for (const v of vals) expect(v).toBeCloseTo(vals[0], 12);
+  for (const p of [[0.5, 0.5], ...edge]) expect(sourceFade(p, 0)).toBe(1);
+  expect(F.to).toBeLessThanOrEqual(1);
+  // kTo 以降（sky k ≈ 0.19 も含む）: 辺と角では 0（淡く残らない）、真ん中は 1
+  for (const k of [F.kTo, 0.19, 0.5, 1]) {
+    for (const p of edge) expect(sourceFade(p, k)).toBe(0);
+    expect(sourceFade([0.5, 0.5], k)).toBe(1);
+    expect(sourceFade([0.5, 0.5 + F.from / 2 * 0.95], k)).toBe(1);
   }
-  // 進むと: 近くは残り、to より遠くは消える。距離が遠いほど小さい
-  expect(sourceFade([F.from * 0.9, 0], 0.5)).toBe(1);
-  expect(sourceFade([F.to * 1.01, 0], 0.5)).toBe(0);
+  // 楕円の上で同じ値（丸い。辺に沿った直線にならない）、外ほど小さい
+  for (const k of [0.2, 1]) {
+    const e = 0.85, vals = [0, 1, 2, 3, 4, 5].map((a) => sourceFade([0.5 + (e / 2) * Math.cos(a), 0.5 + (e / 2) * Math.sin(a)], k));
+    for (const v of vals) expect(v).toBeCloseTo(vals[0], 12);
+    expect(vals[0]).toBeGreaterThan(0);
+    expect(vals[0]).toBeLessThan(1);
+  }
   let prev = 2;
-  for (let d = 0; d < 1.2; d += 0.05) { const v = sourceFade([0, d], 0.5); expect(v).toBeLessThanOrEqual(prev + 1e-12); prev = v; }
+  for (let d = 0; d <= 0.5; d += 0.02) { const v = sourceFade([0.5 + d, 0.5], 0.5); expect(v).toBeLessThanOrEqual(prev + 1e-12); prev = v; }
 });
 
 test('何もない空間（void 以降）は、場面を描かず重ねる処理もしない。その前は描く', async () => {

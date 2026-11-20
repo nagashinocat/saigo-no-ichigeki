@@ -33,9 +33,12 @@ export const BLACKHOLE = {
 // 渦の強さ・流れ込み（log の倍率）・光の筋の幅（k の割合）・光の強まり
 export const LENS_CURVE = { swirl: 7.0, reach: 0.35, zoom: 4.2, blur: 0.35, boost: 1.6 };
 
-// 元の画の中で黒い球から from〜to（短い辺の単位）の所を消していく（飲まれていく画の縁を丸くし、何もない空間へ溶かす）。
-// 層の進み k が kFrom〜kTo の間に効き始める（始めは画面の端まで残す）
-export const SOURCE_FADE = { from: 0.45, to: 0.9, kFrom: 0.05, kTo: 0.3 };
+// 元の画の縁を消していく（飲まれていく画の縁を、まっすぐな辺でなく丸く、何もない空間へ溶かす）。
+// 画に内接する楕円の中心からの距離 e（元の画の uv で |(uv − 0.5) · 2|。四辺の中点で 1、角で √2）が from〜to で 0 へ。
+// to ≤ 1 なので、画のどの辺にも届く前に消えきる（縁の直線は見えない）。黒い球からの距離にしないのは、
+// 夕日のある空の上のほうを、渦に乗って流れ込む前に消してしまわないため。
+// 層の進み k が kFrom〜kTo の間に効き始め（切り替わった瞬間の画は端まで残す）、kTo 以降は縁が 0 になりきる
+export const SOURCE_FADE = { from: 0.4, to: 0.98, kFrom: 0, kTo: 0.1 };
 
 const clamp01 = (x) => Math.min(1, Math.max(0, x));
 const smooth = (x) => { const t = clamp01(x); return t * t * (3 - 2 * t); };
@@ -136,10 +139,10 @@ export function lensMap(q, E, layer, half = [1.2, 1.2], C = LENS_CURVE) {
   return { p, inside: Math.abs(p[0]) <= half[0] && Math.abs(p[1]) <= half[1] };
 }
 
-// 元の画の点 p（黒い球の中心から、短い辺の単位）を、層の進み k のときどれだけ残すか（lensFx.js のシェーダーと同じ式）
-export function sourceFade(p, k, F = SOURCE_FADE) {
-  const d = Math.hypot(p[0], p[1]);
-  const f = 1 - smoother(F.from, F.to, d);
+// 元の画の点（uv、0..1）を、層の進み k のときどれだけ残すか（lensFx.js のシェーダーと同じ式）
+export function sourceFade(uv, k, F = SOURCE_FADE) {
+  const e = Math.hypot((uv[0] - 0.5) * 2, (uv[1] - 0.5) * 2);
+  const f = 1 - smoother(F.from, F.to, e);
   const w = smoother(F.kFrom, F.kTo, k);
   return 1 + (f - 1) * w;
 }

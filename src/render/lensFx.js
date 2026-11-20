@@ -40,10 +40,10 @@ vec2 tapUv(vec2 s0, float a, float z) {
   float c = cos(a), sn = sin(a);
   return uCenter + vec2(c * s0.x - sn * s0.y, sn * s0.x + c * s0.y) * z / uScale;
 }
-// 元の画の中で、黒い球から遠い所ほど消す（飲まれていく画の縁が四角でなく丸く、何もない空間へ溶ける）。
+// 元の画の縁を、内接する楕円に沿って消す（飲まれていく画の縁が四角でなく丸く、何もない空間へ溶ける）。
 // 進み k が小さいうちは消さない（blackholeTimeline.js の sourceFade と同じ式）
-float sourceFade(float d, float k) {
-  float f = 1.0 - smoothstep(${SOURCE_FADE.from.toFixed(3)}, ${SOURCE_FADE.to.toFixed(3)}, d);
+float sourceFade(vec2 uv, float k) {
+  float f = 1.0 - smoothstep(${SOURCE_FADE.from.toFixed(3)}, ${SOURCE_FADE.to.toFixed(3)}, length((uv - 0.5) * 2.0));
   return mix(1.0, f, smoothstep(${SOURCE_FADE.kFrom.toFixed(3)}, ${SOURCE_FADE.kTo.toFixed(3)}, k));
 }
 // 元の画の中か（縁はなめらかに消す: 光の筋を重ねたとき、画の縁が段の模様にならない）
@@ -69,7 +69,6 @@ void main() {
   float jit = hash(gl_FragCoord.xy * 0.913 + 17.0);
   // 重ねる回数によらない値はループの外で: レンズで曲げた点、渦の弱まり、流れ込みの倍率（重ねるごとに一定の比で縮む）
   vec2 s0 = q * (1.0 - uE * uE / max(r * r, 1e-8));
-  float d0 = length(s0);
   float sw = pow(${LENS_CURVE.reach.toFixed(3)} / (r + ${LENS_CURVE.reach.toFixed(3)}), 1.5);
   float n = max(uTaps, 1.0);
   float w0 = uTaps > 1.0 ? jit / n : 0.0, dw = uTaps > 1.0 ? 1.0 / n : 0.0;
@@ -80,10 +79,10 @@ void main() {
     float w = w0 + float(j) * dw;
     float k = 1.0 - 0.55 * w; // 尾ほど淡い
     vec2 a = tapUv(s0, (uLm.x - uBm.x * w) * sw, zm);
-    m += texture2D(tMain, a) * (inside(a) * sourceFade(d0 * zm, uK.x) * k);
+    m += texture2D(tMain, a) * (inside(a) * sourceFade(a, uK.x) * k);
     if (uSkyOn > 0.5) {
       vec2 b = tapUv(s0, (uLs.x - uBs.x * w) * sw, zs);
-      s += texture2D(tSky, b).rgb * (inside(b) * sourceFade(d0 * zs, uK.y) * k);
+      s += texture2D(tSky, b).rgb * (inside(b) * sourceFade(b, uK.y) * k);
     }
     wsum += k;
     zm *= zmStep; zs *= zsStep;
