@@ -1,0 +1,57 @@
+import { test, expect } from 'vitest';
+import { createEnemies } from '../../src/game/enemies.js';
+import { createRng } from '../../src/rng.js';
+import { CONFIG } from '../../src/config.js';
+
+const E = CONFIG.enemy;
+const cfgWith = (enemy) => ({ ...CONFIG, enemy: { ...E, ...enemy } });
+
+test('軍勢は spawnPerSec で spawnDist の範囲（中心から60〜90m）に湧き、speed で近づく', () => {
+  const e = createEnemies(createRng(1));
+  e.update(10); // 約12体
+  expect(e.list.length).toBe(12);
+  expect(new Set(e.list.map((x) => x.id)).size).toBe(12);
+  for (const x of e.list) { expect(x.dist).toBeGreaterThanOrEqual(60 - E.speed * 10); expect(x.dist).toBeLessThanOrEqual(90); }
+  const e2 = createEnemies(createRng(2), cfgWith({ spawnPerSec: 10 }));
+  e2.update(0.1); // 1体、湧いた直後
+  const d0 = e2.list[0].dist; expect(d0).toBeGreaterThanOrEqual(60); expect(d0).toBeLessThanOrEqual(90);
+  const e3 = createEnemies(createRng(2), cfgWith({ spawnPerSec: 10 }));
+  e3.update(0.1);
+  const before = e3.list[0].dist; e3.update(0.05);
+  expect(e3.list[0].dist).toBeCloseTo(before - E.speed * 0.05);
+});
+test('grabRange に入ると grab になり、update が掴んでいる数を返す（最大 maxGrabbing）', () => {
+  const e = createEnemies(createRng(3), cfgWith({ spawnPerSec: 100, spawnDist: [10, 10], speed: 100 }));
+  let n = 0;
+  for (let i = 0; i < 20; i++) n = e.update(0.1);
+  expect(n).toBe(E.maxGrabbing);
+  const grab = e.list.filter((x) => x.state === 'grab');
+  expect(grab.length).toBe(E.maxGrabbing);
+  for (const g of grab) expect(g.dist).toBe(E.grabRange);
+  const waiting = e.list.filter((x) => x.state === 'approach' && x.dist === E.grabRange);
+  expect(waiting.length).toBeGreaterThan(0);
+});
+test('applyBlastFront: front 内の軍勢は dead、掴んでいた者も外れる', () => {
+  const e = createEnemies(createRng(3), cfgWith({ spawnPerSec: 100, spawnDist: [10, 10], speed: 100 }));
+  for (let i = 0; i < 5; i++) e.update(0.1);
+  const total = e.list.length;
+  expect(e.applyBlastFront(1)).toBe(0);
+  const killed = e.applyBlastFront(5);
+  expect(killed).toBeGreaterThan(0);
+  expect(e.list.filter((x) => x.state === 'dead').length).toBe(killed);
+  expect(e.list.filter((x) => x.state === 'grab').length).toBe(0);
+  expect(e.applyBlastFront(5)).toBe(0); // 二重に数えない
+  expect(e.list.length).toBe(total);
+  const n = e.update(0.1);
+  expect(n).toBeLessThanOrEqual(E.maxGrabbing);
+});
+test('死んだ敵は deadTime が進み、3秒後に list から消える', () => {
+  const e = createEnemies(createRng(4), cfgWith({ spawnPerSec: 10, spawnDist: [50, 50] }));
+  e.update(0.1);
+  const id = e.list[0].id;
+  e.applyBlastFront(100);
+  const d = e.list.find((x) => x.id === id); expect(d.deadTime).toBe(0);
+  e.update(1); expect(d.deadTime).toBeCloseTo(1);
+  e.update(2.1);
+  expect(e.list.find((x) => x.id === id)).toBeUndefined();
+});
