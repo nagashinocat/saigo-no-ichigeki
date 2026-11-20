@@ -2,7 +2,7 @@ import { test, expect } from 'vitest';
 import * as THREE from 'three';
 import { buildHandModel } from '../../src/render/handModel.js';
 import { createHandView } from '../../src/render/handView.js';
-import { HAND_JOINTS } from '../../src/render/handPose.js';
+import { HAND_JOINTS, poseFor, RELEASE_POSE } from '../../src/render/handPose.js';
 
 const DT = 1 / 60;
 const run = (view, sec, ...args) => { for (let t = 0; t < sec - 1e-9; t += DT) view.update(DT, ...args); };
@@ -99,6 +99,41 @@ test('poseFor(0.9) を当てると、どの指先も手首から一定以上離�
         const beside = toTip.angleTo(toOrb) > orbAngle * 1.05;
         expect(nearer || beside, `${tier} ${aspect.toFixed(2)} ${n}`).toBe(true);
       }
+    }
+  }
+});
+
+test('手首に切れ目がない: 指をどう曲げても、手首の近くの肌は前腕と一緒にいて、手のひらの付け根の三角形も裏返らない', () => {
+  // 手首の関節は構えで回らないので、手首より腕側の肌は動かないはず。手のひらの付け根（拳の手前）もほとんど動かない
+  const nrm = (A, a, b, c) => {
+    const u = new THREE.Vector3(A[b * 3] - A[a * 3], A[b * 3 + 1] - A[a * 3 + 1], A[b * 3 + 2] - A[a * 3 + 2]);
+    const v = new THREE.Vector3(A[c * 3] - A[a * 3], A[c * 3 + 1] - A[a * 3 + 1], A[c * 3 + 2] - A[a * 3 + 2]);
+    return u.cross(v).normalize();
+  };
+  for (const detail of ['high', 'low']) {
+    for (const [name, pose] of [['0', poseFor(0, 0)], ['0.9', poseFor(0.9, 0.3)], ['1', poseFor(1, 0.7)], ['release', RELEASE_POSE]]) {
+      const m = buildHandModel({ detail });
+      const e = new THREE.Euler(0, 0, 0, 'YXZ'), q = new THREE.Quaternion();
+      for (const n of HAND_JOINTS) { const r = pose[n]; e.set(-r[0], r[1], r[2]); m.bones[n].quaternion.multiply(q.setFromEuler(e)); }
+      m.root.updateMatrixWorld(true);
+      m.mesh.skeleton.update();
+      const P = m.mesh.geometry.attributes.position, I = m.mesh.geometry.index.array;
+      const sk = new Float32Array(P.count * 3), v = new THREE.Vector3();
+      let moved = 0;
+      for (let i = 0; i < P.count; i++) {
+        v.fromBufferAttribute(P, i);
+        m.mesh.applyBoneTransform(i, v);
+        sk.set([v.x, v.y, v.z], i * 3);
+        const z = P.getZ(i), d = v.distanceTo(new THREE.Vector3().fromBufferAttribute(P, i));
+        if (z > -0.012) moved = Math.max(moved, d);
+      }
+      expect(moved, `${detail} ${name}: 手首より腕側の肌の動き`).toBeLessThan(0.0015);
+      let flipped = 0;
+      for (let t = 0; t < I.length; t += 3) {
+        if (Math.min(P.getZ(I[t]), P.getZ(I[t + 1]), P.getZ(I[t + 2])) < -0.035) continue;
+        if (nrm(P.array, I[t], I[t + 1], I[t + 2]).dot(nrm(sk, I[t], I[t + 1], I[t + 2])) < 0.5) flipped++;
+      }
+      expect(flipped, `${detail} ${name}: 手首まわりで大きく向きの変わる三角形`).toBe(0);
     }
   }
 });

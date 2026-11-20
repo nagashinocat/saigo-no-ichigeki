@@ -16,6 +16,7 @@ const DETAIL = {
 };
 
 const ARM_LEN = 0.17;     // 手首から先に伸ばす前腕の長さ（画面の外まで）
+const WRIST_BLEND = [-0.05, -0.008]; // この z の間で、肌の重みを手のひらの骨から手首の骨へ移す（手首の関節は z = 0）
 const v3 = (x, y, z) => new THREE.Vector3(x, y, z);
 const DEG = Math.PI / 180;
 
@@ -146,8 +147,10 @@ function layout(opt) {
   }
 
   // 手首から前腕へ: 楕円の断面で細くなり、また太くなって画面の外へ
-  parts.push({ bone: 'wrist', group: 'arm', d: capsule(v3(0, -0.002, -0.012), v3(0, -0.001, 0.035), 0.0275, 0.0262, up0, [0.7, 0.72]) });
-  parts.push({ bone: 'wrist', group: 'arm', d: capsule(v3(0, -0.001, 0.035), v3(0, 0.0, ARM_LEN), 0.0262, 0.034, up0, [0.72, 0.82]) });
+  parts.push({ bone: 'wrist', group: 'arm', d: capsule(v3(0, -0.0045, -0.014), v3(0, -0.003, 0.035), 0.028, 0.0268, up0, [0.76, 0.76]) });
+  parts.push({ bone: 'wrist', group: 'arm', d: capsule(v3(0, -0.003, 0.035), v3(0, 0.0, ARM_LEN), 0.0268, 0.034, up0, [0.76, 0.82]) });
+  // 手首の手のひらの側: 手のひらの付け根のふくらみから前腕へ、くびれずになだらかに下りる
+  parts.push({ bone: 'wrist', group: 'arm', d: capsule(v3(0.001, -0.012, -0.03), v3(0, -0.01, 0.045), 0.02, 0.019, up0, 0.74) });
 
   return { joints, parts };
 }
@@ -340,6 +343,8 @@ export function buildHandModel({ detail = 'high' } = {}) {
   const boneList = [...byBone.keys()];
   const phalanx = boneList.map((n) => n.includes('phalanx'));
   const K = 0.0017, K_PALM = 0.006, _p = v3(0, 0, 0);
+  const wristK = boneList.indexOf('wrist');
+  const smooth = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
   const tips = [...Object.keys(FINGERS).map((f) => joints[`${f}-finger-tip`].p), joints['thumb-tip'].p];
   const knuckles = Object.keys(FINGERS).flatMap((f) => [joints[`${f}-finger-phalanx-proximal`].p, joints[`${f}-finger-phalanx-intermediate`].p, joints[`${f}-finger-phalanx-distal`].p]);
   for (let i = 0; i < nv; i++) {
@@ -356,7 +361,18 @@ export function buildHandModel({ detail = 'high' } = {}) {
     }
     // 指の関節は境目をくっきり（曲げると角が立つ）、手のひらと手首の間はなだらかに
     const k = phalanx[b1] && phalanx[b2] ? K : K_PALM;
-    const w1 = 1 / (Math.max(d1, 0) + k) ** 4, w2 = 1 / (Math.max(d2, 0) + k) ** 4;
+    let w1 = 1 / (Math.max(d1, 0) + k) ** 4, w2 = 1 / (Math.max(d2, 0) + k) ** 4;
+    // 手首の切れ目を出さない: 手のひらの付け根から手首へ、手首の骨（前腕）の重みをなめらかに増やす。
+    // 中手骨は手首の少し先を軸に回るので、それより腕側の肌が中手骨（とくに母指球）について行くと、手首に折れ目ができる
+    const s = smooth(WRIST_BLEND[0], WRIST_BLEND[1], z);
+    if (s > 0) {
+      let dw = Infinity;
+      for (const fn of byBone.get('wrist')) dw = Math.min(dw, fn(x, y, z));
+      const ww = (1 / (Math.max(dw, 0) + K_PALM) ** 4) * (1 + 300 * s * s);
+      // 重みの大きい 2 本を使う（手首が 3 番目なら、ほかの骨と同じく、重みで上回ったときに軽いほうと入れ替える）
+      if (b1 === wristK) w1 = ww; else if (b2 === wristK) w2 = ww;
+      else if (ww > Math.min(w1, w2)) { if (w1 >= w2) { b2 = wristK; w2 = ww; } else { b1 = wristK; w1 = ww; } }
+    }
     skinIndex[i * 4] = boneIdx[boneList[b1]]; skinIndex[i * 4 + 1] = boneIdx[boneList[b2]];
     skinWeight[i * 4] = w1 / (w1 + w2); skinWeight[i * 4 + 1] = 1 - skinWeight[i * 4];
     // 肌の色むら: 指先と関節の甲は少し赤く、手のひらは少し明るい
@@ -364,7 +380,8 @@ export function buildHandModel({ detail = 'high' } = {}) {
     let red = 0;
     for (const t of tips) red = Math.max(red, 1 - p.distanceTo(t) / 0.016);
     for (const kn of knuckles) red = Math.max(red, (1 - p.distanceTo(kn) / 0.011) * 0.6);
-    const palmSide = Math.max(0, -nrm[i * 3 + 1]) * (z < 0 ? 1 : 0);
+    // 手のひらだけを明るく。手首でぷつりと切り替えず、手首の前後でなめらかに薄める
+    const palmSide = Math.max(0, -nrm[i * 3 + 1]) * (1 - smooth(-0.02, 0.02, z));
     col[i * 3] = SKIN[0] * (1 + 0.04 * palmSide);
     col[i * 3 + 1] = SKIN[1] * (1 - 0.1 * red + 0.02 * palmSide);
     col[i * 3 + 2] = SKIN[2] * (1 - 0.12 * red + 0.02 * palmSide);

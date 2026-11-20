@@ -39,7 +39,7 @@ const cityView = createCityView(game.city, style, tier);
 const cityScene = new THREE.Scene();
 cityScene.add(style.sky, ...style.lights, cityView.group);
 // 手の画面: 主人公の右手はコードで組み立てる（読み込みを待たない）。low の段は粗い手にする
-const hand = createHandView(buildHandModel({ detail: tier === 'low' ? 'low' : 'high' }), tier);
+const hand = createHandView(buildHandModel({ detail: tier === 'high' ? 'high' : 'low' }), tier);
 
 const views = createViews(renderer, () => TIERS[tier]);
 // CSS で決まったキャンバスの実寸に合わせる（スマホのアドレスバーで 100vh がずれる問題を避ける）
