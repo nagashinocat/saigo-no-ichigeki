@@ -47,6 +47,9 @@ function fakeCtx() {
     createOscillator() { return { ...node(), type: '', frequency: fakeParam(440) }; },
     createBufferSource() { return { ...node(), buffer: null, loop: false }; },
     createBuffer(ch, n) { const d = new Float32Array(n); return { getChannelData: () => d }; },
+    createDelay() { return { ...node(), delayTime: fakeParam(0) }; },
+    createStereoPanner() { return { ...node(), pan: fakeParam(0) }; },
+    createWaveShaper() { return { ...node(), curve: null }; },
     createDynamicsCompressor() {
       const c = { ...node(), threshold: fakeParam(-24), knee: fakeParam(30), ratio: fakeParam(12), attack: fakeParam(0.003), release: fakeParam(0.25) };
       ctx.compressors.push(c); return c;

@@ -54,6 +54,7 @@ function fakeCtx() {
     },
     createDelay() { return node({ delayTime: param(0) }); },
     createStereoPanner() { return node({ pan: param(0) }); },
+    createWaveShaper() { return node({ curve: null, oversample: 'none' }); },
     createOscillator() { return node({ type: '', frequency: param(440), start() {}, stop() {} }); },
     createBuffer(ch, n, sr) { const d = new Float32Array(n); return { duration: n / sr, sampleRate: sr, getChannelData: () => d }; },
     createBufferSource() {

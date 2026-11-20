@@ -15,6 +15,7 @@ import { createFrontTracker } from './render/sphereDeform.js';
 import { createHeroAura } from './render/heroAura.js';
 import { createEnemyView } from './render/enemyView.js';
 import { createCinematic, leadFor } from './render/cinematic.js';
+import { FINALE } from './render/finaleTimeline.js';
 import { planFinale, planRetreat } from './render/finalePlan.js';
 import { createReplay } from './render/replay.js';
 import { createBlackhole } from './render/blackhole.js';
@@ -23,7 +24,7 @@ import { createRng } from './rng.js';
 import { createPressTracker } from './input/press.js';
 import { createHud } from './ui/hud.js';
 import { createResult } from './ui/result.js';
-import { createAudio } from './audio/audio.js';
+import { createAudio, finaleBoomOpts } from './audio/audio.js';
 import { createBgm } from './audio/bgm.js';
 
 const MAX_FRAME_DT = 0.1;
@@ -228,7 +229,7 @@ game.on('cinematicEnd', () => cinematic.end());
 cinematic.on('cue', ({ name, arg }) => {
   if (name === 'silence') audio.silence();
   else if (name === 'heart') audio.heartbeat(arg);
-  else if (name === 'snap') { audio.unsilence(); audio.boom(finalBlastSize); }
+  else if (name === 'snap') { audio.unsilence(); audio.boom(finalBlastSize, finaleBoomOpts(cinematic.timeline, FINALE.burstRamp)); }
   else if (name === 'space') audio.muffle(1.4);
   else if (name === 'rumble') audio.deepRumble();
 });
