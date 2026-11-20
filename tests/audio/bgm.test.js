@@ -24,7 +24,7 @@ function fakeParam(v0) {
   };
 }
 function fakeCtx() {
-  const node = () => ({ connect() {}, disconnect() {} });
+  const node = () => ({ connected: true, connect() {}, disconnect() { this.connected = false; } });
   const ctx = {
     state: 'running', currentTime: 5, sampleRate: 8000, sources: [], gains: [],
     createGain() { const g = { ...node(), gain: fakeParam(1) }; ctx.gains.push(g); return g; },
@@ -34,7 +34,7 @@ function fakeCtx() {
     createBuffer(ch, n, sr) { const d = new Float32Array(n); return { duration: n / sr, getChannelData: () => d }; },
     createBufferSource() {
       const s = { ...node(), buffer: null, playbackRate: fakeParam(1), startT: null, stopT: Infinity,
-        start(t) { s.startT = t; }, stop(t = 0) { s.stopT = Math.min(s.stopT, t); } };
+        start(t) { s.startT = t; }, stop(t = 0) { s.stopT = t; } }; // 何度呼んでも最後の一回だけが効く（仕様どおり）
       ctx.sources.push(s);
       return s;
     },
@@ -152,6 +152,35 @@ test('楽器の音は、AudioContext ができる前から 1 つずつ作って�
   const bgm = createBgm(() => null);
   let n = 0;
   while (!bgm.prepare()) n++;
-  expect(n).toBe(7); // 8 つの楽器、8 回目で全部
+  expect(n).toBe(9); // 10 の楽器、10 回目で全部
   expect(bgm.prepare()).toBe(true);
+});
+
+test('自然に鳴り終えた音は、終わったときにつなぎを外す（ノードが残り続けない）', () => {
+  const { ctx, bgm } = setup();
+  bgm.start();
+  tick(ctx, bgm, 7, C);
+  const s = ctx.sources[0];
+  expect(typeof s.onended).toBe('function');
+  s.onended();
+  expect(s.connected).toBe(false);
+});
+
+test('ブラックホール: 鳴っている音の止める時刻は、引き伸ばした長さに合わせて延びる（途中でプツッと切らない）。尾は消えたところで止める', () => {
+  const { ctx, bgm } = setup();
+  bgm.start();
+  tick(ctx, bgm, 12, { elapsed: 59, power: 0.5, holding: true });
+  const t = ctx.currentTime;
+  const ringing = ctx.sources.filter((s) => s.startT <= t && s.stopT > t + 0.05);
+  const before = ringing.map((s) => s.stopT);
+  bgm.stretchOut(3);
+  for (let i = 0; i < ringing.length; i++) {
+    // 引き伸ばしで読む速さが落ちるので、止める時刻は前より後（ただし音量が 0 になったすぐあとまで）
+    expect(ringing[i].stopT).toBeGreaterThanOrEqual(Math.min(before[i], t + 3 * 1.05));
+    expect(ringing[i].stopT).toBeLessThanOrEqual(t + 3 * 1.05 + 0.1);
+  }
+  expect(ringing.some((s, i) => s.stopT > before[i] + 0.05)).toBe(true);
+  // 引き伸ばしの間に予約した音（長いドローンも）は、音量が 0 になったすぐあとで止まる
+  tick(ctx, bgm, t + 4, {});
+  for (const s of ctx.sources.filter((x) => x.startT >= t)) expect(s.stopT).toBeLessThanOrEqual(t + 3 * 1.05 + 0.1);
 });

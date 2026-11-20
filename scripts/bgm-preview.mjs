@@ -1,15 +1,16 @@
 // BGM を耳で確かめるための WAV を書き出す（ゲームと同じ譜面・同じ楽器の音・同じ出口のつくりをオフラインで混ぜる）。
 // 使い方: node scripts/bgm-preview.mjs <出力先のフォルダ>
-//   bgm-preview-1-calm.wav      20 秒: 始まり（層 0: 低い太鼓とゆったりしたマリンバ）
-//   bgm-preview-2-build.wav     20 秒: 中ごろ（層 1: 高い太鼓とシェイカー、旋律が全部）
-//   bgm-preview-3-climax.wav    20 秒: 残り 10 秒の最高潮で長押し中（層 4: 毎小節フィル）
-//   bgm-preview-4-replay.wav    10 秒: リプレイ・結果画面の静かな変奏（3 秒でふくらむ）
-//   bgm-preview-5-full-run.wav  62 秒: ずっと長押しして 58 秒で放つ一回の遊び（放った瞬間に止まる）
-//   bgm-preview-6-blackhole.wav 14 秒: 最高潮 → 時間切れで引き伸ばされて消える → 無音 → 静かな変奏
+//   bgm2-preview-1-start.wav     20 秒: 始まり（層 0: 底のドローン、低い太鼓とゆったりしたマリンバ）
+//   bgm2-preview-2-build.wav     20 秒: 中ごろ（層 1: 高い太鼓とシェイカー、旋律が全部、ときどき不規則なアクセントと不協和な重音）
+//   bgm2-preview-3-climax.wav    20 秒: 残り 10 秒の最高潮で長押し中（層 4: 毎小節フィル、太鼓のロールと金属的に擦れる音）
+//   bgm2-preview-4-replay.wav    10 秒: リプレイ・結果画面の静かな変奏（3 秒でふくらむ）
+//   bgm2-preview-5-full-run.wav  62 秒: ずっと長押しして 58 秒で放つ一回の遊び（放った瞬間に止まる）
+//   bgm2-preview-6-blackhole.wav 14 秒: 最高潮 → 時間切れで引き伸ばされて消える → 無音 → 静かな変奏
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { createSequencer, stretchWarp } from '../src/audio/bgmScore.js';
 import { mixOffline, encodeWav } from '../src/audio/bgmOffline.js';
+import { FADE_HOLD, FADE_END } from '../src/audio/bgm.js';
 
 const dir = process.argv[2];
 if (!dir) { console.error('usage: node scripts/bgm-preview.mjs <out-dir>'); process.exit(2); }
@@ -31,9 +32,9 @@ function steady(cond, dur, pre = 40) {
 }
 
 for (const [name, cond] of [
-  ['bgm-preview-1-calm.wav', { elapsed: 5, power: 0, holding: false }],
-  ['bgm-preview-2-build.wav', { elapsed: 25, power: 0.3, holding: false }],
-  ['bgm-preview-3-climax.wav', { elapsed: 55, power: 0.8, holding: true }],
+  ['bgm2-preview-1-start.wav', { elapsed: 5, power: 0, holding: false }],
+  ['bgm2-preview-2-build.wav', { elapsed: 25, power: 0.3, holding: false }],
+  ['bgm2-preview-3-climax.wav', { elapsed: 55, power: 0.8, holding: true }],
 ]) {
   const { seq, mix } = steady(cond, 20);
   save(name, mix);
@@ -43,7 +44,7 @@ for (const [name, cond] of [
 {
   const q = createSequencer({ start: 0.1, mode: 'quiet' });
   const ev = q.advance(10, () => ({}));
-  save('bgm-preview-4-replay.wav', mixOffline(ev, { sr: SR, duration: 10.5, gainAt: (t) => Math.min(1, t / 3) }));
+  save('bgm2-preview-4-replay.wav', mixOffline(ev, { sr: SR, duration: 10.5, gainAt: (t) => Math.min(1, t / 3) }));
 }
 
 {
@@ -51,7 +52,7 @@ for (const [name, cond] of [
   const seq = createSequencer({ start: 0.1 });
   const release = 58.1;
   const ev = seq.advance(release, (t) => ({ elapsed: t - 0.1, power: Math.min(1, 0.022 * t), holding: true })).filter((e) => e.t < release);
-  save('bgm-preview-5-full-run.wav', mixOffline(ev, { sr: SR, duration: 62, gainAt: (t) => (t < release ? 1 : 0) }));
+  save('bgm2-preview-5-full-run.wav', mixOffline(ev, { sr: SR, duration: 62, gainAt: (t) => (t < release ? 1 : 0) }));
 }
 
 {
@@ -65,11 +66,12 @@ for (const [name, cond] of [
   const q = createSequencer({ start: quietAt, mode: 'quiet' });
   const quiet = q.advance(quietAt + 4, () => ({}));
   const ev = [...before, ...stretched, ...quiet].map((e) => ({ ...e, t: e.t - 40 }));
-  const w = stretchWarp(sec);
   const t0 = T - 40, tq = quietAt - 40;
-  save('bgm-preview-6-blackhole.wav', mixOffline(ev, {
-    sr: SR, duration: tq + 4.5,
+  // 引き伸ばしはゲームと同じ（鳴っている音の音程も下がる・出口の low-pass と音量）。そのあとは静かな変奏が 3 秒でふくらむ
+  const w = stretchWarp(sec);
+  save('bgm2-preview-6-blackhole.wav', mixOffline(ev, {
+    sr: SR, duration: tq + 4.5, warp: { at: t0, sec },
     cutoff: (t) => (t < t0 ? 20000 : t < tq ? w.cutoff(t - t0) : 20000),
-    gainAt: (t) => (t < t0 + sec * 0.85 ? 1 : t < t0 + sec * 1.05 ? 1 - (t - t0 - sec * 0.85) / (sec * 0.2) : t < tq ? 0 : Math.min(1, (t - tq) / 3)),
+    gainAt: (t) => (t < t0 + sec * FADE_HOLD ? 1 : t < t0 + sec * FADE_END ? 1 - (t - t0 - sec * FADE_HOLD) / (sec * (FADE_END - FADE_HOLD)) : t < tq ? 0 : Math.min(1, (t - tq) / 3)),
   }));
 }

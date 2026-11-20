@@ -2,7 +2,8 @@
 // bgm.js の音のつくりを写す: 一音ごとに楽器の音を再生の速さで読み（線形補間）、等しい力の左右に置き、
 // 小さなこだま（遅れ・曇り・戻し）を足し、出口の low-pass と音量を通す。
 import { renderVoice } from './bgmVoices.js';
-import { BGM_BUS } from './bgm.js';
+import { BGM_BUS, FADE_HOLD, FADE_END } from './bgm.js';
+import { stretchWarp } from './bgmScore.js';
 
 // RBJ の low-pass（Web Audio の BiquadFilterNode の lowpass と同じ式）
 function lowpassCoef(fc, q, sr) {
@@ -19,9 +20,20 @@ function biquad() {
   };
 }
 
-// events: bgmScore の音の一覧。cutoff(t) / gainAt(t): 出口の low-pass（Hz）と音量（0〜1）の時刻ごとの値（なければ 20 kHz・1）
-export function mixOffline(events, { sr = 44100, duration, cutoff = null, gainAt = null } = {}) {
+// events: bgmScore の音の一覧。cutoff(t) / gainAt(t): 出口の low-pass（Hz）と音量（0〜1）の時刻ごとの値（なければ 20 kHz・1）。
+// warp { at, sec }: ゲームの stretchOut と同じく、時刻 at に鳴っている音の読む速さも指数で落とし、
+// 出口の low-pass を下げ、音量を sec × FADE_HOLD まで保って sec × FADE_END で 0 にする（cutoff / gainAt を渡せばそちらが先）
+export function mixOffline(events, { sr = 44100, duration, cutoff = null, gainAt = null, warp = null } = {}) {
   const n = Math.ceil(duration * sr);
+  let wf = null, wEnd = Infinity;
+  if (warp) {
+    wf = stretchWarp(warp.sec);
+    wEnd = warp.at + warp.sec * FADE_END;
+    const { at, sec } = warp;
+    const h = at + sec * FADE_HOLD;
+    cutoff ??= (t) => (t < at ? 20000 : wf.cutoff(t - at));
+    gainAt ??= (t) => (t < h ? 1 : t >= wEnd ? 0 : 1 - (t - h) / (wEnd - h));
+  }
   const L = new Float32Array(n), R = new Float32Array(n);
   const cache = new Map();
   for (const e of events) {
@@ -30,14 +42,19 @@ export function mixOffline(events, { sr = 44100, duration, cutoff = null, gainAt
     const i0 = Math.round(e.t * sr);
     const th = (Math.max(-1, Math.min(1, e.pan)) + 1) * Math.PI / 4;
     const gl = e.gain * Math.cos(th), gr = e.gain * Math.sin(th);
-    const len = Math.floor((buf.length - 1) / e.rate);
-    for (let j = 0; j < len; j++) {
-      const i = i0 + j;
-      if (i < 0) continue;
-      if (i >= n) break;
-      const x = j * e.rate, k = Math.floor(x), f = x - k;
-      const v = buf[k] * (1 - f) + buf[k + 1] * f;
-      L[i] += v * gl; R[i] += v * gr;
+    // 引き伸ばしの瞬間に鳴っている音は、そこから読む速さが落ちる。引き伸ばしの音は出口の音量が 0 になったら止める
+    // （そのあとに始まる音、たとえば続く静かな変奏はそのまま）
+    const iw = wf && e.t < warp.at ? Math.round(warp.at * sr) : Infinity;
+    const iEnd = e.t < wEnd ? Math.min(n, Math.ceil(wEnd * sr)) : n;
+    let x = 0;
+    for (let i = i0; x < buf.length - 1; i++) {
+      if (i >= iEnd) break;
+      if (i >= 0) {
+        const k = Math.floor(x), f = x - k;
+        const v = buf[k] * (1 - f) + buf[k + 1] * f;
+        L[i] += v * gl; R[i] += v * gr;
+      }
+      x += i >= iw ? e.rate * wf.rate((i - iw) / sr) : e.rate;
     }
   }
   // こだま: s = 入力 + 戻し × e、e = 曇り(s の D 標本前)、出口へは wet × e

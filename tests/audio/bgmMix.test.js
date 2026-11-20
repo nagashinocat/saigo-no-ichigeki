@@ -43,11 +43,26 @@ test('引き伸ばし: 音はだんだん小さく暗くなり、sec 秒のあ�
   const before = seq.advance(4, () => ({ elapsed: 55, power: 0.5, holding: true })).filter((e) => e.t < 4);
   seq.stretch(4, 3);
   const after = seq.advance(20, () => ({ elapsed: 55, power: 0.5, holding: true }));
-  const m = mixOffline([...before, ...after], { sr: SR, duration: 8.5 });
+  // ゲームと同じく、引き伸ばしの瞬間に鳴っている音も音程が下がり、出口の音量は最後に 0 へ（warp）
+  const m = mixOffline([...before, ...after], { sr: SR, duration: 8.5, warp: { at: 4, sec: 3 } });
   const a = rms(m, 4.0, 4.8), b = rms(m, 5.5, 6.3), c = rms(m, 6.6, 7.0);
   expect(a).toBeGreaterThan(b);
   expect(b).toBeGreaterThan(c);
   expect(rms(m, 7.6, 8.5)).toBeLessThan(a * 0.02);
+});
+
+test('引き伸ばし（warp）: その瞬間に鳴っている長いドローンも音程が下がり、出口の音量が 0 になったところで切れる', () => {
+  const ev = [{ t: 0.5, voice: 'drone', rate: 1, gain: 1, pan: 0 }];
+  const plain = mixOffline(ev, { sr: SR, duration: 6 });
+  const warped = mixOffline(ev, { sr: SR, duration: 6, warp: { at: 1.5, sec: 2 } });
+  // 引き伸ばしの前は同じ
+  expect(rms(warped, 1, 1.4)).toBeCloseTo(rms(plain, 1, 1.4), 6);
+  // 終わったあとは無音（ふつうなら鳴り続けている）
+  expect(rms(plain, 4, 5)).toBeGreaterThan(0.001);
+  expect(rms(warped, 3.7, 6)).toBeLessThan(1e-6);
+  // 音程が下がる: 隣の標本との差（高さの目安）が小さくなる
+  const edge = ({ left }, t0, t1) => { let d = 0, e = 0; for (let i = Math.floor(t0 * SR) + 1; i < t1 * SR; i++) { d += (left[i] - left[i - 1]) ** 2; e += left[i] ** 2; } return d / e; };
+  expect(edge(warped, 3, 3.2)).toBeLessThan(edge(plain, 3, 3.2) * 0.5);
 });
 
 test('WAV: 見出しと長さ', () => {

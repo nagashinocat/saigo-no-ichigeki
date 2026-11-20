@@ -19,6 +19,17 @@ const R_MIN = 0.12; // 引き伸ばしの終わりの再生の速さ
 // 楽器の音はこの標本化周波数で作る（AudioContext の周波数が違っても、再生のときに合わせてくれる）。
 // AudioContext ができる前（最初のタップの前）から、1 フレームに 1 つずつ作っておける（prepare）
 const VOICE_SR = 48000;
+// 引き伸ばしの出口の音量: sec × FADE_HOLD まで保ち、sec × FADE_END で 0（オフラインの書き出しも同じ）
+export const FADE_HOLD = 0.85, FADE_END = 1.05;
+
+// 引き伸ばし（読む速さが sec 秒で R_MIN 倍へ指数で落ち、その後はそのまま）のとき、
+// ふつうの速さで rest 秒ぶんの音を読み終えるまでの実際の秒
+export function warpedTime(rest, sec, rMin = R_MIN) {
+  const k = -Math.log(rMin) / sec;
+  const inRamp = (1 - rMin) / k; // sec 秒の間に読める分
+  if (rest <= inRamp) return -Math.log(1 - k * rest) / k;
+  return sec + (rest - inRamp) / rMin;
+}
 
 export function createBgm(getOutput) {
   let state = 'off';
@@ -29,6 +40,7 @@ export function createBgm(getOutput) {
   let seq = null;
   let live = []; // { src, g, t, end, rate }
   let pendingQuiet = null; // 引き伸ばしが終わってから始める静かな変奏 { at, fadeIn }
+  let stretchEnd = Infinity; // 引き伸ばしで出口の音量が 0 になる時刻（それより後まで鳴らさない）
   const rendered = new Map(); // 楽器の名前 → Float32Array
   const voiceData = (name) => { if (!rendered.has(name)) rendered.set(name, renderVoice(name, VOICE_SR)); return rendered.get(name); };
 
@@ -78,9 +90,11 @@ export function createBgm(getOutput) {
     const g = ctx.createGain(); g.gain.value = e.gain;
     src.connect(g); g.connect(pannerFor(e.pan));
     src.start(t);
-    const end = t + buf.duration / e.rate;
+    const end = Math.min(t + buf.duration / e.rate, stretchEnd);
     src.stop(end + 0.02);
-    live.push({ src, g, t, end, rate: e.rate });
+    // 自然に鳴り終えた（または止めた）音は、つなぎを外す（ノードが残り続けない）
+    src.onended = () => { src.disconnect?.(); g.disconnect?.(); };
+    live.push({ src, g, t, end, rate: e.rate, dur: buf.duration });
   }
 
   // 時刻 t 以後に始まる予約を取り消す
@@ -104,6 +118,7 @@ export function createBgm(getOutput) {
     cancelFrom(at);
     seq = createSequencer({ start: at, mode: 'quiet' });
     state = 'quiet';
+    stretchEnd = Infinity;
     pendingQuiet = null;
     const p = outGain.gain;
     p.cancelScheduledValues(at);
@@ -130,6 +145,7 @@ export function createBgm(getOutput) {
       const t = now() + START_DELAY;
       seq = createSequencer({ start: t });
       state = 'play';
+      stretchEnd = Infinity;
       const p = outGain.gain;
       p.cancelScheduledValues(t);
       p.setValueAtTime(1, t);
@@ -173,11 +189,16 @@ export function createBgm(getOutput) {
       seq.stretch(t, sec);
       state = 'stretch';
       const w = stretchWarp(sec, R_MIN);
-      // 鳴っている音も、同じように音程が下がる
+      stretchEnd = t + sec * FADE_END;
+      // 鳴っている音も、同じように音程が下がる。読む速さが落ちるぶん鳴り終わりは遅くなるので、止める時刻も延ばす
+      // （元の時刻で止めると途中でプツッと切れる）。ただし出口の音量が 0 になったすぐあとまで
       for (const n of live) {
         n.src.playbackRate.cancelScheduledValues?.(t);
         n.src.playbackRate.setValueAtTime(n.rate, t);
         n.src.playbackRate.exponentialRampToValueAtTime(n.rate * R_MIN, t + sec);
+        const left = n.dur - Math.max(0, t - n.t) * n.rate; // 残りの音（楽器の音の中の秒）
+        n.end = Math.min(t + warpedTime(left / n.rate, sec), stretchEnd);
+        try { n.src.stop(n.end + 0.02); } catch { /* 済み */ }
       }
       const f = lp.frequency;
       f.cancelScheduledValues(t);
@@ -187,8 +208,8 @@ export function createBgm(getOutput) {
       const p = outGain.gain;
       p.cancelScheduledValues(t);
       p.setValueAtTime(p.value, t);
-      p.setValueAtTime(p.value, t + sec * 0.85);
-      p.linearRampToValueAtTime(0, t + sec * 1.05);
+      p.setValueAtTime(p.value, t + sec * FADE_HOLD);
+      p.linearRampToValueAtTime(0, t + sec * FADE_END);
     },
     // タブが隠れた / 戻った（AudioContext も止まるので、予約した音は時刻ごと止まる）
     pause() { paused = true; },
