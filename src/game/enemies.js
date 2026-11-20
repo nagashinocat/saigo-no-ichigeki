@@ -9,6 +9,13 @@ export function spawnRateAt(t, cfg = CONFIG) {
   return E.spawnPerSec * (1 + (E.spawnRamp - 1) * k);
 }
 
+// 近づく速さ（m/s）。掴む手前の slowDist m で、なめらかに slowMin 倍まで落とす。距離は主人公からの水平の距離
+export function approachSpeed(dist, cfg = CONFIG) {
+  const E = cfg.enemy;
+  const t = Math.min(1, Math.max(0, (dist - E.grabRange) / E.slowDist));
+  return E.speed * (E.slowMin + (1 - E.slowMin) * t * t * (3 - 2 * t));
+}
+
 // 軍勢。外から中心へ近づき、近づいたら主人公を掴む。爆発の前線に触れると倒れる。時間がたつほど多く湧く。
 export function createEnemies(rng, cfg = CONFIG) {
   const E = cfg.enemy;
@@ -25,9 +32,10 @@ export function createEnemies(rng, cfg = CONFIG) {
 
       let grabbing = list.reduce((n, e) => n + (e.state === 'grab' ? 1 : 0), 0);
       for (const e of list) {
+        if (e.state === 'grab') e.grabTime += dt; // 掴んでからの秒（見た目が主人公の横へ寄るのに使う）
         if (e.state !== 'approach') continue;
-        e.dist = Math.max(E.grabRange, e.dist - E.speed * dt);
-        if (e.dist <= E.grabRange && grabbing < E.maxGrabbing) { e.state = 'grab'; grabbing++; }
+        e.dist = Math.max(E.grabRange, e.dist - approachSpeed(e.dist, cfg) * dt);
+        if (e.dist <= E.grabRange && grabbing < E.maxGrabbing) { e.state = 'grab'; e.grabTime = 0; grabbing++; }
       }
 
       // 区間の真ん中の速さで足す（台形と同じで、刻み幅によらず同じ数が湧く）

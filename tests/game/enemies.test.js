@@ -1,5 +1,5 @@
 import { test, expect } from 'vitest';
-import { createEnemies, spawnRateAt } from '../../src/game/enemies.js';
+import { createEnemies, spawnRateAt, approachSpeed } from '../../src/game/enemies.js';
 import { createRng } from '../../src/rng.js';
 import { CONFIG } from '../../src/config.js';
 
@@ -78,4 +78,43 @@ test('はじめの10秒より、最後の10秒のほうが3倍近く多く湧く
   const last = e.list.length - before;
   expect(last / first).toBeGreaterThan(2.6);
   expect(last / first).toBeLessThan(4);
+});
+
+test('近づくほど速度を落とす: 遠くでは speed、掴む手前では slowMin 倍まで遅くなる（距離は水平）', () => {
+  expect(approachSpeed(E.spawnDist[0])).toBeCloseTo(E.speed);
+  expect(approachSpeed(E.grabRange + E.slowDist)).toBeCloseTo(E.speed);
+  expect(approachSpeed(E.grabRange)).toBeCloseTo(E.speed * E.slowMin);
+  let prev = Infinity;
+  for (let d = E.grabRange + E.slowDist; d >= E.grabRange; d -= 0.5) { const v = approachSpeed(d); expect(v).toBeLessThanOrEqual(prev + 1e-9); prev = v; }
+  const e = createEnemies(createRng(2), cfgWith({ spawnPerSec: 10 }));
+  e.update(0.1);
+  const x = e.list[0];
+  x.dist = E.grabRange + 1; const before = x.dist;
+  e.update(0.02);
+  expect(x.dist).toBeCloseTo(before - approachSpeed(before) * 0.02, 6);
+});
+
+test('遅くなっても、湧いてから掴むまでの秒は前とほぼ同じ（約 10.5〜14.5 秒）', () => {
+  const reach = (d0) => {
+    const e = createEnemies(createRng(2), cfgWith({ spawnPerSec: 10, maxGrabbing: 1e9 })); // 先に着いた者で枠が埋まらないように
+    e.update(0.1);
+    const x = e.list[0]; x.dist = d0;
+    let t = 0;
+    while (x.state === 'approach' && t < 60) { e.update(1 / 60); t += 1 / 60; }
+    return t;
+  };
+  expect(reach(E.spawnDist[0])).toBeGreaterThan(10.3);
+  expect(reach(E.spawnDist[1])).toBeLessThan(14.5);
+});
+
+test('掴んだ者は grabTime（掴んでからの秒）が進む（見た目が主人公の横へ寄るのに使う）', () => {
+  const e = createEnemies(createRng(3), cfgWith({ spawnPerSec: 100, spawnDist: [10, 10], speed: 100 }));
+  for (let i = 0; i < 3; i++) e.update(0.1);
+  const g = e.list.filter((x) => x.state === 'grab');
+  expect(g.length).toBeGreaterThan(0);
+  const before = g.map((x) => x.grabTime);
+  for (const t of before) expect(t).toBeGreaterThanOrEqual(0);
+  e.update(0.05);
+  g.forEach((x, i) => expect(x.grabTime).toBeCloseTo(before[i] + 0.05, 9));
+  for (const x of e.list.filter((y) => y.state === 'approach')) expect(x.grabTime).toBeUndefined();
 });

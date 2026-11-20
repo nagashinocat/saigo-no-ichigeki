@@ -366,3 +366,7 @@ test('minRelease 未満で離すと fizzle（不発の知らせ）を一度出�
   g.pressStart(); g.pressCancel(); // 打ち切りでは知らせない
   expect(log).toHaveLength(1);
 });
+
+test('払う（小爆発）の半径は 22m（軍勢が遅くなった分、持ち主が選んだ釣り合いに戻す）', () => {
+  expect(CONFIG.puff.radius).toBe(22);
+});

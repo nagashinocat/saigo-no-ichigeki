@@ -1,9 +1,13 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { groundHeight } from './sphereDeform.js';
+import { srgb, part, at, capsule, box, ball } from './figureGeo.js';
+import { buildRiderBikeGeometry, RIDER } from './hoverBike.js';
+import { bikePose, BIKE } from './bikePose.js';
 
-// 街の中の人の姿: 謎の軍勢（InstancedMesh、歩く・しがみつく動きは頂点シェーダー）と、広場に立つ主人公。
+// 街の中の人の姿: 浮遊バイクに乗った謎の軍勢（InstancedMesh、かがむ・手を伸ばす動きは頂点シェーダー）と、広場に浮く主人公。
 // 軍勢は揃いの暗い装備で、顔はヘルメットと覆面でほぼ隠れ、目の部分だけ開いている。目は光を受けて光る。
+// バイクの置き方（浮く高さ・掴むときの位置・吹き飛び）は bikePose.js。真下の地面には、浮いているのがわかる影と推進の光の溜まりを落とす。
 // 上空カメラ（広場まで約 110m）でも 2m の人は 6px ほどにしかならないので、遠いほど大きく描き（最大 ENEMY_LOOK.maxBoost 倍）、
 // ビルに隠れた者は、隠れた部分だけ暗い青の影絵で上に重ねる（深さが奥のときだけ描くもう一つのパス）。
 
@@ -11,70 +15,10 @@ export const ENEMY_LOOK = {
   height: 1.8,      // m
   minPx: 16,         // 画面の上でこの高さ（CSS の px）より小さければ大きく描く
   maxBoost: 3,
-  clingRadius: 0.55, // 掴んでいる者は主人公のこの距離にしがみつく（m）
-  deadFling: 1.1,    // 倒れた者が吹き飛んで消えるまで（s）
 };
 const CAPACITY = 160;
-const WALK_RATE = 9.0; // rad/s。走る足の運び
 
-// 軍勢の位置。angle はワールドの x 軸から z 軸へ回る向き
-export function enemyXZ(e, dist = e.dist) {
-  return [Math.cos(e.angle) * dist, Math.sin(e.angle) * dist];
-}
-
-const srgb = (hex) => new THREE.Color(hex).convertSRGBToLinear();
 const hash = (n) => { const x = Math.sin(n * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
-
-// 部位: 0 胴, 1 頭, 2 左腕, 3 右腕, 4 左脚, 5 右脚, 6 目。10 以上は動かない（主人公）
-function part(geo, id, pivot, color) {
-  const g = geo;
-  const n = g.attributes.position.count;
-  const c = srgb(color);
-  g.setAttribute('aPart', new THREE.BufferAttribute(new Float32Array(n).fill(id), 1));
-  const pv = new Float32Array(n * 3), col = new Float32Array(n * 3);
-  for (let i = 0; i < n; i++) { pv.set(pivot, i * 3); col.set([c.r, c.g, c.b], i * 3); }
-  g.setAttribute('aPivot', new THREE.BufferAttribute(pv, 3));
-  g.setAttribute('aCol', new THREE.BufferAttribute(col, 3));
-  g.deleteAttribute('uv');
-  return g;
-}
-const at = (geo, x, y, z) => geo.translate(x, y, z);
-const capsule = (r, len, seg = 8) => new THREE.CapsuleGeometry(r, len, 3, seg);
-const box = (w, h, d) => new THREE.BoxGeometry(w, h, d);
-const ball = (r, w = 12, h = 8) => new THREE.SphereGeometry(r, w, h);
-
-// 兵士。+z が前、足元が y=0。体の色は暗い灰緑の上下、胸と肩の板、黒い覆面、鈍い色のヘルメット。
-export function buildSoldierGeometry() {
-  const SUIT = '#2c3133', PLATE = '#3b4240', DARK = '#191c1f', HELM = '#30363c', BOOT = '#141617';
-  const hip = [0, 0.95, 0], neck = [0, 1.5, 0];
-  const parts = [
-    // 胴: 上着・胸の板・背の箱・腰のベルト
-    part(at(capsule(0.17, 0.36), 0, 1.2, 0).scale(1.25, 1, 0.8), 0, hip, SUIT),
-    part(at(box(0.4, 0.3, 0.12), 0, 1.3, 0.1), 0, hip, PLATE),
-    part(at(box(0.32, 0.36, 0.16), 0, 1.25, -0.18), 0, hip, DARK),
-    part(at(box(0.42, 0.07, 0.3), 0, 0.98, 0), 0, hip, DARK),
-    part(at(box(0.16, 0.08, 0.28), 0.22, 1.42, 0), 0, hip, PLATE), // 肩の板
-    part(at(box(0.16, 0.08, 0.28), -0.22, 1.42, 0), 0, hip, PLATE),
-    // 頭: 覆面の頭とヘルメット（前のつばが目の上にかぶさる）
-    part(at(ball(0.115).scale(1, 1.15, 1.05), 0, 1.63, 0), 1, neck, DARK),
-    part(at(ball(0.135, 14, 8).scale(1.05, 0.8, 1.12), 0, 1.7, -0.01), 1, neck, HELM),
-    part(at(box(0.25, 0.035, 0.08), 0, 1.675, 0.1), 1, neck, HELM),
-    // 目（覆面の細い開きから見える）
-    part(at(box(0.04, 0.016, 0.02), 0.04, 1.648, 0.118), 6, neck, '#ffffff'),
-    part(at(box(0.04, 0.016, 0.02), -0.04, 1.648, 0.118), 6, neck, '#ffffff'),
-    // 腕（肩から下へ）と手袋
-    part(at(capsule(0.06, 0.5), 0.27, 1.13, 0), 2, [0.27, 1.42, 0], SUIT),
-    part(at(capsule(0.06, 0.5), -0.27, 1.13, 0), 3, [-0.27, 1.42, 0], SUIT),
-    part(at(ball(0.06), 0.27, 0.83, 0.01), 2, [0.27, 1.42, 0], DARK),
-    part(at(ball(0.06), -0.27, 0.83, 0.01), 3, [-0.27, 1.42, 0], DARK),
-    // 脚と長靴
-    part(at(capsule(0.085, 0.62), 0.11, 0.55, 0), 4, [0.11, 0.92, 0], SUIT),
-    part(at(capsule(0.085, 0.62), -0.11, 0.55, 0), 5, [-0.11, 0.92, 0], SUIT),
-    part(at(box(0.13, 0.16, 0.26), 0.11, 0.08, 0.04), 4, [0.11, 0.92, 0], BOOT),
-    part(at(box(0.13, 0.16, 0.26), -0.11, 0.08, 0.04), 5, [-0.11, 0.92, 0], BOOT),
-  ];
-  return mergeGeometries(parts.map((g) => g.toNonIndexed()));
-}
 
 // 主人公: 黒に近い紺の上着、薄い色の襟巻き。両腕を前へ出し、胸の前で両手の手のひらを向き合わせて立つ（動かない）。+z が前
 export function buildHeroGeometry() {
@@ -96,57 +40,67 @@ export function buildHeroGeometry() {
   return mergeGeometries(parts.map((g) => g.toNonIndexed()));
 }
 
+// 大きく描く: 遠くで小さすぎる者は boost 倍。中心は自分の足元だが、主人公の横に寄った者（aPose.x → 1）は主人公（原点）を中心にする
+// （主人公も同じだけ大きく描かれるので、並びが崩れず、主人公にめり込まない）
+const BOOST_GLSL = /* glsl */`
+float boostFor(vec3 base) {
+  float dist = max(1.0, distance(base, cameraPosition));
+  float px = uHeight * uPx / dist;
+  return clamp(uMinPx / max(px, 1e-3), 1.0, uMaxBoost);
+}`;
+
 const FIGURE_VERT = /* glsl */`
 attribute float aPart;
 attribute vec3 aPivot;
 attribute vec3 aCol;
-attribute vec4 aAnim; // x: 足の運びの位相, y: しがみつき 0〜1, z: 大きさ, w: 残り（倒れて消える）
+attribute vec4 aAnim; // x: 揺れの位相, y: 手を伸ばす 0〜1, z: 大きさ, w: 残り（倒れて消える）
+attribute vec2 aPose; // x: 大きく描く中心を主人公へ寄せる 0〜1, y: 推進の光 0〜1
 uniform float uTime, uPx, uMinPx, uMaxBoost, uHeight;
 varying vec3 vN, vW, vCol;
-varying float vPart, vFar;
+varying float vPart, vFar, vThrust;
 vec3 rotX(vec3 v, float a) { float c = cos(a), s = sin(a); return vec3(v.x, v.y * c - v.z * s, v.y * s + v.z * c); }
+vec3 rotZ(vec3 v, float a) { float c = cos(a), s = sin(a); return vec3(v.x * c - v.y * s, v.x * s + v.y * c, v.z); }
+${BOOST_GLSL}
 void main() {
   vec3 p = position, n = normal;
-  float ph = aAnim.x + uTime * ${WALK_RATE.toFixed(2)};
-  float s = sin(ph), g = aAnim.y, walk = 1.0 - g;
-  if (aPart < 9.5) {
-    // 手足を付け根で回す
-    float a = 0.0;
-    if (aPart > 1.5 && aPart < 2.5) a = -s * 0.65 * walk - 1.5 * g;
-    if (aPart > 2.5 && aPart < 3.5) a = s * 0.65 * walk - 1.5 * g;
-    if (aPart > 3.5 && aPart < 4.5) a = s * 0.75 * walk - 0.45 * g;
-    if (aPart > 4.5 && aPart < 5.5) a = -s * 0.75 * walk - 0.3 * g;
-    if (a != 0.0) { p = aPivot + rotX(p - aPivot, a); n = rotX(n, a); }
-    // 上半身は前へ傾く（走る、しがみつく）
-    bool upper = aPart < 3.5 || aPart > 5.5;
-    if (upper) {
-      float lean = 0.2 * walk + 0.55 * g;
-      vec3 hip = vec3(0.0, 0.95, 0.0);
-      p = hip + rotX(p - hip, lean);
-      n = rotX(n, lean);
+  float g = aAnim.y, ride = 1.0 - g;
+  // 乗り手の上半身と腕（脚・バイク・主人公は動かない）
+  bool upper = aPart < 3.5 || (aPart > 5.5 && aPart < 6.5);
+  if (upper) {
+    float a = 0.0, b = 0.0;
+    if (aPart > 1.5 && aPart < 2.5) a = ${RIDER.armRide.toFixed(4)} + 0.04 * sin(uTime * 3.0 + aAnim.x);        // 左手は握りのまま
+    if (aPart > 2.5 && aPart < 3.5) {                                                         // 右手: 握り → 主人公へ伸ばす
+      a = mix(${RIDER.armRide.toFixed(4)}, -0.35, g);
+      b = -1.35 * g + 0.1 * g * sin(uTime * 9.0 + aAnim.x);
     }
-    p.y += abs(cos(ph)) * 0.05 * walk;
+    if (a != 0.0 || b != 0.0) { p = aPivot + rotZ(rotX(p - aPivot, a), b); n = rotZ(rotX(n, a), b); }
+    vec3 hip = vec3(${RIDER.hip.map((v) => v.toFixed(4)).join(', ')});
+    float lean = mix(${RIDER.lean.toFixed(4)}, 0.15, g) + 0.03 * sin(uTime * 2.3 + aAnim.x);
+    float side = 0.32 * g; // 主人公（右手側 -x）へ身を乗り出す
+    p = hip + rotZ(rotX(p - hip, lean), side);
+    n = rotZ(rotX(n, lean), side);
   }
-  // 遠くで小さすぎる者は、足元を中心に大きく描く
-  vec4 base = modelMatrix * instanceMatrix * vec4(0.0, uHeight * 0.5, 0.0, 1.0);
-  float dist = max(1.0, distance(base.xyz, cameraPosition));
-  float px = uHeight * aAnim.z * uPx / dist;
-  float boost = clamp(uMinPx / max(px, 1e-3), 1.0, uMaxBoost);
+  vec3 origin = (modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
+  float boost = boostFor((modelMatrix * instanceMatrix * vec4(0.0, uHeight * 0.5, 0.0, 1.0)).xyz);
+  float px = uHeight * aAnim.z * uPx / max(1.0, distance(origin, cameraPosition));
   vFar = smoothstep(uMinPx * 4.0, uMinPx * 1.5, px);
   p *= aAnim.z * boost * aAnim.w;
   vec4 wp = modelMatrix * instanceMatrix * vec4(p, 1.0);
+  vec3 anchor = mix(origin, (modelMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz, aPose.x);
+  wp.xyz += (origin - anchor) * (boost - 1.0);
   vW = wp.xyz;
   vN = normalize(mat3(modelMatrix) * mat3(instanceMatrix) * n);
   vCol = aCol;
   vPart = aPart;
+  vThrust = aPose.y * (0.85 + 0.15 * sin(uTime * 31.0 + aAnim.x * 7.0));
   gl_Position = projectionMatrix * viewMatrix * wp;
 }`;
 
 const FIGURE_FRAG = /* glsl */`
-uniform vec3 uSunDir, uSun, uSky, uGround, uBlast, uEye;
+uniform vec3 uSunDir, uSun, uSky, uGround, uBlast, uEye, uThrust;
 uniform float uGlow;
 varying vec3 vN, vW, vCol;
-varying float vPart, vFar;
+varying float vPart, vFar, vThrust;
 void main() {
   vec3 N = normalize(vN);
   vec3 V = normalize(cameraPosition - vW);
@@ -163,7 +117,45 @@ void main() {
     // 目: 光を受けて光る（夕日と爆心の光で強くなる）
     col = uEye * (1.4 + 1.6 * vFar + 3.5 * uGlow + 0.8 * max(ndl, 0.0));
   }
+  if (vPart > 7.5 && vPart < 8.5) col = mix(vCol * light * 0.3, uThrust * (1.6 + 1.2 * vFar), vThrust); // 推進の光
   gl_FragColor = vec4(col, 1.0);
+  #include <tonemapping_fragment>
+  #include <colorspace_fragment>
+}`;
+
+// 浮いている者の真下の地面: やわらかい影と、推進の光が落ちる淡い緑の溜まり（前後の輪の下）。浮くほど影は広く薄い
+const SHADOW_VERT = /* glsl */`
+attribute vec4 aShadow; // x: 地面からの高さ, y: 大きく描く中心を主人公へ寄せる, z: 推進の光, w: 残り
+uniform float uPx, uMinPx, uMaxBoost, uHeight;
+varying vec2 vUv;
+varying vec3 vS;
+${BOOST_GLSL}
+void main() {
+  vUv = uv * 2.0 - 1.0;
+  vec3 origin = (modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
+  float boost = boostFor(origin + vec3(0.0, aShadow.x + uHeight * 0.5, 0.0));
+  float spread = 1.0 + 0.12 * aShadow.x;
+  vec4 wp = modelMatrix * instanceMatrix * vec4(position * boost * spread * aShadow.w, 1.0);
+  vec3 anchor = mix(origin, vec3(0.0, origin.y, 0.0), aShadow.y);
+  wp.xyz += (origin - anchor) * (boost - 1.0);
+  vS = aShadow.xyz;
+  gl_Position = projectionMatrix * viewMatrix * wp;
+}`;
+const SHADOW_FRAG = /* glsl */`
+uniform vec3 uThrust;
+varying vec2 vUv;
+varying vec3 vS;
+void main() {
+  float r = length(vUv);
+  if (r > 1.0) discard;
+  float fade = 1.0 / (1.0 + 0.35 * vS.x);
+  float shade = (1.0 - smoothstep(0.2, 1.0, r)) * 0.5 * fade;
+  // 前後の輪の真下（板の長い向きが前後）
+  float pool = 0.0;
+  pool += 1.0 - smoothstep(0.0, 0.32, length(vUv - vec2(0.0, 0.46)));
+  pool += 1.0 - smoothstep(0.0, 0.38, length(vUv - vec2(0.0, -0.5)));
+  float glow = pool * vS.z * (0.5 + 0.5 * fade);
+  gl_FragColor = vec4(uThrust * glow * 0.9, shade + glow * 0.35);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
 }`;
@@ -220,7 +212,7 @@ function figureUniforms(sunDir) {
     uSun: { value: new THREE.Color(1.0, 0.66, 0.4) }, uSky: { value: new THREE.Color(0.46, 0.54, 1.0) },
     uGround: { value: new THREE.Color(0.55, 0.4, 0.42) }, uBlast: { value: new THREE.Color(1.0, 0.78, 0.5) },
     uEye: { value: new THREE.Color(1.0, 0.93, 0.8) }, uXray: { value: srgb('#5d6f95') },
-    uMarker: { value: 11 },
+    uMarker: { value: 11 }, uThrust: { value: new THREE.Color(0.55, 1.0, 0.82) },
   };
 }
 
@@ -345,10 +337,13 @@ export function createEnemyView(scene, tier, { sunDir = new THREE.Vector3(0.8, 0
   group.name = 'figures';
   scene.add(group);
 
-  const geo = buildSoldierGeometry();
+  const geo = buildRiderBikeGeometry();
   const anim = new THREE.InstancedBufferAttribute(new Float32Array(CAPACITY * 4), 4);
   anim.setUsage(THREE.DynamicDrawUsage);
   geo.setAttribute('aAnim', anim);
+  const pose = new THREE.InstancedBufferAttribute(new Float32Array(CAPACITY * 2), 2);
+  pose.setUsage(THREE.DynamicDrawUsage);
+  geo.setAttribute('aPose', pose);
   const mat = new THREE.ShaderMaterial({ uniforms, vertexShader: FIGURE_VERT, fragmentShader: FIGURE_FRAG });
   const mesh = new THREE.InstancedMesh(geo, mat, CAPACITY);
   mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
@@ -365,6 +360,23 @@ export function createEnemyView(scene, tier, { sunDir = new THREE.Vector3(0.8, 0
   xray.renderOrder = 8;
   xray.name = 'soldiers-xray';
   group.add(mesh, xray);
+
+  // 浮いている者の真下の影と推進の光の溜まり（地面に貼る板。長い向きが前後）
+  const shadowGeo = new THREE.PlaneGeometry(1.3, 3.0).rotateX(-Math.PI / 2);
+  const shadowAttr = new THREE.InstancedBufferAttribute(new Float32Array(CAPACITY * 4), 4);
+  shadowAttr.setUsage(THREE.DynamicDrawUsage);
+  shadowGeo.setAttribute('aShadow', shadowAttr);
+  const shadows = new THREE.InstancedMesh(shadowGeo, new THREE.ShaderMaterial({
+    uniforms, vertexShader: SHADOW_VERT, fragmentShader: SHADOW_FRAG,
+    transparent: true, premultipliedAlpha: true, depthWrite: false,
+    polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4,
+  }), CAPACITY);
+  shadows.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  shadows.frustumCulled = false;
+  shadows.count = 0;
+  shadows.renderOrder = 1;
+  shadows.name = 'bike-shadows';
+  group.add(shadows);
 
   // 遠くの者の目印（見えている者と、隠れた者）
   const markerPos = new THREE.BufferAttribute(new Float32Array(CAPACITY * 3), 3);
@@ -383,6 +395,7 @@ export function createEnemyView(scene, tier, { sunDir = new THREE.Vector3(0.8, 0
   // 主人公（1体だけのインスタンスにして、同じ材質を使う）
   const heroGeo = buildHeroGeometry();
   heroGeo.setAttribute('aAnim', new THREE.InstancedBufferAttribute(new Float32Array([0, 0, 1, 1]), 4));
+  heroGeo.setAttribute('aPose', new THREE.InstancedBufferAttribute(new Float32Array([0, 0]), 2));
   const hero = new THREE.InstancedMesh(heroGeo, mat, 1);
   hero.frustumCulled = false;
   hero.name = 'hero';
@@ -397,7 +410,7 @@ export function createEnemyView(scene, tier, { sunDir = new THREE.Vector3(0.8, 0
   let time = 0, heroYaw = 0;
 
   return {
-    group, hero, mesh, tier, // 形は軽いので、画質の段では変えない
+    group, hero, mesh, shadows, tier, // 形は軽いので、画質の段では変えない
     // 毎フレーム: 軍勢の一覧を姿に写す。fronts は地面と同じ球の一覧（えぐれた地面の上に立つ）、
     // pointScale は 1m を画素へ直す係数（距離 1m のとき）、glow は爆発の明るさ（0〜1）
     sync(enemies, { fronts = [], pointScale = 500, glow = 0, dt = 0, pixelRatio = 1 } = {}) {
@@ -408,37 +421,37 @@ export function createEnemyView(scene, tier, { sunDir = new THREE.Vector3(0.8, 0
       uniforms.uMinPx.value = ENEMY_LOOK.minPx * pixelRatio; // pointScale は画素の px なので、基準も CSS の px から直す
       uniforms.uGlow.value = glow;
       let n = 0;
-      const a = anim.array;
+      const a = anim.array, po = pose.array, sh = shadowAttr.array;
       for (const e of enemies) {
         if (n >= CAPACITY) break;
-        let r = e.dist, lift = 0, fall = 0, keep = 1;
-        if (e.state === 'grab') r = ENEMY_LOOK.clingRadius;
-        if (e.state === 'dead') {
-          const k = (e.deadTime ?? 0) / ENEMY_LOOK.deadFling;
-          if (k >= 1) continue;
-          r = e.dist + 26 * k;
-          lift = 14 * k - 10 * k * k;
-          fall = 5 * k;
-          keep = 1 - k * k;
-        }
-        const [x, z] = enemyXZ(e, r);
-        const yaw = Math.atan2(-Math.cos(e.angle), -Math.sin(e.angle)); // 主人公の方を向く
-        _p.set(x, (e.state === 'grab' ? 0 : groundHeight(r, fronts)) + lift, z); // しがみつく者は浮いた主人公と同じ高さ
-        _q.setFromEuler(_e.set(-fall, yaw, 0, 'YXZ'));
+        const b = bikePose(e, fronts, time);
+        if (!b) continue; // 吹き飛んで消えた
+        _p.set(b.x, b.y, b.z);
+        _q.setFromEuler(_e.set(b.pitch, b.yaw, b.roll, 'YXZ'));
         mesh.setMatrixAt(n, _m.compose(_p, _q, _s));
-        markerPos.setXYZ(n, _p.x, _p.y + ENEMY_LOOK.height * (e.state === 'grab' ? 1.6 : 2.2), _p.z);
+        markerPos.setXYZ(n, b.x, b.y + ENEMY_LOOK.height * 1.9, b.z);
+        const ground = groundHeight(Math.hypot(b.x, b.z), fronts);
+        _p.set(b.x, ground + 0.06, b.z);
+        shadows.setMatrixAt(n, _m.compose(_p, _q.setFromEuler(_e.set(0, b.yaw, 0)), _s));
         const h = hash(e.id);
         a[n * 4] = h * 6.283;
-        a[n * 4 + 1] = e.state === 'grab' ? 1 : 0;
+        a[n * 4 + 1] = b.reach;
         a[n * 4 + 2] = 0.95 + 0.1 * hash(e.id + 17);
-        a[n * 4 + 3] = keep;
+        a[n * 4 + 3] = b.keep;
+        po[n * 2] = b.anchor;
+        po[n * 2 + 1] = b.thrust;
+        sh[n * 4] = Math.max(0, b.y - ground);
+        sh[n * 4 + 1] = b.anchor;
+        sh[n * 4 + 2] = b.thrust;
+        sh[n * 4 + 3] = b.keep * (e.state === 'dead' ? 1 - (e.deadTime ?? 0) / BIKE.deadFling : 1);
         n++;
       }
-      mesh.count = xray.count = n;
+      mesh.count = xray.count = shadows.count = n;
       markerGeo.setDrawRange(0, n);
       markerPos.needsUpdate = true;
       mesh.instanceMatrix.needsUpdate = true;
-      anim.needsUpdate = true;
+      shadows.instanceMatrix.needsUpdate = true;
+      anim.needsUpdate = pose.needsUpdate = shadowAttr.needsUpdate = true;
       _p.set(0, 0, 0); // 主人公は浮いている（足元の地面が下がっても y=0）
       hero.setMatrixAt(0, _m.compose(_p, _q.setFromEuler(_e.set(0, heroYaw, 0)), _s));
       hero.instanceMatrix.needsUpdate = true;
