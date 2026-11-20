@@ -159,7 +159,7 @@ test('ground: heat は球の不透明さ、ember は球の間は満ちて、球�
 
 test('大きな一発は放つ瞬間に光らず（演出が白くする）、球が生まれても光らず、弾けた瞬間に強く光る', () => {
   const { view } = make();
-  const bigShot = { amount: CONFIG.charge.maxDraw, radius: CONFIG.radius.max, isBig: true };
+  const bigShot = { amount: CONFIG.power.max, radius: CONFIG.radius.max, isBig: true };
   view.begin(bigShot);
   for (let i = 0; i < 80; i++) view.update(0, [], camera, 500); // 演出で時間が止まっている間
   expect(view.screen.flash).toBe(0);
@@ -189,4 +189,26 @@ test('弾けた瞬間の閃光が主役: 放つ瞬間の閃光より強く、大
   expect(tiny.peak).toBeLessThan(mid.peak);
   expect(mid.peak).toBeLessThan(max.peak);
   expect(tiny.peak).toBeGreaterThan(0.4);
+});
+
+test('小爆発（shot.small）は街の画面を白く飛ばさない: 閃光は弱く、揺れも小さい', () => {
+  const peakOf = (s) => {
+    const { view } = make();
+    view.begin(s);
+    const b = { id: 1, shot: s, front: 0, t: 0 };
+    let flash = 0, shake = 0;
+    for (let i = 0; i < 90; i++) {
+      b.t += 1 / 60;
+      b.front = frontAt(b.t, s.radius);
+      view.update(1 / 60, [b], camera, 500);
+      flash = Math.max(flash, view.screen.flash);
+      shake = Math.max(shake, view.cameraInfo.shake);
+    }
+    return { flash, shake };
+  };
+  const puff = peakOf({ amount: CONFIG.puff.cost, radius: CONFIG.puff.radius, isBig: false, small: true });
+  const plain = peakOf({ amount: CONFIG.puff.cost, radius: CONFIG.puff.radius, isBig: false });
+  expect(puff.flash).toBeGreaterThan(0.05); // 弾けたことは分かる
+  expect(puff.flash).toBeLessThan(0.3);
+  expect(puff.shake).toBeLessThan(plain.shake * 0.5);
 });

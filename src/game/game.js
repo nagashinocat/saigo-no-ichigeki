@@ -1,7 +1,7 @@
 import { CONFIG } from '../config.js';
 import { createRng } from '../rng.js';
 import { generateCity } from '../world/cityGen.js';
-import { createReserve } from './reserve.js';
+import { createPower } from './power.js';
 import { createCharge } from './charge.js';
 import { createTimer } from './timer.js';
 import { createScore } from './score.js';
@@ -10,12 +10,14 @@ import { createEnemies } from './enemies.js';
 
 const MAX_DT = 0.1;
 
-// ゲーム全体の進行。描画や入力デバイスは知らず、pressStart/pressEnd/update だけで動く。
+// ゲーム全体の進行。描画や入力デバイスは知らず、pressStart/pressEnd/puff/update だけで動く。
+// phase: 'ready' → 'playing'（長押しで力を貯める・小爆発で払う） → 'cinematic'（最後の一発を放った瞬間、演出の間は止まる）
+//        → 'finale'（最後の一発が街を壊していく） → 'over'（'released': その一発の破壊額 / 'blackhole': 時間切れまで放たなかった）
 export function createGame({ seed, cfg = CONFIG }) {
   const city = generateCity(seed, cfg);
   const enemies = createEnemies(createRng(seed + 1), cfg);
-  const reserve = createReserve(cfg.reserve);
-  const charge = createCharge(reserve, cfg);
+  const power = createPower(cfg.power);
+  const charge = createCharge(power, cfg);
   const timer = createTimer(cfg.roundSeconds);
   const score = createScore(cfg.score);
 
@@ -30,26 +32,23 @@ export function createGame({ seed, cfg = CONFIG }) {
 
   let phase = 'ready';
   let hidden = false;
-  let hold = false; // 大きな一発の演出が画面全体を使う間: 爆発だけが進み、他は止まる
+  let grabbing = 0;
   let cinematicClock = 0;
   let pendingShot = null;
+  let finalBlast = null;
   let blasts = []; // { id, shot, blast, values }
   let nextBlastId = 1;
 
+  // 小爆発は軍勢だけを払う（対象のビル・props はなし）。最後の一発はまだ壊れていないものすべて
   function startBlast(shot) {
     const targets = [];
-    for (const [id, t] of byKey) if (!destroyed.has(id)) targets.push({ id, dist: t.dist });
-    blasts.push({ id: nextBlastId++, shot, blast: createBlast(shot, targets, cfg), values: [] });
-  }
-
-  function scoreBlast(b) {
-    const added = score.addShot(b.values);
-    emit('shotScored', { added, total: score.total });
+    if (!shot.small) for (const [id, t] of byKey) if (!destroyed.has(id)) targets.push({ id, dist: t.dist });
+    const b = { id: nextBlastId++, shot, blast: createBlast(shot, targets, cfg), values: [] };
+    blasts.push(b);
+    return b;
   }
 
   function finish(reason) {
-    // 途中の blast も、ここまでに壊した分を採点してから終える
-    for (const b of blasts) scoreBlast(b);
     blasts = [];
     phase = 'over';
     charge.active = false;
@@ -67,44 +66,54 @@ export function createGame({ seed, cfg = CONFIG }) {
       }
       enemies.applyBlastFront(b.blast.front);
     }
-    const finished = blasts.filter((b) => b.blast.done);
     blasts = blasts.filter((b) => !b.blast.done);
-    for (const b of finished) scoreBlast(b);
   }
 
+  // 前の小爆発が広がり終わるまでは次を押せない（連打で力を無駄にせず、画面も跳ばない）
+  const canPuff = () => !hidden && phase === 'playing' && power.canSpend(cfg.puff.cost) && !blasts.some((b) => b.shot.small);
+
   return {
-    city, enemies, reserve, charge, timer, score,
+    city, enemies, power, charge, timer, score,
     get phase() { return phase; },
-    // 進行中の一発の読み取り専用の写し（描画が一発ごとに球を描くため）
+    // 今、主人公を掴んでいる軍勢の数
+    get grabbing() { return grabbing; },
+    // 小爆発のボタンを押せるか（力が足りる・遊んでいる最中・前の小爆発が広がり終わった）
+    get canPuff() { return canPuff(); },
+    // 進行中の一発の読み取り専用の写し（描画が一発ごとに球を描くため）。小爆発は shot.small
     get blasts() {
       return Object.freeze(blasts.map((b) => Object.freeze({ id: b.id, shot: b.shot, front: b.blast.front })));
     },
     on(event, fn) { (listeners[event] ??= []).push(fn); },
     setHidden(h) { hidden = h; },
-    // 演出（追うカメラ・上空へ戻る間）の間は、タイマー・軍勢・器・貯めを止め、爆発・命中・採点だけ進める
-    setHold(h) { hold = h; },
 
     pressStart() {
-      if (hidden || hold) return;
+      if (hidden) return;
       if (phase === 'ready') phase = 'playing';
-      if (phase !== 'playing' || timer.isOver()) return;
+      if (phase !== 'playing') return;
       if (!charge.active) charge.start();
     },
 
+    // 離す: 貯めた力が minRelease 以上なら最後の一発（ここでゲームの進行は終わり、演出 → 爆発 → 結果）
     pressEnd() {
-      if (!charge.active) return;
+      if (phase !== 'playing') return;
       const shot = charge.release();
       if (!shot) return;
       emit('shot', shot);
-      if (shot.isBig) {
-        phase = 'cinematic';
-        timer.pause();
-        cinematicClock = 0;
-        pendingShot = shot;
-        emit('cinematicStart', shot);
-      } else {
-        startBlast(shot);
-      }
+      phase = 'cinematic';
+      timer.pause();
+      cinematicClock = 0;
+      pendingShot = shot;
+      emit('cinematicStart', shot);
+    },
+
+    // 小爆発のボタン: 力を cost 使って主人公のまわりの軍勢を払う。押せたら true
+    puff() {
+      if (!canPuff()) return false;
+      power.spend(cfg.puff.cost);
+      const shot = { amount: cfg.puff.cost, radius: cfg.puff.radius, isBig: false, small: true };
+      startBlast(shot);
+      emit('puff', shot);
+      return true;
     },
 
     update(rawDt) {
@@ -115,27 +124,31 @@ export function createGame({ seed, cfg = CONFIG }) {
         cinematicClock += dt;
         if (cinematicClock >= cfg.cinematic.freezeSec) {
           emit('cinematicEnd');
-          timer.resume();
-          phase = 'playing';
-          startBlast(pendingShot);
+          phase = 'finale';
+          finalBlast = startBlast(pendingShot);
           pendingShot = null;
         }
         return;
       }
 
-      if (hold) { updateBlasts(dt); return; }
+      // 最後の一発の間は、爆発・命中・採点だけが進む（タイマー・軍勢・力は止まったまま）
+      if (phase === 'finale') {
+        updateBlasts(dt);
+        if (finalBlast.blast.done) {
+          const added = score.addShot(finalBlast.values);
+          emit('shotScored', { added, total: score.total });
+          finish('released');
+        }
+        return;
+      }
 
-      reserve.regen(dt);
       charge.update(dt);
-      const grabbing = enemies.update(dt);
-      reserve.drain(grabbing * cfg.enemy.drainPerSec * dt);
-      if (reserve.isEmpty()) { finish('drained'); return; }
+      grabbing = enemies.update(dt);
+      power.drain(grabbing * cfg.enemy.drainPerSec * dt);
       updateBlasts(dt);
       timer.update(dt);
-      if (timer.isOver()) {
-        charge.active = false; // 時間切れで貯めは打ち切る（新しい一発は撃てない）
-        if (blasts.length === 0) finish('time');
-      }
+      // 時間切れまで放たなければ、主人公はブラックホールになる（破壊額はつかない）
+      if (timer.isOver()) finish('blackhole');
     },
   };
 }

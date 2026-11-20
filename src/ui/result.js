@@ -7,7 +7,13 @@ export function shareText(total, url = pageUrl()) {
 }
 
 export function reasonText(reason) {
-  return reason === 'drained' ? '力を奪われた' : '時間切れ';
+  return reason === 'blackhole' ? 'ブラックホールになった' : '最後の一発';
+}
+
+// 結果画面に出すもの。ブラックホール（時間切れまで放たなかった）は破壊額をつけない
+export function resultContent(total, reason) {
+  const released = reason !== 'blackhole';
+  return { reason: reasonText(reason), amount: released ? formatYen(total) : null, share: released };
 }
 
 function el(tag, cls, text) {
@@ -41,8 +47,11 @@ export function createResult(root, { onRetry }) {
   return {
     show(t, why) {
       total = t;
-      reason.textContent = reasonText(why);
-      amount.textContent = formatYen(t);
+      const c = resultContent(t, why);
+      reason.textContent = c.reason;
+      amount.textContent = c.amount ?? '';
+      label.hidden = amount.hidden = c.amount === null;
+      share.hidden = !c.share;
       root.hidden = false;
     },
   };

@@ -1,33 +1,28 @@
 import { CONFIG } from '../config.js';
 
+// 最後の一発の半径。貯めた力（power.max で 1）に対して、最大で街の端より先まで
 export function radiusFor(amount, cfg = CONFIG) {
   const { min, max, exponent } = cfg.radius;
-  const t = Math.min(1, Math.max(0, amount / cfg.charge.maxDraw));
+  const t = Math.min(1, Math.max(0, amount / cfg.power.max));
   return min + (max - min) * Math.pow(t, exponent);
 }
 
-export function createCharge(reserve, cfg = CONFIG) {
-  let drawn = 0;
+// 長押し: 押している間だけ力が貯まる。離すと、minRelease 以上貯まっていれば全部使って最後の一発を返す
+// （足りなければ放たず、貯めた力はそのまま残る）。
+export function createCharge(power, cfg = CONFIG) {
   const c = {
     active: false,
-    start() { c.active = true; drawn = 0; },
+    start() { c.active = true; },
     update(dt) {
-      if (!c.active) return;
-      const want = Math.min(cfg.charge.ratePerSec * dt, cfg.charge.maxDraw - drawn);
-      if (want > 0) drawn += reserve.draw(want);
+      if (c.active) power.add(cfg.power.chargePerSec * dt);
     },
     release() {
       if (!c.active) return null;
       c.active = false;
-      const amount = drawn;
-      drawn = 0;
-      return {
-        amount,
-        radius: radiusFor(amount, cfg),
-        isBig: amount >= cfg.charge.maxDraw * cfg.bigShotRatio - 1e-9,
-      };
+      if (power.value < cfg.power.minRelease) return null;
+      const amount = power.take();
+      return { amount, radius: radiusFor(amount, cfg), isBig: true };
     },
-    level() { return drawn / cfg.charge.maxDraw; },
   };
   return c;
 }

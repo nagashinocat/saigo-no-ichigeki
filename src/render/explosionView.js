@@ -18,6 +18,8 @@ const SPEED_REF = 800;        // 弾ける期の最大の速さの目安 (m/s)�
 const SHAKE_K = 0.012 / SPEED_REF; // front の速さ (m/s) あたりの揺れ (rad)
 const DONE_RING_SPEED = 128;  // 前線が届いたあとの衝撃波の輪の速さ (m/s)
 const BURST_FLARE_SEC = 0.22; // 弾けた瞬間の光の強まり
+// 小爆発（shot.small）: 街の画面を白く飛ばさない弱い閃光と、小さな揺れ（連打しても広場が見え続ける）
+const PUFF_FX = { flash: 0.18, shake: 0.25 };
 const BURST_SHAKE = 0.007;    // 弾けた瞬間の揺れの一撃 (rad、最大の一発)
 const HUM_HZ = 5;             // じわじわ期の球の脈打ち
 
@@ -215,7 +217,7 @@ export function createExplosionView(scene, tierName, { sunDir = null, seed = 7 }
     // 空きがなければ一番古い球を使い回す（古い一発の対応は外す）
     const s = spheres.find((x) => !x.active) ?? spheres.reduce((a, x) => (x.age > a.age ? x : a));
     if (live.get(s.id) === s) { live.delete(s.id); evicted.add(s.id); }
-    Object.assign(s, { active: true, id: b.id, radius: b.shot.radius, front: 0, prev: 0, age: 0, done: false, fadeAge: 0, ringFront: 0, dustAcc: 0, burstAge: Infinity, burst: false });
+    Object.assign(s, { active: true, id: b.id, small: !!b.shot.small, radius: b.shot.radius, front: 0, prev: 0, age: 0, done: false, fadeAge: 0, ringFront: 0, dustAcc: 0, burstAge: Infinity, burst: false });
     s.uniforms.uSeed.value = rng() * 100;
     s.mesh.visible = s.ring.visible = true;
     live.set(b.id, s);
@@ -252,7 +254,7 @@ export function createExplosionView(scene, tierName, { sunDir = null, seed = 7 }
     // 放つ瞬間（'shot'）: 小さな一発は白い閃光。大きな一発は演出が画面を白くするので、ここでは光らない
     // （じわじわ始まって、弾けた瞬間の閃光が主役になる）
     begin(shot) {
-      if (shot.isBig) return;
+      if (shot.isBig || shot.small) return; // 小爆発は手の画面が光り、街の画面は弾けた瞬間の弱い閃光だけ
       flash = Math.max(flash, 0.55 + 0.45 * shot.radius / CONFIG.radius.max);
     },
     // blasts: game.blasts（[{ id, shot, front }]）。一発ごとに球を描く。
@@ -272,10 +274,10 @@ export function createExplosionView(scene, tierName, { sunDir = null, seed = 7 }
           // 突然弾ける: 光が跳ね上がり、画面が一撃揺れ、輪の土煙が一気に増える
           s.burst = true; s.burstAge = 0;
           const big = Math.sqrt(s.radius / CONFIG.radius.max);
-          flash = Math.max(flash, 0.55 + 0.45 * big); // 一番強い閃光（放つ瞬間より強く、大きな一発ほど強い）
-          shake = Math.max(shake, BURST_SHAKE * (0.35 + 0.65 * big));
+          flash = Math.max(flash, s.small ? PUFF_FX.flash : 0.55 + 0.45 * big); // 一番強い閃光（放つ瞬間より強く、大きな一発ほど強い）
+          shake = Math.max(shake, BURST_SHAKE * (0.35 + 0.65 * big) * (s.small ? PUFF_FX.shake : 1));
         }
-        if (dt > 0 && s.burst) shakeWant += ((s.front - s.prev) / dt) * SHAKE_K * (0.35 + 0.65 * Math.sqrt(s.radius / CONFIG.radius.max));
+        if (dt > 0 && s.burst) shakeWant += ((s.front - s.prev) / dt) * SHAKE_K * (0.35 + 0.65 * Math.sqrt(s.radius / CONFIG.radius.max)) * (s.small ? PUFF_FX.shake : 1);
       }
       for (const [id, s] of live) if (!seen.has(id)) { s.done = true; s.front = s.radius; live.delete(id); }
       for (const id of evicted) if (!seen.has(id)) evicted.delete(id);
@@ -298,7 +300,8 @@ export function createExplosionView(scene, tierName, { sunDir = null, seed = 7 }
         }
         const prevRing = s.ringFront;
         s.ringFront = s.done ? Math.max(s.ringFront, s.radius * RING_AHEAD) + DONE_RING_SPEED * dt : r * RING_AHEAD + 2;
-        if (s.ringFront > prevRing && fade > 0.4) ringDust(s, s.ringFront - prevRing);
+        // 小爆発の衝撃波は、届いた先（軍勢を払える範囲）より外では土煙を立てない
+        if (s.ringFront > prevRing && fade > 0.4 && !(s.small && s.done)) ringDust(s, s.ringFront - prevRing);
         s.mesh.scale.setScalar(r * pulse);
         const u = s.uniforms;
         u.uTime.value = time;

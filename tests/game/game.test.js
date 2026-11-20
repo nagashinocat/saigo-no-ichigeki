@@ -1,6 +1,7 @@
 import { test, expect } from 'vitest';
 import { createGame } from '../../src/game/game.js';
 import { createScore } from '../../src/game/score.js';
+import { radiusFor } from '../../src/game/charge.js';
 import { CONFIG } from '../../src/config.js';
 
 const quiet = { ...CONFIG, enemy: { ...CONFIG.enemy, spawnPerSec: 0 } };
@@ -10,136 +11,246 @@ const record = (g, names) => {
   return log;
 };
 const step = (g, n, dt = 0.1) => { for (let i = 0; i < n; i++) g.update(dt); };
-const small = (g) => { g.pressStart(); g.update(0.1); g.pressEnd(); };
-const big = (g) => { g.pressStart(); step(g, 8); g.pressEnd(); };
+const secFor = (amount) => amount / CONFIG.power.chargePerSec;
+// sec 秒長押しする（離さない）
+const hold = (g, sec) => { g.pressStart(); step(g, Math.round(sec / 0.1)); };
+const runUntil = (g, pred, max = 600) => { let n = 0; while (!pred() && n++ < max) g.update(0.1); };
 
-test('小さな一発は cinematic を経ずにすぐ blast が始まる', () => {
+test('最初の pressStart で始まり、長押しの間だけ力が貯まる（離しても、貯まる前の力は増えない）', () => {
   const g = createGame({ seed: 1, cfg: quiet });
-  const log = record(g, ['shot', 'cinematicStart', 'hit']);
-  small(g);
-  expect(g.phase).toBe('playing');
-  expect(log.map(([n]) => n)).toEqual(['shot']);
-  expect(log[0][1].isBig).toBe(false);
+  expect(g.phase).toBe('ready');
+  expect(g.power.value).toBe(0);
   step(g, 10);
-  expect(log.some(([n]) => n === 'hit')).toBe(true);
-  expect(log.some(([n]) => n === 'cinematicStart')).toBe(false);
+  expect(g.power.value).toBe(0);
+  expect(g.timer.remaining).toBe(CONFIG.roundSeconds);
+  hold(g, 2);
+  expect(g.phase).toBe('playing');
+  expect(g.power.value).toBeCloseTo(2 * CONFIG.power.chargePerSec);
+  g.pressEnd(); // minRelease 未満: 放たない
+  const v = g.power.value;
+  step(g, 10);
+  expect(g.power.value).toBe(v);
+  expect(g.timer.remaining).toBeCloseTo(CONFIG.roundSeconds - 3);
 });
 
-test('大きな一発は cinematic になり、freezeSec の間タイマーが止まり、その後 blast', () => {
+test('指を離さない限り放たれない: 上限まで貯めても押したままなら一発は出ない', () => {
   const g = createGame({ seed: 1, cfg: quiet });
-  const log = record(g, ['shot', 'cinematicStart', 'cinematicEnd', 'hit']);
-  big(g);
+  const log = record(g, ['shot', 'cinematicStart', 'over']);
+  hold(g, secFor(CONFIG.power.max) + 5);
+  expect(g.power.value).toBe(CONFIG.power.max);
+  expect(g.phase).toBe('playing');
+  expect(log).toHaveLength(0);
+  expect(g.blasts).toEqual([]);
+});
+
+test('minRelease 未満で離すと何も起きず、貯めた力は残り、続けて押すと続きから貯まる', () => {
+  const g = createGame({ seed: 1, cfg: quiet });
+  const log = record(g, ['shot', 'cinematicStart']);
+  hold(g, secFor(CONFIG.power.minRelease) / 2);
+  g.pressEnd();
+  expect(log).toHaveLength(0);
+  expect(g.phase).toBe('playing');
+  expect(g.charge.active).toBe(false);
+  hold(g, secFor(CONFIG.power.minRelease) / 2 + 0.2);
+  g.pressEnd();
+  expect(log.map(([n]) => n)).toEqual(['shot', 'cinematicStart']);
+});
+
+test('離すと最後の一発: 貯めた量で半径が決まり、演出（freezeSec）の間は止まり、そのあと爆発してゲームは over(released)', () => {
+  const g = createGame({ seed: 1, cfg: quiet });
+  const log = record(g, ['shot', 'cinematicStart', 'cinematicEnd', 'hit', 'shotScored', 'over']);
+  hold(g, secFor(60));
+  const amount = g.power.value;
+  g.pressEnd();
+  const shot = log.find(([n]) => n === 'shot')[1];
+  expect(shot.amount).toBeCloseTo(amount);
+  expect(shot.radius).toBeCloseTo(radiusFor(amount));
+  expect(shot.isBig).toBe(true);
+  expect(g.power.value).toBe(0);
   expect(g.phase).toBe('cinematic');
   expect(g.timer.paused).toBe(true);
-  expect(log.filter(([n]) => n === 'cinematicStart')).toHaveLength(1);
-  const t = g.timer.remaining, v = g.reserve.value;
+  const t = g.timer.remaining;
   step(g, 10);
   expect(g.phase).toBe('cinematic');
-  expect(g.timer.remaining).toBe(t);
-  expect(g.reserve.value).toBe(v);
   expect(log.some(([n]) => n === 'hit' || n === 'cinematicEnd')).toBe(false);
   step(g, 5);
-  expect(g.phase).toBe('playing');
-  expect(g.timer.paused).toBe(false);
+  expect(g.phase).toBe('finale');
   expect(log.filter(([n]) => n === 'cinematicEnd')).toHaveLength(1);
-  step(g, 10);
-  expect(log.some(([n]) => n === 'hit')).toBe(true);
-});
-
-test('cinematic 中の pressStart は無視される', () => {
-  const g = createGame({ seed: 1, cfg: quiet });
-  big(g);
-  expect(g.phase).toBe('cinematic');
-  g.pressStart();
-  expect(g.charge.active).toBe(false);
-  step(g, 15);
-  expect(g.charge.active).toBe(false);
-});
-
-test('pressEnd は貯めていなければ無視される', () => {
-  const g = createGame({ seed: 1, cfg: quiet });
-  const log = record(g, ['shot']);
-  g.pressEnd();
-  g.pressStart(); g.pressEnd();
-  g.pressEnd();
-  expect(log).toHaveLength(1);
-});
-
-test('blast が終わった時点で、その一発の Hit の value を addShot して shotScored', () => {
-  const g = createGame({ seed: 1, cfg: quiet });
-  const log = record(g, ['hit', 'shotScored']);
-  small(g);
-  step(g, 3);
-  expect(log.some(([n]) => n === 'shotScored')).toBe(false);
-  step(g, 20);
+  expect(g.blasts).toHaveLength(1);
+  runUntil(g, () => g.phase === 'over');
+  expect(g.phase).toBe('over');
+  expect(g.timer.remaining).toBe(t); // 放ったあと時間は進まない
   const values = log.filter(([n]) => n === 'hit').map(([, p]) => p.target.value);
   expect(values.length).toBeGreaterThan(0);
-  const scored = log.filter(([n]) => n === 'shotScored');
-  expect(scored).toHaveLength(1);
-  const expected = createScore().addShot(values);
-  expect(scored[0][1].added).toBeCloseTo(expected);
-  expect(scored[0][1].total).toBeCloseTo(expected);
-  expect(g.score.total).toBeCloseTo(expected);
-});
-
-test('同じ建物は二度壊されない', () => {
-  const g = createGame({ seed: 1, cfg: quiet });
-  const log = record(g, ['hit']);
-  small(g); step(g, 8);
-  small(g); step(g, 8);
-  const ids = log.map(([, p]) => p.hit.id);
+  const ids = log.filter(([n]) => n === 'hit').map(([, p]) => p.hit.id);
   expect(new Set(ids).size).toBe(ids.length);
+  const expected = createScore().addShot(values);
+  expect(g.score.total).toBeCloseTo(expected);
+  const names = log.map(([n]) => n);
+  expect(names.filter((n) => n === 'shotScored')).toHaveLength(1);
+  expect(names.indexOf('shotScored')).toBeLessThan(names.indexOf('over'));
+  const over = log.filter(([n]) => n === 'over');
+  expect(over).toHaveLength(1);
+  expect(over[0][1]).toEqual({ reason: 'released', total: g.score.total });
 });
 
-test('掴まれている数 × drainPerSec で器が減り、0 で over(drained)', () => {
-  const cfg = { ...CONFIG, enemy: { ...CONFIG.enemy, spawnPerSec: 10, spawnDist: [3, 3] } };
+test('最大まで貯めた一発は街の端まで届く', () => {
+  const g = createGame({ seed: 1, cfg: quiet });
+  const log = record(g, ['shot']);
+  hold(g, secFor(CONFIG.power.max) + 1);
+  g.pressEnd();
+  expect(log[0][1].radius).toBeGreaterThanOrEqual(CONFIG.cityRadius);
+});
+
+test('放ったあと（演出・爆発の間・終わった後）は、押しても小爆発を押しても何も始まらない', () => {
+  const g = createGame({ seed: 1, cfg: quiet });
+  const log = record(g, ['shot', 'puff']);
+  hold(g, secFor(40));
+  g.pressEnd();
+  for (const until of ['cinematic', 'finale', 'over']) {
+    runUntil(g, () => g.phase === until);
+    expect(g.phase).toBe(until);
+    g.pressStart();
+    expect(g.charge.active).toBe(false);
+    expect(g.puff()).toBe(false);
+    g.pressEnd();
+  }
+  expect(log.map(([n]) => n)).toEqual(['shot']);
+});
+
+test('時間切れまで放たなければ over(blackhole)。破壊額はつかない', () => {
+  const g = createGame({ seed: 1, cfg: { ...quiet, roundSeconds: 2 } });
+  const log = record(g, ['shot', 'over']);
+  hold(g, 1);
+  g.pressEnd();
+  step(g, 15);
+  expect(g.phase).toBe('over');
+  expect(log).toEqual([['over', { reason: 'blackhole', total: 0 }]]);
+});
+
+test('押したまま時間切れになっても over(blackhole)（離しても一発は出ない）', () => {
+  const g = createGame({ seed: 1, cfg: { ...quiet, roundSeconds: 5 } });
+  const log = record(g, ['shot', 'over']);
+  hold(g, 5.2);
+  expect(g.phase).toBe('over');
+  expect(g.charge.active).toBe(false);
+  g.pressEnd();
+  expect(log).toEqual([['over', { reason: 'blackhole', total: 0 }]]);
+});
+
+test('小爆発: 貯めた力を cost 使い、主人公のまわり puff.radius の軍勢を倒す。ビルは壊さず、破壊額は 0 のまま', () => {
+  const cfg = { ...CONFIG, enemy: { ...CONFIG.enemy, spawnPerSec: 0 } };
+  const g = createGame({ seed: 1, cfg });
+  const log = record(g, ['puff', 'hit', 'shot']);
+  hold(g, secFor(20)); // 押したまま、別の指で小爆発
+  // 近くに軍勢を置く（湧かない設定なので直接並べる）
+  g.enemies.list.push(
+    { id: 901, angle: 0, dist: CONFIG.puff.radius - 5, state: 'approach' },
+    { id: 902, angle: 1, dist: CONFIG.enemy.grabRange, state: 'grab' },
+    { id: 903, angle: 2, dist: CONFIG.puff.radius + 15, state: 'approach' },
+  );
+  const before = g.power.value;
+  expect(g.canPuff).toBe(true);
+  expect(g.puff()).toBe(true);
+  expect(g.power.value).toBeCloseTo(before - CONFIG.puff.cost);
+  expect(log.map(([n]) => n)).toEqual(['puff']);
+  const shot = log[0][1];
+  expect(shot).toMatchObject({ radius: CONFIG.puff.radius, small: true, isBig: false, amount: CONFIG.puff.cost });
+  expect(g.blasts).toHaveLength(1);
+  expect(g.blasts[0].shot.small).toBe(true);
+  // 軍勢がこちらへ歩いてくる分を除くため speed 0 にはせず、puff の前線が通り過ぎるまで進める
+  step(g, 12);
+  const byId = (id) => g.enemies.list.find((e) => e.id === id);
+  expect(byId(901).state).toBe('dead');
+  expect(byId(902).state).toBe('dead');
+  expect(byId(903).state).not.toBe('dead');
+  expect(g.blasts).toEqual([]);
+  expect(log.some(([n]) => n === 'hit')).toBe(false);
+  expect(g.score.total).toBe(0);
+  expect(g.phase).toBe('playing');
+});
+
+test('力が足りなければ小爆発は押せない（何も使わず、何も起きない）', () => {
+  const g = createGame({ seed: 1, cfg: quiet });
+  const log = record(g, ['puff']);
+  expect(g.canPuff).toBe(false); // 始まる前
+  expect(g.puff()).toBe(false);
+  hold(g, secFor(CONFIG.puff.cost) - 0.5);
+  expect(g.canPuff).toBe(false);
+  const v = g.power.value;
+  expect(g.puff()).toBe(false);
+  expect(g.power.value).toBe(v);
+  step(g, 6);
+  expect(g.canPuff).toBe(true);
+  expect(g.puff()).toBe(true);
+  expect(log).toHaveLength(1);
+});
+
+test('小爆発が広がっている間は次の小爆発は押せない（連打で力を無駄にしない）。広がり終われば押せる', () => {
+  const g = createGame({ seed: 1, cfg: quiet });
+  hold(g, secFor(40));
+  expect(g.puff()).toBe(true);
+  const v = g.power.value;
+  expect(g.canPuff).toBe(false);
+  expect(g.puff()).toBe(false);
+  expect(g.power.value).toBe(v);
+  runUntil(g, () => g.blasts.length === 0);
+  expect(g.canPuff).toBe(true);
+  expect(g.puff()).toBe(true);
+});
+
+test('長押ししながら小爆発を押せ、押した分だけ最後の一発の半径が小さくなる', () => {
+  const shotOf = (puffs) => {
+    const g = createGame({ seed: 1, cfg: quiet });
+    const log = record(g, ['shot']);
+    hold(g, secFor(40));
+    for (let i = 0; i < 2; i++) { if (i < puffs) expect(g.puff()).toBe(true); step(g, 10); } // どちらも同じ時間だけ押す
+    expect(g.charge.active).toBe(true); // 長押しは途切れない
+    g.pressEnd();
+    return log[0][1];
+  };
+  const a = shotOf(0), b = shotOf(2);
+  expect(b.amount).toBeCloseTo(a.amount - 2 * CONFIG.puff.cost);
+  expect(b.radius).toBeLessThan(a.radius);
+});
+
+test('掴まれている数 × drainPerSec で貯めた力が減る。0 になってもゲームは続く', () => {
+  const cfg = { ...CONFIG, enemy: { ...CONFIG.enemy, spawnPerSec: 10, spawnRamp: 1, spawnDist: [3, 3] } };
   const g = createGame({ seed: 1, cfg });
   const log = record(g, ['over']);
-  g.pressStart();
-  step(g, 3);
-  const grabbing = g.enemies.list.filter((e) => e.state === 'grab').length;
-  expect(grabbing).toBeGreaterThan(0);
-  const before = g.reserve.value;
-  g.update(0.1);
-  expect(g.reserve.value).toBeLessThan(before);
-  let n = 0;
-  while (g.phase !== 'over' && n++ < 300) g.update(0.1);
-  expect(g.phase).toBe('over');
-  expect(g.reserve.value).toBe(0);
-  expect(log).toHaveLength(1);
-  expect(log[0][1].reason).toBe('drained');
-});
-
-test('時間切れで over(time)、blast 中なら終わってから over', () => {
-  const g = createGame({ seed: 1, cfg: { ...quiet, roundSeconds: 0.35 } });
-  const log = record(g, ['over']);
-  small(g);
-  step(g, 3);
-  expect(g.timer.isOver()).toBe(true);
-  expect(g.phase).toBe('playing'); // 時間は切れたが、じわじわ → 弾ける爆発がまだ走っている
-  expect(g.blasts).toHaveLength(1);
+  hold(g, 1);
+  g.pressEnd();
   step(g, 20);
-  expect(g.phase).toBe('over');
-  expect(log).toHaveLength(1);
-  expect(log[0][1].reason).toBe('time');
-
-  const h = createGame({ seed: 1, cfg: { ...quiet, roundSeconds: 0.2 } });
-  h.pressStart(); step(h, 2);
-  expect(h.phase).toBe('over');
+  const grabbing = g.enemies.list.filter((e) => e.state === 'grab').length;
+  expect(grabbing).toBe(CONFIG.enemy.maxGrabbing);
+  expect(g.grabbing).toBe(grabbing);
+  expect(g.power.value).toBe(0);
+  // 貯めても、掴まれている分だけ減る
+  g.pressStart();
+  const v0 = g.power.value;
+  g.update(0.1);
+  expect(g.power.value).toBeCloseTo(Math.max(0, v0 + (CONFIG.power.chargePerSec - grabbing * CONFIG.enemy.drainPerSec) * 0.1));
+  expect(g.phase).toBe('playing');
+  expect(log).toHaveLength(0);
 });
 
 test('setHidden(true) の間は update(dt) で何も進まない', () => {
-  const g = createGame({ seed: 1 }); g.pressStart(); g.setHidden(true); const t = g.timer.remaining, v = g.reserve.value;
-  g.update(30); expect(g.timer.remaining).toBe(t); expect(g.reserve.value).toBe(v);
+  const g = createGame({ seed: 1 }); g.pressStart(); g.setHidden(true); const t = g.timer.remaining, v = g.power.value;
+  g.update(30); expect(g.timer.remaining).toBe(t); expect(g.power.value).toBe(v);
   g.setHidden(false); g.update(0.1); expect(g.timer.remaining).toBeLessThan(t);
 });
 
-test('setHidden(true) の間は pressStart も無視される', () => {
+test('setHidden(true) の間は pressStart も小爆発も無視される', () => {
   const g = createGame({ seed: 1, cfg: quiet });
   g.setHidden(true);
   g.pressStart();
   expect(g.phase).toBe('ready');
   expect(g.charge.active).toBe(false);
+  g.setHidden(false);
+  hold(g, secFor(20));
+  g.setHidden(true);
+  expect(g.canPuff).toBe(false);
+  expect(g.puff()).toBe(false);
 });
 
 test('update は dt を 0.1 秒に丸める', () => {
@@ -151,62 +262,40 @@ test('update は dt を 0.1 秒に丸める', () => {
 
 test('over の後は pressStart も update も何もしない', () => {
   const g = createGame({ seed: 1, cfg: { ...quiet, roundSeconds: 0.2 } });
-  g.pressStart(); step(g, 2);
+  g.pressStart(); step(g, 3);
   expect(g.phase).toBe('over');
-  const v = g.reserve.value, t = g.timer.remaining;
+  const v = g.power.value, t = g.timer.remaining;
   g.pressStart(); g.update(0.1);
   expect(g.charge.active).toBe(false);
   expect(g.phase).toBe('over');
-  expect(g.reserve.value).toBe(v);
+  expect(g.power.value).toBe(v);
   expect(g.timer.remaining).toBe(t);
 });
 
-test('drained で終わるとき、途中の blast の分も採点してから over', () => {
-  // 貯めの間は敵が出ず、blast の途中で最初の敵が出て掴む
-  const cfg = { ...CONFIG, bigShotRatio: 2, enemy: { ...CONFIG.enemy, spawnPerSec: 0.4, spawnDist: [3, 3], maxGrabbing: 1, drainPerSec: 45 } };
+test('最後の一発の間（finale）はタイマー・軍勢・力が止まり、爆発だけが進む', () => {
+  const cfg = { ...CONFIG, enemy: { ...CONFIG.enemy, spawnPerSec: 4, spawnDist: [200, 260] } };
   const g = createGame({ seed: 1, cfg });
-  const log = record(g, ['hit', 'shotScored', 'over']);
-  g.pressStart(); step(g, 20); g.pressEnd();
-  expect(g.phase).toBe('playing');
-  let n = 0;
-  while (g.phase !== 'over' && n++ < 100) g.update(0.1);
-  expect(g.phase).toBe('over');
-  const names = log.map(([k]) => k);
-  const values = log.filter(([k]) => k === 'hit').map(([, p]) => p.target.value);
-  expect(values.length).toBeGreaterThan(0);
-  expect(names.filter((k) => k === 'shotScored')).toHaveLength(1);
-  expect(names.indexOf('shotScored')).toBeLessThan(names.indexOf('over'));
-  const expected = createScore().addShot(values);
-  expect(g.score.total).toBeCloseTo(expected);
-  expect(log.find(([k]) => k === 'over')[1]).toEqual({ reason: 'drained', total: g.score.total });
-});
-
-test('blast が二つ同時に生きていても hit の id は重複せず、前線内の敵は倒れる', () => {
-  const cfg = { ...CONFIG, enemy: { ...CONFIG.enemy, spawnPerSec: 5, spawnDist: [20, 30], drainPerSec: 0 } };
-  const g = createGame({ seed: 1, cfg });
-  const log = record(g, ['hit', 'shotScored']);
-  big(g);
-  step(g, 15); // cinematic 終了、一つ目の blast が走り出す
-  step(g, 10); // じわじわ期（最大 0.8 s）の後に弾ける
-  expect(g.enemies.list.some((e) => e.state === 'dead')).toBe(true);
-  expect(g.enemies.list.filter((e) => e.state !== 'dead' && e.dist <= 40)).toHaveLength(0);
-  small(g); // 二つ目
+  hold(g, secFor(80));
+  g.pressEnd();
+  runUntil(g, () => g.phase === 'finale');
+  const t = g.timer.remaining, v = g.power.value;
+  const n = g.enemies.list.length;
+  const f0 = g.blasts[0].front;
   step(g, 3);
-  expect(log.filter(([k]) => k === 'shotScored')).toHaveLength(0);
-  step(g, 20);
-  const ids = log.filter(([k]) => k === 'hit').map(([, p]) => p.hit.id);
-  expect(ids.length).toBeGreaterThan(0);
-  expect(new Set(ids).size).toBe(ids.length);
-  expect(log.filter(([k]) => k === 'shotScored')).toHaveLength(2);
+  expect(g.blasts[0].front).toBeGreaterThan(f0);
+  expect(g.timer.remaining).toBe(t);
+  expect(g.power.value).toBe(v);
+  expect(g.enemies.list.length).toBe(n); // 新しく湧かない
+  for (const e of g.enemies.list) if (e.dist <= g.blasts[0].front) expect(e.state).toBe('dead');
 });
 
 test('dt は負・NaN・Infinity でも安全に扱われる', () => {
   const g = createGame({ seed: 1, cfg: quiet });
   g.pressStart();
-  const t = g.timer.remaining, v = g.reserve.value;
+  const t = g.timer.remaining, v = g.power.value;
   for (const bad of [-5, NaN, Infinity, -Infinity, undefined]) g.update(bad);
   expect(g.timer.remaining).toBe(t);
-  expect(g.reserve.value).toBe(v);
+  expect(g.power.value).toBe(v);
   g.update(Infinity - Infinity);
   expect(g.timer.remaining).toBe(t);
 });
@@ -214,68 +303,19 @@ test('dt は負・NaN・Infinity でも安全に扱われる', () => {
 test('blasts は進行中の一発ごとに id・shot・front を読み取り専用で返す', () => {
   const g = createGame({ seed: 1, cfg: quiet });
   expect(g.blasts).toEqual([]);
-  small(g);
-  step(g, 1);
-  small(g);
+  hold(g, secFor(30));
+  g.puff();
+  step(g, 2);
   const list = g.blasts;
-  expect(list).toHaveLength(2);
-  expect(list[0].id).not.toBe(list[1].id);
+  expect(list).toHaveLength(1);
+  expect(list[0].id).toBeGreaterThan(0);
   expect(list[0].shot.radius).toBeGreaterThan(0);
-  expect(list[0].front).toBeGreaterThan(list[1].front);
+  expect(list[0].front).toBeGreaterThan(0);
   const before = list[0].front;
   expect(() => { list[0].front = 999; }).toThrow();
   expect(() => { list.push({}); }).toThrow();
   expect(g.blasts[0].front).toBe(before);
   // 終わった一発は外れる
-  step(g, 40);
+  step(g, 20);
   expect(g.blasts).toEqual([]);
-});
-
-test('setHold(true) の間はタイマー・軍勢・器・貯めが止まり、blast だけが進んで採点される', () => {
-  const cfg = { ...CONFIG, enemy: { ...CONFIG.enemy, spawnPerSec: 4, spawnDist: [200, 260] } };
-  const g = createGame({ seed: 1, cfg });
-  const log = record(g, ['hit', 'shotScored']);
-  big(g);
-  step(g, 15); // cinematicEnd、blast が走り出す
-  expect(g.phase).toBe('playing');
-  g.setHold(true);
-  const t = g.timer.remaining, v = g.reserve.value;
-  const enemies = JSON.stringify(g.enemies.list);
-  const f0 = g.blasts[0].front;
-  step(g, 3);
-  expect(g.blasts[0].front).toBeGreaterThan(f0);
-  expect(g.timer.remaining).toBe(t);
-  expect(g.reserve.value).toBe(v);
-  expect(JSON.stringify(g.enemies.list.filter((e) => e.state !== 'dead'))).toBe(
-    JSON.stringify(JSON.parse(enemies).filter((e) => e.dist > g.blasts[0].front)),
-  );
-  expect(g.enemies.list.length).toBe(JSON.parse(enemies).length); // 新しく湧かない
-  g.pressStart();
-  expect(g.charge.active).toBe(false);
-  step(g, 40);
-  expect(log.some(([n]) => n === 'hit')).toBe(true);
-  expect(log.filter(([n]) => n === 'shotScored')).toHaveLength(1);
-  expect(g.score.total).toBeGreaterThan(0);
-  expect(g.timer.remaining).toBe(t);
-  expect(g.reserve.value).toBe(v);
-  g.setHold(false);
-  g.update(0.1);
-  expect(g.timer.remaining).toBeLessThan(t);
-  g.pressStart();
-  expect(g.charge.active).toBe(true);
-});
-
-test('setHold(true) の間は時間切れでも終わらず、解けてから over(time)', () => {
-  const g = createGame({ seed: 1, cfg: { ...quiet, roundSeconds: 0.35 } });
-  const log = record(g, ['over']);
-  small(g);
-  g.setHold(true);
-  step(g, 30); // blast は終わるが、タイマーは止まっている
-  expect(g.blasts).toHaveLength(0);
-  expect(g.phase).toBe('playing');
-  expect(log).toHaveLength(0);
-  g.setHold(false);
-  step(g, 5);
-  expect(g.phase).toBe('over');
-  expect(log[0][1].reason).toBe('time');
 });

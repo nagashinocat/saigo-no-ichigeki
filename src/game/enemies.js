@@ -2,12 +2,20 @@ import { CONFIG } from '../config.js';
 
 const DEAD_KEEP_SEC = 3;
 
-// 軍勢。外から中心へ近づき、近づいたら主人公を掴む。爆発の前線に触れると倒れる。
+// 湧く速さ（体/秒）。始まりから rampSec 秒で spawnRamp 倍へ一直線に増え、その後は保つ
+export function spawnRateAt(t, cfg = CONFIG) {
+  const E = cfg.enemy;
+  const k = Math.min(1, Math.max(0, t / E.rampSec));
+  return E.spawnPerSec * (1 + (E.spawnRamp - 1) * k);
+}
+
+// 軍勢。外から中心へ近づき、近づいたら主人公を掴む。爆発の前線に触れると倒れる。時間がたつほど多く湧く。
 export function createEnemies(rng, cfg = CONFIG) {
   const E = cfg.enemy;
   let list = [];
   let nextId = 1;
   let acc = 0;
+  let time = 0;
 
   return {
     get list() { return list; },
@@ -22,7 +30,9 @@ export function createEnemies(rng, cfg = CONFIG) {
         if (e.dist <= E.grabRange && grabbing < E.maxGrabbing) { e.state = 'grab'; grabbing++; }
       }
 
-      acc += E.spawnPerSec * dt;
+      // 区間の真ん中の速さで足す（台形と同じで、刻み幅によらず同じ数が湧く）
+      acc += spawnRateAt(time + dt / 2, cfg) * dt;
+      time += dt;
       while (acc >= 1) {
         acc -= 1;
         list.push({

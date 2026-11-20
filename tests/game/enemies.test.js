@@ -1,5 +1,5 @@
 import { test, expect } from 'vitest';
-import { createEnemies } from '../../src/game/enemies.js';
+import { createEnemies, spawnRateAt } from '../../src/game/enemies.js';
 import { createRng } from '../../src/rng.js';
 import { CONFIG } from '../../src/config.js';
 
@@ -7,7 +7,7 @@ const E = CONFIG.enemy;
 const cfgWith = (enemy) => ({ ...CONFIG, enemy: { ...E, ...enemy } });
 
 test('軍勢は spawnPerSec で spawnDist の範囲（中心から60〜90m）に湧き、speed で近づく', () => {
-  const e = createEnemies(createRng(1));
+  const e = createEnemies(createRng(1), cfgWith({ spawnPerSec: 1.2, spawnRamp: 1 }));
   e.update(10); // 約12体
   expect(e.list.length).toBe(12);
   expect(new Set(e.list.map((x) => x.id)).size).toBe(12);
@@ -54,4 +54,28 @@ test('死んだ敵は deadTime が進み、3秒後に list から消える', () 
   e.update(1); expect(d.deadTime).toBeCloseTo(1);
   e.update(2.1);
   expect(e.list.find((x) => x.id === id)).toBeUndefined();
+});
+
+test('湧く速さは時間とともに増え、rampSec（60秒）で spawnRamp 倍（3〜4倍）になり、その後は増えない', () => {
+  expect(E.rampSec).toBe(CONFIG.roundSeconds);
+  expect(E.spawnRamp).toBeGreaterThanOrEqual(3);
+  expect(E.spawnRamp).toBeLessThanOrEqual(4);
+  expect(spawnRateAt(0)).toBeCloseTo(E.spawnPerSec);
+  expect(spawnRateAt(30)).toBeCloseTo(E.spawnPerSec * (1 + E.spawnRamp) / 2);
+  expect(spawnRateAt(60)).toBeCloseTo(E.spawnPerSec * E.spawnRamp);
+  expect(spawnRateAt(90)).toBeCloseTo(E.spawnPerSec * E.spawnRamp);
+  let prev = 0;
+  for (let t = 0; t <= 60; t += 5) { expect(spawnRateAt(t)).toBeGreaterThan(prev); prev = spawnRateAt(t); }
+});
+
+test('はじめの10秒より、最後の10秒のほうが3倍近く多く湧く', () => {
+  const e = createEnemies(createRng(5), cfgWith({ spawnDist: [500, 500], speed: 0 }));
+  for (let i = 0; i < 100; i++) e.update(0.1);
+  const first = e.list.length;
+  for (let i = 0; i < 400; i++) e.update(0.1);
+  const before = e.list.length;
+  for (let i = 0; i < 100; i++) e.update(0.1);
+  const last = e.list.length - before;
+  expect(last / first).toBeGreaterThan(2.6);
+  expect(last / first).toBeLessThan(4);
 });

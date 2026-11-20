@@ -1,32 +1,67 @@
 import { test, expect } from 'vitest';
-import { createReserve } from '../../src/game/reserve.js';
+import { createPower } from '../../src/game/power.js';
 import { createCharge, radiusFor } from '../../src/game/charge.js';
 import { createRng } from '../../src/rng.js';
+import { CONFIG } from '../../src/config.js';
 
-test('貯めは ratePerSec で引き出し、maxDraw で止まる', () => {
-  const r = createReserve({ max: 100, start: 100, regenPerSec: 0, minLeft: 5 }); const c = createCharge(r);
-  c.start(); c.update(1); expect(r.value).toBe(55); c.update(10); expect(c.release().amount).toBe(90);
+const P = { max: 100, chargePerSec: 2.5, minRelease: 10 };
+const cfg = { ...CONFIG, power: P };
+const make = () => { const p = createPower(P); return { p, c: createCharge(p, cfg) }; };
+
+test('長押しの間だけ chargePerSec で力が貯まり、max で止まる', () => {
+  const { p, c } = make();
+  c.update(10); // 押していない間は貯まらない
+  expect(p.value).toBe(0);
+  c.start(); c.update(4);
+  expect(p.value).toBeCloseTo(10);
+  c.update(100);
+  expect(p.value).toBe(100);
 });
-test('貯めは器の minLeft より下を引き出さない', () => {
-  const r = createReserve({ max: 100, start: 20, regenPerSec: 0, minLeft: 5 }); const c = createCharge(r);
-  c.start(); c.update(10); expect(r.value).toBe(5); expect(c.release().amount).toBe(15);
+
+test('release は貯めた力を全部使って最後の一発を返す（半径は貯めた量で決まる）', () => {
+  const { p, c } = make();
+  c.start(); c.update(20);
+  const shot = c.release();
+  expect(shot.amount).toBeCloseTo(50);
+  expect(shot.radius).toBeCloseTo(radiusFor(50, cfg));
+  expect(shot.isBig).toBe(true);
+  expect(p.value).toBe(0);
+  expect(c.active).toBe(false);
+  expect(c.release()).toBeNull();
 });
-test('release で active が false になり、2回目は null', () => {
-  const r = createReserve(); const c = createCharge(r);
-  expect(c.active).toBe(false); c.start(); expect(c.active).toBe(true); c.update(0.1);
-  expect(c.release()).not.toBeNull(); expect(c.active).toBe(false); expect(c.release()).toBeNull();
+
+test('minRelease 未満で離しても放たず、貯めた力は残り、また押すと続きから貯まる', () => {
+  const { p, c } = make();
+  c.start(); c.update(2); // 5
+  expect(c.release()).toBeNull();
+  expect(c.active).toBe(false);
+  expect(p.value).toBeCloseTo(5);
+  c.start(); c.update(2);
+  expect(p.value).toBeCloseTo(10);
+  expect(c.release().amount).toBeCloseTo(10);
 });
-test('bigShotRatio 以上で isBig', () => {
-  const mk = (amount) => {
-    const r = createReserve({ max: 100, start: 100, regenPerSec: 0, minLeft: 5 }); const c = createCharge(r);
-    c.start(); c.update(amount / 45); return c.release();
-  };
-  expect(mk(31.5).amount).toBeCloseTo(31.5); expect(mk(31.5).isBig).toBe(true);
-  expect(mk(31).isBig).toBe(false);
+
+test('押していないときの release は null', () => {
+  const { c } = make();
+  expect(c.active).toBe(false);
+  expect(c.release()).toBeNull();
 });
-test('radiusFor: 0→min, maxDraw→max, 単調増加', () => {
-  expect(radiusFor(0)).toBe(10); expect(radiusFor(90)).toBeCloseTo(440); expect(radiusFor(40)).toBeGreaterThan(radiusFor(20));
+
+test('radiusFor: 0→min、power.max→max（街の端より先）、単調増加', () => {
+  expect(radiusFor(0)).toBe(CONFIG.radius.min);
+  expect(radiusFor(CONFIG.power.max)).toBeCloseTo(CONFIG.radius.max);
+  expect(radiusFor(CONFIG.power.max * 2)).toBeCloseTo(CONFIG.radius.max);
+  expect(CONFIG.radius.max).toBeGreaterThanOrEqual(CONFIG.cityRadius);
+  expect(radiusFor(40)).toBeGreaterThan(radiusFor(20));
 });
+
+test('小爆発で使った分だけ、最後の一発の半径は小さくなる', () => {
+  const a = make(), b = make();
+  for (const { c } of [a, b]) { c.start(); c.update(20); }
+  b.p.spend(CONFIG.puff.cost);
+  expect(b.c.release().radius).toBeLessThan(a.c.release().radius);
+});
+
 test('createRng は同じシードで同じ列', () => {
   const a = createRng(42), b = createRng(42), c = createRng(43);
   const sa = [a(), a(), a(), a()], sb = [b(), b(), b(), b()];

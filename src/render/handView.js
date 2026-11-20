@@ -357,17 +357,17 @@ export function createHandView(models, tierName) {
     // 左右の手のひらの中心（場面の空間）
     get palms() { return { right: hands[0].holder.position.clone(), left: hands[1].holder.position.clone() }; },
     resize(aspect) { if (Number.isFinite(aspect) && aspect > 0) frame(aspect); },
-    // level: 貯めの量（0〜1）, active: 長押し中, reserveFrac: 器の残り（0〜1）
-    update(rawDt, level = 0, active = false, rawReserve = 1) {
+    // level: 貯めた力（0〜1）, active: 長押し中, steady: 光の安定（0〜1。小さいと光が弱く不安定に瞬き、手も少し震える。掴まれている知らせ）
+    update(rawDt, level = 0, active = false, rawSteady = 1) {
       const dt = Number.isFinite(rawDt) ? Math.max(rawDt, 0) : 0;
-      const reserveFrac = Number.isFinite(rawReserve) ? rawReserve : 1;
+      const steady = Number.isFinite(rawSteady) ? rawSteady : 1;
       clock += dt;
       const target = Number.isFinite(level) ? Math.min(1, Math.max(0, level)) : 0;
       lvl += (target - lvl) * Math.min(1, dt * 14);
       const s = 1 - Math.pow(1 - lvl, 1.6);
       const amp = Math.min(1, Math.max(0, (lvl - TREMOR_FROM) / (1 - TREMOR_FROM)));
-      // 器が残り少ない: 光は弱く不安定、手も少し震える（限界の知らせ）
-      const weak = 1 - THREE.MathUtils.smoothstep(reserveFrac, 0.08, 0.3);
+      // 掴まれている: 光は弱く不安定、手も少し震える
+      const weak = 1 - THREE.MathUtils.smoothstep(steady, 0.08, 0.3);
 
       // 放ったあと: 両手が中央へ寄って手のひらを強く合わせ（だんだん速く）、合わさった瞬間に光が弾ける
       let squeeze = 0, orbBack = 1, recoil = 0;
@@ -421,7 +421,7 @@ export function createHandView(models, tierName) {
       if (joined > 0) orb.position.lerp(_c.copy(hands[0].holder.position).add(hands[1].holder.position).multiplyScalar(0.5), joined);
       orb.scale.setScalar(Math.max(r, 1e-3));
 
-      // 明るさ: 貯めるほど強く。0.8 を超えるとちらつき、器が少ないと弱く不安定に瞬く
+      // 明るさ: 貯めるほど強く。0.8 を超えるとちらつき、掴まれていると弱く不安定に瞬く
       const pulse = 1 + (active ? 0.06 + 0.08 * lvl : 0.04) * Math.sin(clock * (active ? 9 + 10 * lvl : 2.2));
       const stutter = weak * (0.25 + 0.45 * (hash(Math.floor(clock * 14)) > 0.55 ? 1 : 0));
       const crackle = amp * 0.18 * (hash(Math.floor(clock * 24) + 7.0) - 0.5);
@@ -459,7 +459,7 @@ export function createHandView(models, tierName) {
     },
     // 放つ瞬間: 両手が中央へ寄って組み合わさる（約 0.25 秒）。大きな一発は演出の間そのまま、小さな一発は約 0.4 秒で構えへ戻る
     release(shot) {
-      const strength = Math.min(1, (shot?.amount ?? 0) / CONFIG.charge.maxDraw);
+      const strength = Math.min(1, (shot?.amount ?? 0) / CONFIG.power.max);
       // 組み合わさる途中・戻る途中にまた放ったら、今の合わさり具合から続けて寄る（手が跳ばない）
       const t = rel ? JOIN_SEC * Math.sqrt(joined) : 0;
       rel = shot?.isBig

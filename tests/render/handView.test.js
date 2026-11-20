@@ -30,11 +30,11 @@ for (const tier of ['high', 'low']) {
     expect(skinned).toBe(0);
     expect(view.scene.isScene).toBe(true);
     expect(view.camera.isPerspectiveCamera).toBe(true);
-    for (const [level, active, reserve] of [[0, false, 1], [0.5, true, 0.6], [0.95, true, 0.05], [1, true, 0], [NaN, true, NaN]]) {
-      run(view, 0.5, level, active, reserve);
+    for (const [level, active, steady] of [[0, false, 1], [0.5, true, 0.6], [0.95, true, 0.05], [1, true, 0], [NaN, true, NaN]]) {
+      run(view, 0.5, level, active, steady);
       expectFinite(view);
     }
-    view.release({ amount: CONFIG.charge.maxDraw, radius: 400, isBig: true });
+    view.release({ amount: CONFIG.power.max, radius: 400, isBig: true });
     run(view, 3, 0, false, 0.4);
     expectFinite(view);
     view.release(undefined); // 中身のない一発でもこわれない
@@ -160,7 +160,7 @@ test('release の約0.25秒後、左右の手のひらの中心の距離が構�
     const view = createHandView(hands('low'), 'low');
     run(view, 1, 0.9, true, 0.6);
     const stance = palmGap(view);
-    view.release({ amount: isBig ? CONFIG.charge.maxDraw : 10, isBig });
+    view.release({ amount: isBig ? CONFIG.power.max : 10, isBig });
     run(view, 0.1, 0, false, 0.6);
     // 0.1 秒ではまだ寄っている途中
     expect(palmGap(view)).toBeLessThan(stance);
@@ -176,7 +176,7 @@ test('小さな一発は約0.4秒で構えに戻り、大きな一発は組み�
   const big = createHandView(hands('low'), 'low'), small = createHandView(hands('low'), 'low');
   for (const v of [big, small]) run(v, 1, 0.9, true, 0.6);
   expect(big.joined).toBe(0);
-  big.release({ amount: CONFIG.charge.maxDraw, isBig: true });
+  big.release({ amount: CONFIG.power.max, isBig: true });
   small.release({ amount: 10, isBig: false });
   run(big, 0.25, 0, false, 0.6); run(small, 0.25, 0, false, 0.6);
   expect(big.joined).toBeCloseTo(1, 2);

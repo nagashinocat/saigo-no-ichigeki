@@ -21,6 +21,7 @@ import { createResult } from './ui/result.js';
 import { createAudio } from './audio/audio.js';
 
 const MAX_FRAME_DT = 0.1;
+const GRABBED_STEADY = 0.15; // 掴まれている間の手の画面の光の安定（弱く瞬く）
 
 const params = new URLSearchParams(location.search);
 // 撮影・計測用のフック（window.__debug など）は URL に ?debug があるときだけ公開する
@@ -55,7 +56,8 @@ const hand = createHandView({ right: buildHandModel({ detail: handDetail }), lef
 
 // 入力・HUD・結果・音
 const audio = createAudio();
-const hud = createHud(document.getElementById('hud'));
+// 小爆発のボタン（長押しの指とは別の指で押す）。ボタンの上の押下はボタンだけが受け、キャンバスの長押しにはならない
+const hud = createHud(document.getElementById('hud'), { onPuff() { game.puff(); } });
 const startHint = document.getElementById('start');
 const result = createResult(document.getElementById('result'), {
   // 壊れた街や地面のえぐれは作り直せないので、新しい種でページを読み直す
@@ -75,6 +77,12 @@ canvas.addEventListener('pointercancel', (e) => press.cancel(e.pointerId));
 // 指が画面の外へ出ても、キャプチャが外れたら離したことにする
 canvas.addEventListener('lostpointercapture', (e) => press.cancel(e.pointerId));
 window.addEventListener('blur', () => press.reset());
+// PC はマウスで長押ししながら、もう片方の手の Space キーで小爆発
+window.addEventListener('keydown', (e) => {
+  if (e.code !== 'Space') return;
+  e.preventDefault();
+  if (!e.repeat) game.puff();
+});
 window.addEventListener('contextmenu', (e) => e.preventDefault());
 // iOS では最初の1回で running にならないことがあるので、鳴らせるまで毎回呼ぶ
 window.addEventListener('pointerdown', () => { if (!audio.running) audio.unlock(); }, { capture: true });
@@ -84,7 +92,21 @@ document.addEventListener('visibilitychange', () => {
   game.setHidden(document.hidden);
   if (document.hidden) audio.suspend(); else audio.resume();
 });
-game.on('over', ({ reason, total }) => { audio.chargeHum(0); audio.rumble(0); result.show(total, reason); });
+// 終わり: 最後の一発は、爆発と演出が終わって2画面に戻り、少し保ってから結果。ブラックホールは（演出は G5）すぐ結果
+const RESULT_DELAY = 0.8;
+let pendingResult = null;
+game.on('over', ({ reason, total }) => {
+  audio.chargeHum(0); audio.rumble(0);
+  if (reason === 'released') pendingResult = { reason, total, wait: RESULT_DELAY };
+  else result.show(total, reason);
+});
+function updateResult(dt) {
+  if (!pendingResult || cinematic.active) return;
+  pendingResult.wait -= dt;
+  if (pendingResult.wait > 0) return;
+  result.show(pendingResult.total, pendingResult.reason);
+  pendingResult = null;
+}
 
 const views = createViews(renderer, () => TIERS[tier]);
 // CSS で決まったキャンバスの実寸に合わせる（スマホのアドレスバーで 100vh がずれる問題を避ける）
@@ -109,11 +131,13 @@ cityScene.add(rubbleView.mesh);
 // 爆発の見た目（光の球・衝撃波・閃光・粉・光に溶ける建物）
 const explosionView = createExplosionView(cityScene, tier, { sunDir: style.sunDir, seed });
 explosionView.warmup(renderer, views.cityCamera);
+// 最後の一発: 放つ瞬間は無音。白くなってから目が映る一拍まで（時間が止まっている間）ずっと無音
 game.on('shot', (shot) => {
   explosionView.begin(shot); hand.release(shot);
-  // 放つ瞬間は無音。大きな一発は、白くなってから目が映る一拍まで（時間が止まっている間）ずっと無音
-  audio.releaseSilence(shot.isBig ? CONFIG.cinematic.freezeSec : 0.3);
+  audio.releaseSilence(CONFIG.cinematic.freezeSec);
 });
+// 小爆発: 両手が素早く組み合わさって弾け、主人公のまわりに小さな光の球（貯めの唸りは止めない）
+game.on('puff', (shot) => { explosionView.begin(shot); hand.release(shot); });
 
 // 軍勢と主人公の姿
 const enemyView = createEnemyView(cityScene, tier, { sunDir: style.sunDir });
@@ -177,14 +201,14 @@ function simulate(dt) {
   // 大きな一発の演出でゲームが止まっている間は、描画側の世界（破片・粉・ビルのつぶれ・軍勢の歩み・爆発の見た目）も止める。
   // 動くのは演出が自分で動かすもの（カメラ・飛んでくるガラス片・目のアップ）と手の画面だけで、一拍の後から世界がまた動き出す。
   cinematic.update(dt, game.blasts);
-  // 演出が画面全体を使う間（追うカメラ・上空へ戻る間）は、爆発だけが進み、時間・軍勢・器・貯めは止まったまま
-  game.setHold(cinematic.fullscreen && !cinematic.frozen);
   const wdt = dt * cinematic.worldScale;
   const cam = cityCam(), ps = pointScaleFor(cam);
   // 手前の物理は、演出の間は演出のカメラの近くの破片だけ（ふだんは null で全部プール）
   destruction.setPhysicsFocus(cinematic.active ? cam.position.toArray() : null);
   const live = game.blasts;
-  const list = fronts.update(live);
+  // 小爆発は光の球と軍勢を払うだけで、地面をえぐらず、ビルをゆがめず、破片も押さない（広場が穴に沈まない）
+  const shaping = live.some((b) => b.shot.small) ? live.filter((b) => !b.shot.small) : live;
+  const list = fronts.update(shaping);
   destruction.pool.setCrater(fronts.crater);
   if (wdt > 0) explosionView.dust(destruction.update(wdt, list));
   debrisView.update();
@@ -195,16 +219,18 @@ function simulate(dt) {
   // 上空カメラは、ゲームが動いている間はいつも進める（演出の終わりにこの姿勢へなじむ）
   // 大きな一発の演出の間は、終わった一発の「保つ」時間を進めない（演出が全体の構図で止まったあと、2画面でも保ってから戻る）
   if (!cinematic.frozen) views.updateCamera(dt, explosionView.cameraInfo, live, cinematic.active);
-  const h = handInput ?? { level: game.charge.level(), active: game.charge.active, reserve: game.reserve.value / CONFIG.reserve.max };
-  hand.update(dt, h.level, h.active, h.reserve);
-  hud.update({ total: game.score.total, remaining: game.timer.remaining, reserve: game.reserve.value, max: CONFIG.reserve.max });
+  // 手の中の球の大きさは貯めた力。掴まれている間は、光が弱く不安定に瞬く
+  const h = handInput ?? { level: game.power.level, active: game.charge.active, steady: game.grabbing > 0 ? GRABBED_STEADY : 1 };
+  hand.update(dt, h.level, h.active, h.steady);
+  hud.update({ remaining: game.timer.remaining, power: game.power.value, max: CONFIG.power.max, canPuff: game.canPuff });
   hud.setVisible(!cinematic.fullscreen);
   updateAudio(live);
+  updateResult(dt);
 }
 
 // 音: 貯めの唸り、じわじわ期の脈動、弾けた瞬間の爆発、崩落
 function updateAudio(live) {
-  audio.chargeHum(game.charge.active ? game.charge.level() : 0);
+  audio.chargeHum(game.charge.active ? game.power.level : 0);
   let creep = 0;
   for (const b of live) {
     const k = Math.sqrt(b.shot.radius / CONFIG.radius.max);
@@ -250,9 +276,9 @@ const debugHooks = {
     return { simMs: (t1 - t0) / n, drawMs: performance.now() - t1 };
   },
   draw,
-  // 手の画面の入力を固定する: { level, active, reserve }（reserve は器の残りの割合 0〜1）。null で戻す
-  hand(input) { handInput = input ? { level: 0, active: false, reserve: 1, ...input } : null; },
-  // 手の画面だけに、放つ瞬間を起こす（shot = { amount, isBig }）
+  // 手の画面の入力を固定する: { level, active, steady }（steady は光の安定 0〜1）。null で戻す
+  hand(input) { handInput = input ? { level: 0, active: false, steady: 1, ...input } : null; },
+  // 手の画面だけに、放つ瞬間を起こす（shot = { amount, isBig }。isBig でなければ小爆発）
   handRelease(shot) { hand.release(shot); },
   // 実際のフレームと同じく毎フレーム進めて描いたときの時間 (ms)。
   // js: simulate+draw の JS の時間, sim: そのうち simulate の時間, gpu: 前のフレームの描画が終わるのを待った時間。

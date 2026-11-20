@@ -10,7 +10,8 @@ import { frontAt, blastDuration } from '../../src/game/blast.js';
 
 const city = generateCity(3);
 const shotOf = (amount) => ({ amount, radius: radiusFor(amount), isBig: true });
-const SHOTS = [shotOf(CONFIG.charge.maxDraw * CONFIG.bigShotRatio), shotOf(60), shotOf(CONFIG.charge.maxDraw)];
+// 最後の一発の小さいほう（離して放てる最小の量）・中くらい・最大
+const SHOTS = [shotOf(CONFIG.power.minRelease), shotOf(60), shotOf(CONFIG.power.max)];
 const enemy = (id, angle, dist, state = 'approach') => ({ id, angle, dist, state, deadTime: 0 });
 const ARMY = [enemy(1, 0.3, 70), enemy(2, 2.1, 84), enemy(3, 4.0, 3, 'grab'), enemy(4, 5.2, 66)];
 
