@@ -43,3 +43,40 @@ test('どの大きさでも街と手の Rect は重ならず画面を埋め、HU
     expect(inside(l.hud, l.city), `${w}x${h} hud`).toBe(true);
   }
 });
+
+test('真っ白の間に、画面全体の描画（画面効果の大きさ・low の重ね描き）を一度温め、その上を白で塗る（白から街への切り替わりで止まらない）', async () => {
+  const THREE = await import('three');
+  const { createViews } = await import('../../src/render/views.js');
+  const log = [];
+  const renderer = {
+    autoClear: true,
+    setSize() {}, setViewport(x, y, w, h) { log.push(['viewport', w, h]); }, setScissor() {}, setScissorTest() {},
+    getPixelRatio: () => 1, getRenderTarget: () => null, setRenderTarget() {},
+    render(scene) { log.push(['render', scene.isScene ? 'scene' : 'quad']); },
+    getClearColor(c) { return c.set(0, 0, 0); }, getClearAlpha: () => 1, setClearColor(c) { log.push(['clearColor', c.getHex()]); },
+    clear() { log.push(['clear']); },
+  };
+  const views = createViews(renderer, () => ({ bloom: false, heatHaze: false }));
+  views.resize(390, 844);
+  const scene = new THREE.Scene(), cam = new THREE.PerspectiveCamera();
+  const grade = { bars: 0.1, ca: 0, vig: 0.3, sat: 1, grain: 0, streak: 0, exposure: 1, fade: 0, warm: 0, contrast: 1 };
+  log.length = 0;
+  views.renderWhite({ scene, camera: cam, fx: { flash: 0, grade } });
+  // 画面全体で場面を描き、重ね描き（grade）も描いてから
+  expect(log.some(([k, w, h]) => k === 'viewport' && w === 390 && h === 844)).toBe(true);
+  const iScene = log.findIndex(([k, s]) => k === 'render' && s === 'scene');
+  const iQuad = log.findIndex(([k, s]) => k === 'render' && s === 'quad');
+  expect(iScene).toBeGreaterThanOrEqual(0);
+  // 閃光（low の白い重ね）と、帯・周辺減光の重ねの両方を描いて温める（fx の flash が 0 でも）
+  expect(log.filter(([k, s]) => k === 'render' && s === 'quad')).toHaveLength(2);
+  expect(iQuad).toBeGreaterThan(iScene);
+  // 最後は白で塗る
+  const iClear = log.findLastIndex(([k]) => k === 'clear');
+  expect(iClear).toBeGreaterThan(iQuad);
+  expect(log.some(([k, c]) => k === 'clearColor' && c === 0xffffff)).toBe(true);
+  // 温めずに呼べば、白で塗るだけ
+  log.length = 0;
+  views.renderWhite();
+  expect(log.some(([k]) => k === 'render')).toBe(false);
+  expect(log.some(([k]) => k === 'clear')).toBe(true);
+});

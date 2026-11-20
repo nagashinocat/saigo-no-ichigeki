@@ -55,18 +55,31 @@ export function createGame({ seed, cfg = CONFIG }) {
     emit('over', { reason, total: score.total });
   }
 
-  function updateBlasts(dt) {
+  // settled: settle が一気に進めた分の命中（描く側は見た目を作らなくてよい）
+  function updateBlasts(dt, settled = false) {
     for (const b of blasts) {
       for (const hit of b.blast.update(dt)) {
         if (destroyed.has(hit.id)) continue;
         destroyed.add(hit.id);
         const target = byKey.get(hit.id);
         b.values.push(target.value);
-        emit('hit', { hit, target });
+        emit('hit', settled ? { hit, target, settled } : { hit, target });
       }
       enemies.applyBlastFront(b.blast.front);
     }
     blasts = blasts.filter((b) => !b.blast.done);
+  }
+
+  function beginFinale() {
+    emit('cinematicEnd');
+    phase = 'finale';
+    finalBlast = startBlast(pendingShot);
+    pendingShot = null;
+  }
+  function scoreFinale() {
+    const added = score.addShot(finalBlast.values);
+    emit('shotScored', { added, total: score.total });
+    finish('released');
   }
 
   // 前の小爆発が広がり終わるまでは次を押せない（連打で力を無駄にせず、画面も跳ばない）
@@ -107,6 +120,15 @@ export function createGame({ seed, cfg = CONFIG }) {
       emit('cinematicStart', shot);
     },
 
+    // 最後の一発を放ったあと（演出の止まった間・爆発の途中）なら、その一発を一気に最後まで進めて over(released) にする
+    // （演出が先に終わってしまっても、リプレイの前に必ず結果が決まるように）。それ以外のときは何もしない
+    settle() {
+      if (phase !== 'cinematic' && phase !== 'finale') return;
+      if (phase === 'cinematic') beginFinale();
+      for (let i = 0; i < 100000 && !finalBlast.blast.done; i++) updateBlasts(MAX_DT, true);
+      scoreFinale();
+    },
+
     // 指を離していないのに押下が途切れた（タブを隠した・blur・pointercancel）: 放たずに貯めを止める。力は残る
     pressCancel() { charge.cancel(); },
 
@@ -127,10 +149,7 @@ export function createGame({ seed, cfg = CONFIG }) {
       if (phase === 'cinematic') {
         cinematicClock += dt;
         if (cinematicClock < cfg.cinematic.freezeSec) return;
-        emit('cinematicEnd');
-        phase = 'finale';
-        finalBlast = startBlast(pendingShot);
-        pendingShot = null;
+        beginFinale();
         // 止まった間を越えた残りの時間は、そのまま爆発に渡す（捨てると前線が演出の時刻表より遅れる）
         dt = cinematicClock - cfg.cinematic.freezeSec;
         if (dt <= 0) return;
@@ -139,11 +158,7 @@ export function createGame({ seed, cfg = CONFIG }) {
       // 最後の一発の間は、爆発・命中・採点だけが進む（タイマー・軍勢・力は止まったまま）
       if (phase === 'finale') {
         updateBlasts(dt);
-        if (finalBlast.blast.done) {
-          const added = score.addShot(finalBlast.values);
-          emit('shotScored', { added, total: score.total });
-          finish('released');
-        }
+        if (finalBlast.blast.done) scoreFinale();
         return;
       }
 

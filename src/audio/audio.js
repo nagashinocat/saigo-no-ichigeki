@@ -23,6 +23,10 @@ export function createCrumbleGate(gap = CRUMBLE_GAP_SEC) {
   };
 }
 
+// 最後の天井（リミッター）: 効果音・演出の音・BGM はすべてこれを通ってスピーカーへ。
+// 最高潮の BGM に払うの爆発と貯めの唸りが重なっても 1 を超えず、スマホで割れない（天井 -2 dBFS、強い比、速いアタック）
+export const LIMITER = { threshold: -2, knee: 0, ratio: 20, attack: 0.002, release: 0.2 };
+
 export function createAudio() {
   const crumbleGate = createCrumbleGate();
   let silenceEnd = 0;
@@ -30,7 +34,7 @@ export function createAudio() {
   // 最後の一発の演出: 世界の音（master）と演出の音（cine: 心臓の鼓動・地鳴り）は、どちらも out のこもりを通る
   let cine = null, out = null;
   // BGM の出口（bgm.js が鳴らす）。最後の一発の演出の無音・こもり・地鳴り（master と out を動かす）とは別の道で、
-  // スピーカーへ直接つなぐ: 地鳴りが master を 0 に保つ間にも、リプレイの静かな変奏を鳴らせるように。
+  // master・out を通さずリミッターへ直接つなぐ: 地鳴りが master を 0 に保つ間にも、リプレイの静かな変奏を鳴らせるように。
   // BGM は放った瞬間に自分で止まるので、演出の無音を邪魔しない
   let bgmBus = null;
   let drone = null; // 時間切れの結末の低い唸り（鳴っている間だけ）
@@ -39,9 +43,12 @@ export function createAudio() {
     const AC = window.AudioContext || window.webkitAudioContext;
     if (!AC) return;
     ctx = new AC();
+    const limiter = ctx.createDynamicsCompressor();
+    for (const k of Object.keys(LIMITER)) limiter[k].value = LIMITER[k];
+    limiter.connect(ctx.destination);
     out = ctx.createBiquadFilter();
     out.type = 'lowpass'; out.frequency.value = 20000; out.Q.value = 0.5;
-    out.connect(ctx.destination);
+    out.connect(limiter);
     master = ctx.createGain();
     master.gain.value = 0.8;
     master.connect(out);
@@ -70,7 +77,7 @@ export function createAudio() {
     rumbleNode = { gain: rg, lfoGain };
     bgmBus = ctx.createGain();
     bgmBus.gain.value = 1;
-    bgmBus.connect(ctx.destination);
+    bgmBus.connect(limiter);
   }
 
   const ready = () => ctx && ctx.state === 'running';

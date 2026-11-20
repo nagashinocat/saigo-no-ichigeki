@@ -359,6 +359,9 @@ export function createEnemyView(scene, tier, { sunDir = new THREE.Vector3(0.8, 0
   xray.count = 0;
   xray.renderOrder = 8;
   xray.name = 'soldiers-xray';
+  // 透かしの重ねはバイクの頂点（1 台 6000 弱）をもう一度描くので high だけ。mid / low では隠れた者は目印の点（markersHidden）で示す
+  const xrayFor = (t) => t === 'high';
+  xray.visible = xrayFor(tier);
   group.add(mesh, xray);
 
   // 浮いている者の真下の影と推進の光の溜まり（地面に貼る板。長い向きが前後）
@@ -410,7 +413,9 @@ export function createEnemyView(scene, tier, { sunDir = new THREE.Vector3(0.8, 0
   let time = 0, heroYaw = 0;
 
   return {
-    group, hero, mesh, shadows, tier, // 形は軽いので、画質の段では変えない
+    group, hero, mesh, shadows, tier, // 形は画質の段では変えない（透かしの重ねだけ high のみ）
+    // 画質の段が途中で下がったとき
+    setTier(t) { xray.visible = xrayFor(t); },
     // 毎フレーム: 軍勢の一覧を姿に写す。fronts は地面と同じ球の一覧（えぐれた地面の上に立つ）、
     // pointScale は 1m を画素へ直す係数（距離 1m のとき）、glow は爆発の明るさ（0〜1）
     sync(enemies, { fronts = [], pointScale = 500, glow = 0, dt = 0, pixelRatio = 1 } = {}) {

@@ -127,3 +127,17 @@ test('小さな一発・横長の画面でも、終わりまで進み、カメ�
     expect(r.finished).toBe(true);
   }
 });
+
+test('最後のカットの爆心の光は、刻みのないフレームが続いても重ねて弱まらない（爆発が決めた値 × (1 − 影絵の割合)）', () => {
+  const { r, blastLight } = make();
+  play(r);
+  while (r.cut !== 'hero') r.update(1 / 60);
+  r.update(1 / 60);
+  const k = r.silhouette;
+  expect(k).toBeGreaterThan(0.5);
+  // 刻みより細かい dt を何フレームも（onTick が呼ばれないフレームがある）
+  for (let i = 0; i < 40; i++) {
+    r.update(1 / 240);
+    expect(blastLight.intensity).toBeCloseTo(100 * (1 - r.silhouette), 6);
+  }
+});

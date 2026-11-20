@@ -49,6 +49,9 @@ export function createReplay(views, { scene, lights = null, fog = null, blastLig
   scene.add(light.mesh);
 
   let heroK = 0; // 最後のカットで爆心の光を弱める割合（描く前に掛ける）
+  // 爆心の光の元の強さ（爆発の見た目が決めた値）と、こちらが最後に書いた値。刻みのないフレームでは爆発が書き直さないので、
+  // 今の値へ掛け直すと重ねて弱まってしまう。元の値から作り直す
+  let blastBase = 0, blastWritten = NaN;
   let phase = 'off', t = 0, acc = 0, b = 0, tl = null, plan = null, cutName = '', skipK = 0, outro = 0, heldT = 0;
   const screen = { flash: 0, time: 0, heat: null, grade: { bars: 0, ca: 0, vig: 0, sat: 1, grain: 0, streak: 0, exposure: 1, fade: 1, warm: 0, contrast: 1, bloom: 1 } };
   const baseLight = lights ? { sun: lights.sun?.intensity ?? 0, fill: lights.fill?.intensity ?? 0 } : null;
@@ -278,7 +281,11 @@ export function createReplay(views, { scene, lights = null, fog = null, blastLig
     update(dt) {
       if (phase === 'off') return;
       advance(dt);
-      if (blastLight && heroK > 0) blastLight.intensity *= 1 - heroK;
+      if (blastLight) {
+        if (blastLight.intensity !== blastWritten) blastBase = blastLight.intensity; // 爆発が書き直した
+        blastWritten = blastBase * (1 - heroK);
+        blastLight.intensity = blastWritten;
+      }
     },
     // やめる（何も描かない）
     stop() {

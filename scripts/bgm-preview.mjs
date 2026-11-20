@@ -1,11 +1,11 @@
 // BGM を耳で確かめるための WAV を書き出す（ゲームと同じ譜面・同じ楽器の音・同じ出口のつくりをオフラインで混ぜる）。
-// 使い方: node scripts/bgm-preview.mjs <出力先のフォルダ>
-//   bgm2-preview-1-start.wav     20 秒: 始まり（層 0: 底のドローン、低い太鼓とゆったりしたマリンバ）
-//   bgm2-preview-2-build.wav     20 秒: 中ごろ（層 1: 高い太鼓とシェイカー、旋律が全部、ときどき不規則なアクセントと不協和な重音）
-//   bgm2-preview-3-climax.wav    20 秒: 残り 10 秒の最高潮で長押し中（層 4: 毎小節フィル、太鼓のロールと金属的に擦れる音）
-//   bgm2-preview-4-replay.wav    10 秒: リプレイ・結果画面の静かな変奏（3 秒でふくらむ）
-//   bgm2-preview-5-full-run.wav  62 秒: ずっと長押しして 58 秒で放つ一回の遊び（放った瞬間に止まる）
-//   bgm2-preview-6-blackhole.wav 14 秒: 最高潮 → 時間切れで引き伸ばされて消える → 無音 → 静かな変奏
+// 使い方: node scripts/bgm-preview.mjs <出力先のフォルダ> [名前の頭（既定 bgm3）]
+//   <頭>-preview-1-start.wav     20 秒: 始まり（層 0: 底のドローン、低い太鼓とゆったりしたマリンバ）
+//   <頭>-preview-2-build.wav     20 秒: 中ごろ（層 1: 高い太鼓とシェイカー、旋律が全部、ときどき不規則なアクセントと不協和な重音）
+//   <頭>-preview-3-climax.wav    20 秒: 残り 10 秒の最高潮で長押し中（層 4: 毎小節フィル、太鼓のロールと金属的に擦れる音）
+//   <頭>-preview-4-replay.wav    10 秒: リプレイ・結果画面の静かな変奏（3 秒でふくらむ）
+//   <頭>-preview-5-full-run.wav  62 秒: ずっと長押しして 58 秒で放つ一回の遊び（放った瞬間に止まる）
+//   <頭>-preview-6-blackhole.wav 14 秒: 最高潮 → 時間切れで引き伸ばされて消える → 無音 → 静かな変奏
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { createSequencer, stretchWarp } from '../src/audio/bgmScore.js';
@@ -13,11 +13,13 @@ import { mixOffline, encodeWav } from '../src/audio/bgmOffline.js';
 import { FADE_HOLD, FADE_END } from '../src/audio/bgm.js';
 
 const dir = process.argv[2];
-if (!dir) { console.error('usage: node scripts/bgm-preview.mjs <out-dir>'); process.exit(2); }
+const prefix = process.argv[3] ?? 'bgm3';
+if (!dir) { console.error('usage: node scripts/bgm-preview.mjs <out-dir> [prefix]'); process.exit(2); }
 mkdirSync(dir, { recursive: true });
 const SR = 44100;
 
 function save(name, mix) {
+  name = name.replace(/^bgm2-/, `${prefix}-`);
   writeFileSync(join(dir, name), encodeWav(mix));
   let p = 0, s = 0;
   for (let i = 0; i < mix.left.length; i++) { p = Math.max(p, Math.abs(mix.left[i]), Math.abs(mix.right[i])); s += mix.left[i] ** 2 + mix.right[i] ** 2; }

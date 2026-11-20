@@ -361,3 +361,14 @@ test('静かな変奏も同じ暗い旋法: 低音は根音と五度・ときど
   const play = run(createSequencer({ start: 0 }), 60, cond(5));
   expect(Math.max(...d.map((e) => e.gain))).toBeLessThan(Math.max(...droneOf(play).map((e) => e.gain)));
 });
+
+test('オクターブ下のドローンは、ゆっくり読むぶん長く鳴って重なるので、その分（再生の速さに比例して）小さくする', () => {
+  // 最高潮（層 3）: 根音 1.1、オクターブ下 0.55 の割合。速さ 0.5 の音は 2 倍長く鳴るので、一音は 0.5 倍
+  const seq = createSequencer({ start: 0 });
+  const d = droneOf(run(seq, 16, cond(55)));
+  const root = d.find((e) => e.rate === 1), sub = d.find((e) => Math.abs(e.rate - 0.5) < 1e-9);
+  expect(sub).toBeTruthy();
+  expect(sub.gain / root.gain).toBeCloseTo((0.55 / 1.1) * 0.5, 5);
+  // 重なりを含めた底の厚さ（音量 × 鳴る長さ ∝ gain / rate）は、オクターブ下が根音を超えない
+  expect(sub.gain / sub.rate).toBeLessThan(root.gain / root.rate);
+});

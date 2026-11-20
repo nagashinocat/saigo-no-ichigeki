@@ -172,8 +172,11 @@ export function createViews(renderer, getTier = () => ({ bloom: false, heatHaze:
       screenFx.render(scene, camera, rect, getTier(), fx);
       renderer.setScissorTest(false);
     },
-    // 画面全体を真っ白にする（大きな一発を放った瞬間）
-    renderWhite() {
+    // 画面全体を真っ白にする（大きな一発を放った瞬間）。warm { scene, camera, fx } を渡すと、先にその場面を画面全体で、
+    // 閃光をいっぱいにして描いてから白で塗る: 画面全体の大きさの画面効果のレンダーターゲット（mid/high）や、low の閃光と
+    // 重ね描きのシェーダーを白の間に作っておく（白が明けて閃光の残る街へ切り替わるフレームで止まらない）。白の間の最初のフレームだけ渡せばよい
+    renderWhite(warm = null) {
+      if (warm) this.renderFull(warm.scene, warm.camera, { ...warm.fx, flash: 1 });
       renderer.setScissorTest(false);
       renderer.setViewport(0, 0, size.w, size.h);
       renderer.getClearColor(_clear);

@@ -47,3 +47,24 @@ test('軍勢は浮遊バイクに乗って描かれる: 姿の位置は bikePose
   view.mesh.getMatrixAt(0, m); p.setFromMatrixPosition(m);
   expect(p.y - groundHeight(40, fronts)).toBeGreaterThan(1.8); // 穴の上で浮いている
 });
+
+test('建物の陰の軍勢を透かして描く重ね（xray）は high だけ: mid / low は隠れた者を目印の点で示すだけ（バイクの頂点を二度描かない）', () => {
+  const sunDir = new THREE.Vector3(0.3, 1, 0.2).normalize();
+  const list = [{ id: 1, angle: 0.3, dist: 40, state: 'approach' }, { id: 2, angle: 1.3, dist: 60, state: 'approach' }];
+  for (const tier of ['low', 'mid', 'high']) {
+    const scene = new THREE.Scene();
+    const view = createEnemyView(scene, tier, { sunDir });
+    view.sync(list, {});
+    const xray = scene.getObjectByName('soldiers-xray');
+    expect(xray, tier).toBeTruthy();
+    expect(xray.visible, tier).toBe(tier === 'high');
+    expect(view.mesh.count).toBe(2);
+    // 隠れた者の目印はどの段でも描く
+    expect(scene.getObjectByName('soldier-markers-hidden').visible, tier).toBe(true);
+  }
+  // 画質の段が途中で下がったら、重ねも止める
+  const scene = new THREE.Scene();
+  const view = createEnemyView(scene, 'high', { sunDir });
+  view.setTier('mid');
+  expect(scene.getObjectByName('soldiers-xray').visible).toBe(false);
+});

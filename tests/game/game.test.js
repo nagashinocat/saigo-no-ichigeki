@@ -370,3 +370,41 @@ test('minRelease 未満で離すと fizzle（不発の知らせ）を一度出�
 test('払う（小爆発）の半径は 22m（軍勢が遅くなった分、持ち主が選んだ釣り合いに戻す）', () => {
   expect(CONFIG.puff.radius).toBe(22);
 });
+
+test('settle: 最後の一発を放ったあと（演出・爆発の途中）なら、一発を最後まで進めて over(released) にする。同じ破壊額、命中は settled つきで一度ずつ', () => {
+  const finishNormally = () => {
+    const g = createGame({ seed: 3, cfg: quiet });
+    hold(g, secFor(60)); g.pressEnd();
+    runUntil(g, () => g.phase === 'over');
+    return g.score.total;
+  };
+  const expected = finishNormally();
+  for (const steps of [0, 5, 20]) { // 演出の止まった間（cinematic）・爆発の途中（finale）
+    const g = createGame({ seed: 3, cfg: quiet });
+    const log = record(g, ['hit', 'shotScored', 'over', 'cinematicEnd']);
+    hold(g, secFor(60)); g.pressEnd();
+    step(g, steps);
+    expect(g.phase).not.toBe('over');
+    const before = log.filter(([n]) => n === 'hit').length;
+    g.settle();
+    expect(g.phase).toBe('over');
+    expect(g.score.total).toBeCloseTo(expected);
+    const hits = log.filter(([n]) => n === 'hit');
+    expect(hits.length).toBeGreaterThan(before);
+    for (const [, p] of hits.slice(before)) expect(p.settled).toBe(true);
+    expect(new Set(hits.map(([, p]) => p.hit.id)).size).toBe(hits.length);
+    expect(log.filter(([n]) => n === 'over')).toEqual([['over', { reason: 'released', total: g.score.total }]]);
+    expect(log.filter(([n]) => n === 'cinematicEnd')).toHaveLength(1);
+    g.settle(); // 終わったあとは何もしない
+    expect(log.filter(([n]) => n === 'over')).toHaveLength(1);
+  }
+});
+
+test('settle: 遊んでいる最中・始まる前・時間切れの後は何もしない', () => {
+  const g = createGame({ seed: 1, cfg: quiet });
+  g.settle();
+  expect(g.phase).toBe('ready');
+  hold(g, 1);
+  g.settle();
+  expect(g.phase).toBe('playing');
+});

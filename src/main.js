@@ -89,7 +89,9 @@ canvas.addEventListener('pointerdown', (e) => {
   if (e.pointerType === 'mouse' && e.button !== 0) return;
   // リプレイの間は、画面のタップで飛ばして結果へ
   if (replay.active && !replay.finished) { skipReplay(); return; }
-  canvas.setPointerCapture?.(e.pointerId); press.down(e.pointerId);
+  // キャプチャに失敗しても（もう離した指・一部のブラウザ）押下は始める
+  try { canvas.setPointerCapture?.(e.pointerId); } catch { /* キャプチャなしで続ける */ }
+  press.down(e.pointerId);
 });
 canvas.addEventListener('pointerup', (e) => press.up(e.pointerId));
 canvas.addEventListener('pointercancel', (e) => press.cancel(e.pointerId));
@@ -233,6 +235,8 @@ cinematic.on('cue', ({ name, arg }) => {
 // 演出が最後まで終わった: そのままリプレイへ（写しがなければ、最後の絵のまま結果を重ねる）
 cinematic.on('end', () => {
   bgm.quiet(); // リプレイと結果画面: 同じ旋律をゆっくり静かに（地鳴りの尾の下からふくらむ）
+  // 演出が一発より先に終わった（ふつうは起きない）: 一発を最後まで進めて over にする（結果がかならず出る）
+  if (game.phase !== 'over') game.settle();
   if (replaySnap) startReplay(); else finaleDone = true;
 });
 
@@ -250,7 +254,8 @@ function showHit(e) {
 }
 game.on('hit', (e) => {
   if (e.hit.id[0] === 'b') standing.delete(e.target.id);
-  showHit(e);
+  // settle が一気に進めた分は、すぐリプレイが街を戻すので描かない
+  if (!(e.settled && replaySnap)) showHit(e);
   hitsThisFrame++;
 });
 let hitsThisFrame = 0;
@@ -316,6 +321,7 @@ function lowerTier() {
   tier = next;
   if (debugMode) window.__tier = tier;
   heroAura.setTier(tier);
+  enemyView.setTier(tier);
   applyPixelRatio();
   resize();
 }
@@ -426,11 +432,16 @@ function updateAudio(live) {
   audio.crumble(hitsThisFrame); // ためた命中も、間隔が空いたら鳴らす
   hitsThisFrame = 0;
 }
+// 白の間の最初のフレームで、そのあとの画面全体の描画を温める（白から街への切り替わりで止まらない）
+let whiteWarmed = false;
 function draw() {
+  if (!cinematic.white) whiteWarmed = false;
   if (blackhole.active) blackhole.draw();
   else if (replay.active) views.renderFull(cityScene, replay.camera, replay.screen);
-  else if (cinematic.white) views.renderWhite();
-  else if (cinematic.fullscreen) views.renderFull(cinematic.renderScene ?? cityScene, cinematic.camera, cinematic.screen);
+  else if (cinematic.white) {
+    views.renderWhite(whiteWarmed ? null : { scene: cinematic.renderScene ?? cityScene, camera: cinematic.camera, fx: cinematic.screen });
+    whiteWarmed = true;
+  } else if (cinematic.fullscreen) views.renderFull(cinematic.renderScene ?? cityScene, cinematic.camera, cinematic.screen);
   else views.render(cityScene, hand.scene, cinematic.screen ?? explosionView.screen, hand.camera);
 }
 

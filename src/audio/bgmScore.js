@@ -83,6 +83,9 @@ const DRONE = [
 const DRONE_QUIET = [[0, 1], [FIFTH_FLAT, 0.4]];
 // ドローンの一音は小節より長く重なって鳴るので、小節の長さに比例した音量にする（テンポが変わっても底の厚さは同じ）
 const DRONE_REF_BAR = 2.4;
+// ゆっくり読む音（オクターブ下: 速さ 0.5）は 1/速さ 倍長く鳴り、その分多く重なるので、速さに比例して小さくする。
+// 速く読む音（五度・増4度）は持ち主が選んだ響きのまま（大きくはしない）
+const droneGain = (n, g, barDur, quiet = 1) => GAIN.drone * quiet * g * Math.min(1, noteRate(n)) * barDur / DRONE_REF_BAR;
 
 // 打楽器の型: 刻み → 強さ（層ごと）
 const LOW = [{ 0: 1, 7: 0.5 }, { 0: 1, 5: 0.55, 7: 0.7 }, { 0: 1, 3: 0.4, 5: 0.6, 7: 0.8, 9: 0.45 }];
@@ -129,7 +132,7 @@ function playBeat(bar, beat, level, fill, barDur) {
   const mel = MELODY[bar % MELODY.length], root = OST_ROOT[bar % OST_ROOT.length];
   if (beat === 0) {
     // 底のドローン（揺れはつけない: 重なって切れ目なく鳴る）
-    for (const [n, g] of DRONE[Math.min(level, DRONE.length - 1)]) out.push([0, 'drone', noteRate(n), GAIN.drone * g * barDur / DRONE_REF_BAR, 0, 'drone']);
+    for (const [n, g] of DRONE[Math.min(level, DRONE.length - 1)]) out.push([0, 'drone', noteRate(n), droneGain(n, g, barDur), 0, 'drone']);
   }
   for (let p = beat * 3; p < beat * 3 + 3; p++) {
     const h = 2 * p;
@@ -198,7 +201,7 @@ function quietBeat(bar, beat, barDur) {
   const out = [];
   const add = (half, voice, rate, gain, pan, role) => out.push([half, voice, rate, gain * wobble(bar, half, role), pan, role]);
   const mel = MELODY[bar % MELODY.length], root = OST_ROOT[bar % OST_ROOT.length];
-  if (beat === 0) for (const [n, g] of DRONE_QUIET) out.push([0, 'drone', noteRate(n), GAIN.drone * 0.5 * g * barDur / DRONE_REF_BAR, 0, 'drone']);
+  if (beat === 0) for (const [n, g] of DRONE_QUIET) out.push([0, 'drone', noteRate(n), droneGain(n, g, barDur, 0.5), 0, 'drone']);
   for (let p = beat * 3; p < beat * 3 + 3; p++) {
     const h = 2 * p;
     if (p === 0) add(h, 'marimbaSoft', noteRate(root - 12), GAIN.soft * 0.55, -0.15, 'ost');
