@@ -43,7 +43,7 @@ const POSES = {
 };
 
 const ZERO = [0, 0, 0];
-const TREMOR_FROM = 0.75;        // ここから震えが始まり、level 1 で最大
+export const TREMOR_FROM = 0.75;        // ここから震えが始まり、level 1 で最大
 const TREMOR_DEG = [4.5, 1.6, 1.0]; // 最大の振れ幅（rx, ry, rz）
 const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
 

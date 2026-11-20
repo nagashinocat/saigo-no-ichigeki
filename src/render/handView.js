@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { CONFIG } from '../config.js';
 import { NOISE_GLSL } from './glslNoise.js';
 import { TOON_RAMP, TOON_LIGHTS } from './style.js';
-import { poseFor, HAND_JOINTS, RELEASE_POSE } from './handPose.js';
+import { poseFor, HAND_JOINTS, RELEASE_POSE, TREMOR_FROM } from './handPose.js';
 
 // 手の画面: 主人公の右手（手のひらを上に、少し丸めてこちらへ向ける）と、その上に浮かぶ力の球。
 // 光は球が主役（球の色の点光源）で、夕暮れの淡い縁の光を少しだけ足す。背景は暗いグラデーション。
@@ -179,6 +179,7 @@ uniform float uOrbPower, uOrbR;`)
   return mat;
 }
 
+// gltf は null でもよい（球だけを描く）。あとから attachModel(gltf) で手を付けられる
 export function createHandView(gltf, tierName) {
   const low = tierName === 'low';
   const defines = low ? { LOW: 1 } : {};
@@ -222,11 +223,16 @@ export function createHandView(gltf, tierName) {
   };
 
   // 骨: WebXR の手は関節が平ら（すべて Armature の子）なので、手首から順に自分で FK する
-  const bones = new Map(), rest = new Map();
+  const bones = new Map(), localRest = new Map();
   const palmLocal = new THREE.Vector3(0.033, -0.004, 0.006); // モデルの空間での手のひらの中心
-  if (gltf) {
-    const model = gltf.scene;
-    model.traverse((o) => {
+  const placeRig = () => rig.position.copy(palmLocal).multiplyScalar(-HAND_SCALE).applyQuaternion(rig.quaternion); // 手のひらの中心を原点へ
+  placeRig();
+
+  // 手のモデルを付ける（読み込みが遅れても、それまでは球だけで描ける）。2回目以降は何もしない
+  function attachModel(model) {
+    if (!model || bones.size) return;
+    const rest = new Map();
+    model.scene.traverse((o) => {
       if (o.isBone || HAND_JOINTS.includes(o.name)) bones.set(o.name, o);
       if (o.isSkinnedMesh || o.isMesh) {
         o.material = makeSkinMaterial(skinU);
@@ -236,21 +242,19 @@ export function createHandView(gltf, tierName) {
     for (const [name, b] of bones) rest.set(name, { p: b.position.clone(), q: b.quaternion.clone() });
     const mc = rest.get('middle-finger-metacarpal'), pp = rest.get('middle-finger-phalanx-proximal');
     if (mc && pp) palmLocal.copy(mc.p).lerp(pp.p, 0.55).add(new THREE.Vector3(-0.022, 0, 0));
-    rig.add(model);
+    placeRig();
+    // 親から見た休みの姿勢（骨ごとに1回だけ求める）
+    for (const name of HAND_JOINTS) {
+      const r = rest.get(name), par = parentOf(name);
+      if (!r) continue;
+      if (!par || !rest.get(par)) { localRest.set(name, { p: r.p.clone(), q: r.q.clone(), parent: null }); continue; }
+      const pr = rest.get(par);
+      const inv = pr.q.clone().invert();
+      localRest.set(name, { p: r.p.clone().sub(pr.p).applyQuaternion(inv), q: inv.multiply(r.q), parent: par });
+    }
+    rig.add(model.scene);
   }
-  // 手のひらの中心を原点へ
-  rig.position.copy(palmLocal).multiplyScalar(-HAND_SCALE).applyQuaternion(rig.quaternion);
-
-  // 親から見た休みの姿勢（骨ごとに1回だけ求める）
-  const localRest = new Map();
-  for (const name of HAND_JOINTS) {
-    const r = rest.get(name), par = parentOf(name);
-    if (!r) continue;
-    if (!par || !rest.get(par)) { localRest.set(name, { p: r.p.clone(), q: r.q.clone(), parent: null }); continue; }
-    const pr = rest.get(par);
-    const inv = pr.q.clone().invert();
-    localRest.set(name, { p: r.p.clone().sub(pr.p).applyQuaternion(inv), q: inv.multiply(r.q), parent: par });
-  }
+  attachModel(gltf);
 
   // 球
   const orbU = {
@@ -330,19 +334,25 @@ export function createHandView(gltf, tierName) {
 
   let clock = 0, lvl = 0;
   let rel = null; // { t, hold, strength }
+  let openness = 0, relOpen = 0; // 放ったあとの手の開き具合（0: 元の構え, 1: 開き切った）
   const hash = (x) => { const s = Math.sin(x * 127.1) * 43758.5453; return s - Math.floor(s); };
   const _palm = new THREE.Vector3(), _v = new THREE.Vector3();
 
   return {
     scene, camera,
-    resize(aspect) { frame(aspect); },
+    attachModel,
+    // 放ったあと、手がどれだけ開いているか（0〜1）。演出の間開いたままかの確かめに使う
+    get openness() { return openness; },
+    resize(aspect) { if (Number.isFinite(aspect) && aspect > 0) frame(aspect); },
     // level: 貯めの量（0〜1）, active: 長押し中, reserveFrac: 器の残り（0〜1）
-    update(dt, level = 0, active = false, reserveFrac = 1) {
+    update(rawDt, level = 0, active = false, rawReserve = 1) {
+      const dt = Number.isFinite(rawDt) ? Math.max(rawDt, 0) : 0;
+      const reserveFrac = Number.isFinite(rawReserve) ? rawReserve : 1;
       clock += dt;
       const target = Number.isFinite(level) ? Math.min(1, Math.max(0, level)) : 0;
       lvl += (target - lvl) * Math.min(1, dt * 14);
       const s = 1 - Math.pow(1 - lvl, 1.6);
-      const amp = Math.min(1, Math.max(0, (lvl - 0.75) / 0.25));
+      const amp = Math.min(1, Math.max(0, (lvl - TREMOR_FROM) / (1 - TREMOR_FROM)));
       // 器が残り少ない: 光は弱く不安定、手も少し震える（限界の知らせ）
       const weak = 1 - THREE.MathUtils.smoothstep(reserveFrac, 0.08, 0.3);
 
@@ -358,6 +368,7 @@ export function createHandView(gltf, tierName) {
         const back = THREE.MathUtils.smoothstep(t, open, open + RELAX_SEC);
         blendPose(snapPose, RELEASE_POSE, into, outPose);
         pose = blendPose(outPose, base, back, outPose);
+        relOpen = into * (1 - back);
         flashK = Math.exp(-t / FLASH_SEC) * (0.5 + 0.7 * rel.strength);
         recoil = Math.exp(-t / 0.09) * (0.04 + 0.08 * rel.strength);
         // 球は手を離れて弾け、しばらくしてからまた小さく生まれる
@@ -368,6 +379,7 @@ export function createHandView(gltf, tierName) {
         if (t > open + RELAX_SEC + REFORM_SEC + 0.1) rel = null;
       }
       if (bones.size) applyPose(pose);
+      openness = rel ? relOpen : 0;
 
       // 震え: 0.8 を超えると手全体が、器が少ないと弱く
       const trem = amp * 0.018 + weak * 0.006;

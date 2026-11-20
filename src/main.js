@@ -38,12 +38,18 @@ const cityView = createCityView(game.city, style, tier);
 
 const cityScene = new THREE.Scene();
 cityScene.add(style.sky, ...style.lights, cityView.group);
-// 手のモデル（読めなくても遊べるよう、そのときは球だけを描く）
-const handGltf = await new GLTFLoader().loadAsync(`${import.meta.env.BASE_URL}models/hand-right.glb`).catch((e) => {
-  console.warn('hand model failed to load', e);
-  return null;
-});
-const hand = createHandView(handGltf, tier);
+// 手の画面は、手のモデルを待たずに球だけで始め、届いたら手を付ける。
+// HAND_LOAD_TIMEOUT_MS を過ぎても届かなければ、球だけのまま遊べる（後から届いても付けない）
+const HAND_LOAD_TIMEOUT_MS = 5000;
+const hand = createHandView(null, tier);
+{
+  let timedOut = false;
+  const timer = setTimeout(() => { timedOut = true; console.warn('hand model load timed out; showing the orb only'); }, HAND_LOAD_TIMEOUT_MS);
+  new GLTFLoader().loadAsync(`${import.meta.env.BASE_URL}models/hand-right.glb`).then(
+    (gltf) => { clearTimeout(timer); if (!timedOut) hand.attachModel(gltf); },
+    (e) => { clearTimeout(timer); console.warn('hand model failed to load; showing the orb only', e); },
+  );
+}
 
 const views = createViews(renderer, () => TIERS[tier]);
 // CSS で決まったキャンバスの実寸に合わせる（スマホのアドレスバーで 100vh がずれる問題を避ける）
