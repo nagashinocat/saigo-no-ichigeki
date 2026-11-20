@@ -1,5 +1,5 @@
 import { test, expect } from 'vitest';
-import { deformPoint, craterDepth, crushPoint, packFronts, MAX_FRONTS, createFrontTracker, CRUSH_SQUASH, SPHERE_DEFORM_GLSL } from '../../src/render/sphereDeform.js';
+import { deformPoint, craterDepth, crushPoint, packFronts, MAX_FRONTS, createFrontTracker, CRUSH_SQUASH, SPHERE_DEFORM_GLSL, groundHeight, CRATER_LIP } from '../../src/render/sphereDeform.js';
 
 const len = (p) => Math.hypot(p[0], p[1], p[2]);
 
@@ -104,4 +104,15 @@ test('GLSL の式は JS と同じ定数を使う（押しつぶしの割合・sm
   expect(SPHERE_DEFORM_GLSL).toContain('if (d < uFronts[i]) F = max(F, uFronts[i]);');
   expect(SPHERE_DEFORM_GLSL).toContain('if (abs(r) < f) best = max(best, sqrt(f * f - r * r));');
   expect(SPHERE_DEFORM_GLSL).toContain('return p * (F / d);');
+});
+
+test('groundHeight: 地面の高さ。穴の中は craterDepth だけ下がり、縁の外は盛り上がって遠くで 0 に戻る（地面のシェーダーと同じ式）', () => {
+  expect(groundHeight(50, [])).toBe(0);
+  expect(groundHeight(30, [100, 40])).toBeCloseTo(-craterDepth(30, [100, 40]), 9);
+  expect(groundHeight(0, [100])).toBeCloseTo(-100, 9);
+  const F = 100, L = CRATER_LIP.height * F + 0.5, W = CRATER_LIP.width * F + 3;
+  expect(groundHeight(F + W, [F])).toBeCloseTo(L, 9); // 縁の外の一番高いところ
+  expect(groundHeight(F + 1, [F])).toBeGreaterThan(0);
+  expect(groundHeight(F + 40 * W, [F])).toBeLessThan(0.01);
+  expect(SPHERE_DEFORM_GLSL).toContain('float groundHeight(float r)');
 });

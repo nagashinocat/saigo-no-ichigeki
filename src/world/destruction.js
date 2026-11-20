@@ -19,13 +19,14 @@ export function createDestruction({ cityView, getTier, seed = 1 }) {
   const near = createNearPhysics(initial.nearPhysicsMax, rng);
   let focus = null;
   let time = 0;
+  let hole = 0; // えぐれた地面の半径（今の球を含む）。手前の物理の地面は平らなので、この内側の破片はプールへ
   const crushing = []; // { id, target, color, at }
 
   const isNear = (c) => focus && Math.hypot(c[0] - focus[0], c[1] - focus[1], c[2] - focus[2]) <= NEAR_RANGE;
 
   function emit(center, dims, vel, color) {
     const half = dims.map((v) => v / 2);
-    if (isNear(center)) {
+    if (isNear(center) && Math.hypot(center[0], center[2]) >= hole) {
       const box = { min: center.map((v, i) => v - half[i]), max: center.map((v, i) => v + half[i]), color };
       if (near.add(box, vel)) return;
     }
@@ -70,6 +71,7 @@ export function createDestruction({ cityView, getTier, seed = 1 }) {
     // 進める。fronts は今の球の半径の一覧（cityView のシェーダーと同じもの）。粉に変わった地点（DustEvent）を返す
     update(dt, fronts = []) {
       time += dt;
+      hole = fronts.length ? Math.max(...fronts) : 0;
       const dust = pool.update(dt);
       for (let i = crushing.length - 1; i >= 0; i--) {
         if (crushing[i].at > time + 1e-9) continue;

@@ -11,6 +11,9 @@ import { createDestruction } from './world/destruction.js';
 import { createDebrisView } from './render/debrisView.js';
 import { createExplosionView } from './render/explosionView.js';
 import { createFrontTracker } from './render/sphereDeform.js';
+import { createEnemyView } from './render/enemyView.js';
+import { chooseShot, createCinematic } from './render/cinematic.js';
+import { createRng } from './rng.js';
 
 const MAX_FRAME_DT = 0.1;
 
@@ -70,6 +73,26 @@ const explosionView = createExplosionView(cityScene, tier, { sunDir: style.sunDi
 explosionView.warmup(renderer, views.cityCamera);
 game.on('shot', (shot) => { explosionView.begin(shot); hand.release(shot); });
 
+// 軍勢と主人公の姿
+const enemyView = createEnemyView(cityScene, tier, { sunDir: style.sunDir });
+
+// 大きな一発を放つ瞬間の演出（画面全体）: 白くなり、主人公の目から後ろ上へ引き、ガラスに軍団の一人の目が映り、
+// 追ってくる爆発の front を読みながら引き続けて、上空のカメラへ戻る（cinematic.js）
+const cinematic = createCinematic(views, enemyView, explosionView, { renderer, scene: cityScene, sunDir: style.sunDir });
+cinematic.warmup(renderer, views.cityCamera);
+const shotRng = createRng(seed ^ 0xc1a3e);
+const standing = new Set(game.city.buildings.map((b) => b.id)); // まだ壊れていないビル
+game.on('cinematicStart', (shot) => {
+  const plan = chooseShot({
+    shot, rng: shotRng, crater: fronts.crater,
+    buildings: game.city.buildings.filter((b) => standing.has(b.id)),
+    enemies: game.enemies.list,
+  });
+  cinematic.play(plan, shot);
+});
+// ゲームが動き出す。演出は爆発に追われて引き続け、上空のカメラへなじんでから終わる
+game.on('cinematicEnd', () => cinematic.end());
+
 // 光に溶ける対象の見た目の箱（隠す前に色と位置を読む）
 function vaporTarget({ hit, target }) {
   const id = Number(hit.id.slice(1));
@@ -78,6 +101,7 @@ function vaporTarget({ hit, target }) {
   return { x: vis?.x ?? target.x, z: vis?.z ?? target.z, w: 2.6, d: 2.6, h: 2.2, color: vis?.color };
 }
 game.on('hit', (e) => {
+  if (e.hit.id[0] === 'b') standing.delete(e.target.id);
   if (e.hit.kind === 'vaporize') explosionView.vaporize(vaporTarget(e));
   destruction.onHit(e);
 });
@@ -93,29 +117,43 @@ function lowerTier() {
   resize();
 }
 
-// 1m を光の粒の画素の大きさへ直す係数
-const pointScale = () => views.layout.city.h * renderer.getPixelRatio() / (2 * Math.tan(THREE.MathUtils.degToRad(views.cityCamera.fov) / 2));
-
 // 地面のえぐれ（爆発が終わっても残る）と、今の球の半径。ビルのつぶれ・地面・破片が同じものを使う
 const fronts = createFrontTracker();
 
 // 撮影用に手の画面への入力を固定する（null で実際のゲームの値に戻す）
 let handInput = null;
 
+// 今描いている街のカメラ（演出の間は画面全体の演出のカメラ）と、1m を光の粒の画素の大きさへ直す係数
+const cityCam = () => (cinematic.fullscreen ? cinematic.camera : views.cityCamera);
+const pointScaleFor = (cam) => (cinematic.fullscreen ? views.size.h : views.layout.city.h) * renderer.getPixelRatio() / (2 * Math.tan(THREE.MathUtils.degToRad(cam.fov) / 2));
+
 function simulate(dt) {
   game.update(dt);
-  const blasts = game.blasts;
-  const list = fronts.update(blasts);
+  // 大きな一発の演出でゲームが止まっている間は、描画側の世界（破片・粉・ビルのつぶれ・軍勢の歩み・爆発の見た目）も止める。
+  // 動くのは演出が自分で動かすもの（カメラ・飛んでくるガラス片・目のアップ）と手の画面だけで、一拍の後から世界がまた動き出す。
+  cinematic.update(dt, game.blasts);
+  const wdt = dt * cinematic.worldScale;
+  const cam = cityCam(), ps = pointScaleFor(cam);
+  // 手前の物理は、演出の間は演出のカメラの近くの破片だけ（ふだんは null で全部プール）
+  destruction.setPhysicsFocus(cinematic.active ? cam.position.toArray() : null);
+  const live = game.blasts;
+  const list = fronts.update(live);
   destruction.pool.setCrater(fronts.crater);
-  explosionView.dust(destruction.update(dt, list));
+  if (wdt > 0) explosionView.dust(destruction.update(wdt, list));
   debrisView.update();
-  explosionView.update(dt, blasts, views.cityCamera, pointScale(), fronts.crater);
-  cityView.update(dt, { fronts: list, heat: explosionView.ground.heat, ember: explosionView.ground.ember });
-  views.updateCamera(dt, explosionView.cameraInfo);
+  explosionView.update(wdt, live, cam, ps, fronts.crater);
+  cityView.update(wdt, { fronts: list, heat: explosionView.ground.heat, ember: explosionView.ground.ember });
+  enemyView.sync(game.enemies.list, { fronts: list, pointScale: ps, glow: explosionView.ground.heat, dt: wdt, pixelRatio: renderer.getPixelRatio() });
+  // 上空カメラは、ゲームが動いている間はいつも進める（演出の終わりにこの姿勢へなじむ）
+  if (!cinematic.frozen) views.updateCamera(dt, explosionView.cameraInfo);
   const h = handInput ?? { level: game.charge.level(), active: game.charge.active, reserve: game.reserve.value / CONFIG.reserve.max };
   hand.update(dt, h.level, h.active, h.reserve);
 }
-const draw = () => views.render(cityScene, hand.scene, explosionView.screen, hand.camera);
+function draw() {
+  if (cinematic.white) views.renderWhite();
+  else if (cinematic.fullscreen) views.renderFull(cityScene, cinematic.camera, cinematic.screen);
+  else views.render(cityScene, hand.scene, cinematic.screen ?? explosionView.screen, hand.camera);
+}
 
 let last = performance.now();
 let paused = false;
@@ -179,3 +217,5 @@ window.__destruction = destruction;
 window.__explosionView = explosionView;
 window.__views = views;
 window.__hand = hand;
+window.__enemyView = enemyView;
+window.__cinematic = cinematic;

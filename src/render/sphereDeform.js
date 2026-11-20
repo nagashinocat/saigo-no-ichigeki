@@ -29,6 +29,20 @@ export function craterDepth(r, fronts) {
   return best;
 }
 
+// 地面の高さ（地面のシェーダーと同じ式）。穴の中は craterDepth だけ下がり、最大の球の縁の外は少し盛り上がる。
+// 軍勢や主人公をえぐれた地面の上に立たせるために使う。
+export const CRATER_LIP = { height: 0.022, width: 0.045 }; // 縁の盛り上がり（球の半径に対する割合）
+export function groundHeight(r, fronts) {
+  let F = 0;
+  for (const f of fronts) if (f > F) F = f;
+  if (F <= 0) return 0;
+  const d = craterDepth(r, fronts);
+  if (d > 0) return -d;
+  const L = CRATER_LIP.height * F + 0.5, W = CRATER_LIP.width * F + 3;
+  const x = (Math.abs(r) - F) / W;
+  return L * x * Math.exp(1 - x);
+}
+
 const smooth = (k) => { const t = Math.min(1, Math.max(0, k)); return t * t * (3 - 2 * t); };
 
 export function crushPoint(p, fronts, k) {
@@ -69,6 +83,8 @@ export function createFrontTracker() {
   };
 }
 
+const CRATER_LIP_GLSL = { h: CRATER_LIP.height.toFixed(4), w: CRATER_LIP.width.toFixed(4) };
+
 // 上と同じ式の GLSL。uniform: uFronts[4], uFrontCount
 export const SPHERE_DEFORM_GLSL = /* glsl */`
 uniform float uFronts[${MAX_FRONTS}];
@@ -96,6 +112,16 @@ float craterDepth(float r) {
     if (abs(r) < f) best = max(best, sqrt(f * f - r * r));
   }
   return best;
+}
+// uFronts[0] は最大の球（packFronts が大きい順に詰める）
+float groundHeight(float r) {
+  if (uFrontCount <= 0) return 0.0;
+  float d = craterDepth(r);
+  if (d > 0.0) return -d;
+  float F = uFronts[0];
+  float L = ${CRATER_LIP_GLSL.h} * F + 0.5, W = ${CRATER_LIP_GLSL.w} * F + 3.0;
+  float x = (abs(r) - F) / W;
+  return L * x * exp(1.0 - x);
 }
 vec3 crushSquash(vec3 p, float k) {
   float t = clamp(k, 0.0, 1.0);

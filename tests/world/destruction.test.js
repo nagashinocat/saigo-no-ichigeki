@@ -74,3 +74,19 @@ test('光に溶けるものは今までどおりすぐ隠し、破片を出さ�
   expect(cityView.log.propsHidden).toEqual([2]);
   expect(d.pool.count).toBeGreaterThanOrEqual(2);
 });
+
+test('手前の物理（地面は y=0 の平面）には、えぐれた穴の外の破片だけを回し、穴の中の破片はプールへ', () => {
+  // 焦点の近くのビル。穴（半径 130）の中にあるとき
+  const inCrater = make();
+  inCrater.d.setPhysicsFocus([100, 20, 0]);
+  inCrater.d.onHit({ hit: { id: 'b3', kind: 'push' }, target: building() });
+  run(inCrater.d, 0.62, [130]);
+  expect(inCrater.d.near.bodies.length).toBe(0);
+  expect(inCrater.d.pool.count).toBeGreaterThan(0);
+  // 穴がまだ届いていない（球の半径 60）とき、手前の物理を使う
+  const flat = make();
+  flat.d.setPhysicsFocus([100, 20, 0]);
+  flat.d.onHit({ hit: { id: 'b3', kind: 'push' }, target: building() });
+  run(flat.d, 0.62, [60]);
+  expect(flat.d.near.bodies.length).toBeGreaterThan(0);
+});

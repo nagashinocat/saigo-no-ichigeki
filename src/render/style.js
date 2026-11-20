@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { TIERS } from './quality.js';
 import { GRID } from '../world/cityGen.js';
 import { CONFIG } from '../config.js';
-import { SPHERE_DEFORM_GLSL, MAX_FRONTS } from './sphereDeform.js';
+import { SPHERE_DEFORM_GLSL, MAX_FRONTS, CRATER_LIP } from './sphereDeform.js';
 
 // 作風「写実的なアニメ調」: 夕方の空、強い一方向の太陽、3段に量子化した陰影、空を映す窓、遠景は空の色へ溶ける。
 
@@ -138,7 +138,6 @@ const FACADE = {
   tower: { bay: 1.7, floor: 3.9, ground: 6.0, corner: 0.8, top: 3.0, wx: 0.86, wy: 0.74, refl: 0.85, lit: 0.13, shop: 0.8, glass: [0.06, 0.12, 0.17] },
 };
 const f = (x) => Number(x).toFixed(4);
-const CRATER_LIP = { height: 0.022, width: 0.045 }; // 縁の盛り上がり（球の半径に対する割合）
 
 const BUILDING_VERTEX = /* glsl */`
 #include <begin_vertex>
@@ -282,13 +281,12 @@ if (uFrontCount > 0) {
   float r = length(gPos.xz);
   if (abs(r - F) < uRingStep * 0.5 && r > 1e-3) { gPos.xz *= F / r; r = F; }
   float d = craterDepth(r);
+  gPos.y = groundHeight(r); // 敵や主人公が立つ高さ（sphereDeform.js の groundHeight）と同じ式
   if (d > 0.0) {
-    gPos.y = -d;
     objectNormal = normalize(-gPos); // 穴の面は球の中心を向く
   } else {
     float L = ${f(CRATER_LIP.height)} * F + 0.5, W = ${f(CRATER_LIP.width)} * F + 3.0;
     float x = (r - F) / W, e = exp(1.0 - x);
-    gPos.y = L * x * e;
     float slope = L / W * e * (1.0 - x);
     vec2 rad = r > 1e-3 ? gPos.xz / r : vec2(0.0);
     objectNormal = normalize(vec3(-slope * rad.x, 1.0, -slope * rad.y));

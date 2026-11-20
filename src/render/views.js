@@ -94,6 +94,8 @@ export function createCameraFollow({ ratio = 1.3, goalRatio = 1.7, outRate = 4, 
 }
 
 const HUD_CLEAR = new THREE.Color(0x0b0d16);
+const WHITE = new THREE.Color(1, 1, 1);
+const _clear = new THREE.Color();
 
 export function createViews(renderer, getTier = () => ({ bloom: false, heatHaze: false })) {
   const cityCamera = createCityCamera();
@@ -107,6 +109,7 @@ export function createViews(renderer, getTier = () => ({ bloom: false, heatHaze:
   handCamera.lookAt(0, 0, 0);
 
   let layout = layoutViews(1, 1);
+  let size = { w: 1, h: 1 };
 
   const aspectOf = (rect) => rect.w / Math.max(1, rect.h);
 
@@ -118,10 +121,13 @@ export function createViews(renderer, getTier = () => ({ bloom: false, heatHaze:
   return {
     cityCamera, handCamera,
     get layout() { return layout; },
+    // 画面全体の大きさ（大きな一発の演出は画面全体を使う）
+    get size() { return size; },
     get pullback() { return follow.t; },
     resize(w, h) {
       renderer.setSize(w, h, false);
       layout = layoutViews(w, h);
+      size = { w: Math.max(1, Math.floor(w)), h: Math.max(1, Math.floor(h)) };
       fitCityCamera(cityCamera, aspectOf(layout.city));
       handCamera.aspect = aspectOf(layout.hand);
       handCamera.updateProjectionMatrix();
@@ -139,6 +145,24 @@ export function createViews(renderer, getTier = () => ({ bloom: false, heatHaze:
       _e.set(a * (Math.sin(k) * 0.6 + Math.sin(k * 2.3 + 1.7) * 0.4), a * (Math.sin(k * 1.7 + 0.5) * 0.6 + Math.sin(k * 3.1) * 0.4), a * 0.5 * Math.sin(k * 1.3 + 2.1));
       cityCamera.quaternion.copy(baseQuat).multiply(_q.setFromEuler(_e));
       cityCamera.updateMatrixWorld();
+    },
+    // 画面全体を一つのカメラで描く（大きな一発の演出）。手の画面と HUD は描かない
+    renderFull(scene, camera, fx) {
+      const rect = { x: 0, y: 0, w: size.w, h: size.h };
+      renderer.setScissorTest(true);
+      setRect(rect);
+      screenFx.render(scene, camera, rect, getTier(), fx);
+      renderer.setScissorTest(false);
+    },
+    // 画面全体を真っ白にする（大きな一発を放った瞬間）
+    renderWhite() {
+      renderer.setScissorTest(false);
+      renderer.setViewport(0, 0, size.w, size.h);
+      renderer.getClearColor(_clear);
+      const alpha = renderer.getClearAlpha();
+      renderer.setClearColor(WHITE, 1);
+      renderer.clear(true, true, false);
+      renderer.setClearColor(_clear, alpha);
     },
     // fx は screenFx の効果（閃光・熱のゆがみ）。街の画面だけに掛ける。handCam は手の画面のカメラ（手の場面が持つもの）。
     render(cityScene, handScene, fx, handCam = handCamera) {
