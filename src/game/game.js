@@ -40,7 +40,15 @@ export function createGame({ seed, cfg = CONFIG }) {
     blasts.push({ blast: createBlast(shot, targets, cfg), values: [] });
   }
 
+  function scoreBlast(b) {
+    const added = score.addShot(b.values);
+    emit('shotScored', { added, total: score.total });
+  }
+
   function finish(reason) {
+    // 途中の blast も、ここまでに壊した分を採点してから終える
+    for (const b of blasts) scoreBlast(b);
+    blasts = [];
     phase = 'over';
     charge.active = false;
     emit('over', { reason, total: score.total });
@@ -59,10 +67,7 @@ export function createGame({ seed, cfg = CONFIG }) {
     }
     const finished = blasts.filter((b) => b.blast.done);
     blasts = blasts.filter((b) => !b.blast.done);
-    for (const b of finished) {
-      const added = score.addShot(b.values);
-      emit('shotScored', { added, total: score.total });
-    }
+    for (const b of finished) scoreBlast(b);
   }
 
   return {
@@ -96,7 +101,7 @@ export function createGame({ seed, cfg = CONFIG }) {
 
     update(rawDt) {
       if (hidden || phase === 'ready' || phase === 'over') return;
-      const dt = Math.min(rawDt, MAX_DT);
+      const dt = Number.isFinite(rawDt) ? Math.min(Math.max(rawDt, 0), MAX_DT) : 0;
 
       if (phase === 'cinematic') {
         cinematicClock += dt;

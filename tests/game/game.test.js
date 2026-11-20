@@ -159,3 +159,53 @@ test('over の後は pressStart も update も何もしない', () => {
   expect(g.reserve.value).toBe(v);
   expect(g.timer.remaining).toBe(t);
 });
+
+test('drained で終わるとき、途中の blast の分も採点してから over', () => {
+  // 貯めの間は敵が出ず、blast の途中で最初の敵が出て掴む
+  const cfg = { ...CONFIG, bigShotRatio: 2, enemy: { ...CONFIG.enemy, spawnPerSec: 0.4, spawnDist: [3, 3], maxGrabbing: 1, drainPerSec: 45 } };
+  const g = createGame({ seed: 1, cfg });
+  const log = record(g, ['hit', 'shotScored', 'over']);
+  g.pressStart(); step(g, 20); g.pressEnd();
+  expect(g.phase).toBe('playing');
+  let n = 0;
+  while (g.phase !== 'over' && n++ < 100) g.update(0.1);
+  expect(g.phase).toBe('over');
+  const names = log.map(([k]) => k);
+  const values = log.filter(([k]) => k === 'hit').map(([, p]) => p.target.value);
+  expect(values.length).toBeGreaterThan(0);
+  expect(names.filter((k) => k === 'shotScored')).toHaveLength(1);
+  expect(names.indexOf('shotScored')).toBeLessThan(names.indexOf('over'));
+  const expected = createScore().addShot(values);
+  expect(g.score.total).toBeCloseTo(expected);
+  expect(log.find(([k]) => k === 'over')[1]).toEqual({ reason: 'drained', total: g.score.total });
+});
+
+test('blast が二つ同時に生きていても hit の id は重複せず、前線内の敵は倒れる', () => {
+  const cfg = { ...CONFIG, enemy: { ...CONFIG.enemy, spawnPerSec: 5, spawnDist: [20, 30], drainPerSec: 0 } };
+  const g = createGame({ seed: 1, cfg });
+  const log = record(g, ['hit', 'shotScored']);
+  big(g);
+  step(g, 15); // cinematic 終了、一つ目の blast が走り出す
+  step(g, 3);
+  expect(g.enemies.list.some((e) => e.state === 'dead')).toBe(true);
+  expect(g.enemies.list.filter((e) => e.state !== 'dead' && e.dist <= 40)).toHaveLength(0);
+  small(g); // 二つ目
+  step(g, 3);
+  expect(log.filter(([k]) => k === 'shotScored')).toHaveLength(0);
+  step(g, 20);
+  const ids = log.filter(([k]) => k === 'hit').map(([, p]) => p.hit.id);
+  expect(ids.length).toBeGreaterThan(0);
+  expect(new Set(ids).size).toBe(ids.length);
+  expect(log.filter(([k]) => k === 'shotScored')).toHaveLength(2);
+});
+
+test('dt は負・NaN・Infinity でも安全に扱われる', () => {
+  const g = createGame({ seed: 1, cfg: quiet });
+  g.pressStart();
+  const t = g.timer.remaining, v = g.reserve.value;
+  for (const bad of [-5, NaN, Infinity, -Infinity, undefined]) g.update(bad);
+  expect(g.timer.remaining).toBe(t);
+  expect(g.reserve.value).toBe(v);
+  g.update(Infinity - Infinity);
+  expect(g.timer.remaining).toBe(t);
+});
