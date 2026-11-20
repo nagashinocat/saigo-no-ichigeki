@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
-import { LENS_CURVE } from './blackholeTimeline.js';
+import { LENS_CURVE, SOURCE_FADE } from './blackholeTimeline.js';
 
 // 重力レンズの画面効果（時間切れの結末、blackholeTimeline.js の写し方をシェーダーで行う）。
 // 場面をレンダーターゲットへ描き、画面の rect へ、黒い球のまわりでゆがめて写す。sky を渡すと空だけを別の層に描き
@@ -12,7 +12,7 @@ import { LENS_CURVE } from './blackholeTimeline.js';
 export const SKY_LAYER = 3;
 export const LENS_QUALITY = {
   high: { taps: 12, scale: 1, skyScale: 0.5, oct: 3 },
-  mid: { taps: 8, scale: 0.7, skyScale: 0.35, oct: 2 },
+  mid: { taps: 6, scale: 0.7, skyScale: 0.35, oct: 2 },
   low: { taps: 4, scale: 0.5, skyScale: 0.25, oct: 1 },
 };
 const MAX_TAPS = 12, MAX_OCT = 3;
@@ -29,17 +29,22 @@ uniform vec2 uCenter, uScale;
 uniform float uE, uShadow, uRing, uDisk, uTime, uFade, uTilt, uBars;
 uniform vec4 uLm, uLs; // 層ごと: 渦, 流れ込み（log）, 残り, 光の強まり
 uniform vec2 uBm, uBs; // 光の筋の幅: 渦, 流れ込み
+uniform vec2 uK;      // 層の進み（街, 空）
 uniform mat3 uCamBasis;
 uniform vec2 uTan;
 uniform vec3 uGold, uAmber, uViolet, uWhite;
 varying vec2 vUv;
 
-vec2 lensUv(vec2 q, float r, float swirl, float logZoom) {
-  vec2 s = q * (1.0 - uE * uE / max(r * r, 1e-8));
-  float a = swirl * pow(${LENS_CURVE.reach.toFixed(3)} / (r + ${LENS_CURVE.reach.toFixed(3)}), 1.5);
+// s0: レンズで曲げた点（q · (1 − E²/|q|²)）、sw: 渦の距離による弱まり、a: 渦の角度、z: 流れ込みの倍率
+vec2 tapUv(vec2 s0, float a, float z) {
   float c = cos(a), sn = sin(a);
-  s = vec2(c * s.x - sn * s.y, sn * s.x + c * s.y) * exp(logZoom);
-  return uCenter + s / uScale;
+  return uCenter + vec2(c * s0.x - sn * s0.y, sn * s0.x + c * s0.y) * z / uScale;
+}
+// 元の画の中で、黒い球から遠い所ほど消す（飲まれていく画の縁が四角でなく丸く、何もない空間へ溶ける）。
+// 進み k が小さいうちは消さない（blackholeTimeline.js の sourceFade と同じ式）
+float sourceFade(float d, float k) {
+  float f = 1.0 - smoothstep(${SOURCE_FADE.from.toFixed(3)}, ${SOURCE_FADE.to.toFixed(3)}, d);
+  return mix(1.0, f, smoothstep(${SOURCE_FADE.kFrom.toFixed(3)}, ${SOURCE_FADE.kTo.toFixed(3)}, k));
 }
 // 元の画の中か（縁はなめらかに消す: 光の筋を重ねたとき、画の縁が段の模様にならない）
 float inside(vec2 uv) { vec2 e = min(uv, 1.0 - uv); return smoothstep(0.0, 0.025, min(e.x, e.y)); }
@@ -62,23 +67,32 @@ void main() {
   vec4 m = vec4(0.0); vec3 s = vec3(0.0); float wsum = 0.0;
   // 重ねる位置を画素ごとに少しずらす（段の模様を細かいざらつきに変える）
   float jit = hash(gl_FragCoord.xy * 0.913 + 17.0);
+  // 重ねる回数によらない値はループの外で: レンズで曲げた点、渦の弱まり、流れ込みの倍率（重ねるごとに一定の比で縮む）
+  vec2 s0 = q * (1.0 - uE * uE / max(r * r, 1e-8));
+  float d0 = length(s0);
+  float sw = pow(${LENS_CURVE.reach.toFixed(3)} / (r + ${LENS_CURVE.reach.toFixed(3)}), 1.5);
+  float n = max(uTaps, 1.0);
+  float w0 = uTaps > 1.0 ? jit / n : 0.0, dw = uTaps > 1.0 ? 1.0 / n : 0.0;
+  float zm = exp(uLm.y - uBm.y * w0), zs = exp(uLs.y - uBs.y * w0);
+  float zmStep = exp(-uBm.y * dw), zsStep = exp(-uBs.y * dw);
   for (int j = 0; j < MAX_TAPS; j++) {
     if (float(j) >= uTaps) break;
-    float w = uTaps > 1.0 ? min(1.0, (float(j) + jit) / uTaps) : 0.0;
+    float w = w0 + float(j) * dw;
     float k = 1.0 - 0.55 * w; // 尾ほど淡い
-    vec2 a = lensUv(q, r, uLm.x - uBm.x * w, uLm.y - uBm.y * w);
-    m += texture2D(tMain, a) * inside(a) * k;
+    vec2 a = tapUv(s0, (uLm.x - uBm.x * w) * sw, zm);
+    m += texture2D(tMain, a) * (inside(a) * sourceFade(d0 * zm, uK.x) * k);
     if (uSkyOn > 0.5) {
-      vec2 b = lensUv(q, r, uLs.x - uBs.x * w, uLs.y - uBs.y * w);
-      s += texture2D(tSky, b).rgb * inside(b) * k;
+      vec2 b = tapUv(s0, (uLs.x - uBs.x * w) * sw, zs);
+      s += texture2D(tSky, b).rgb * (inside(b) * sourceFade(d0 * zs, uK.y) * k);
     }
     wsum += k;
+    zm *= zmStep; zs *= zsStep;
   }
   m /= max(wsum, 1e-3); s /= max(wsum, 1e-3);
   vec3 col = vec3(0.0);
   if (uSkyOn > 0.5) {
     // 街が飲まれたあとに見える地平の下の空は、底のない暗さへ沈める
-    vec2 b0 = lensUv(q, r, uLs.x, uLs.y);
+    vec2 b0 = tapUv(s0, uLs.x * sw, exp(uLs.y));
     vec3 d = normalize(uCamBasis * vec3((b0 * 2.0 - 1.0) * uTan, -1.0));
     s *= smoothstep(-0.06, 0.0, d.y) * 0.998 + 0.002;
     col = s * uLs.z * uLs.w;
@@ -133,7 +147,12 @@ void main() {
   #include <colorspace_fragment>
 }`;
 
-const ZERO_LAYER = { swirl: 0, logZoom: 0, alpha: 1, boost: 1, blurSwirl: 0, blurZoom: 0 };
+const ZERO_LAYER = { k: 0, swirl: 0, logZoom: 0, alpha: 1, boost: 1, blurSwirl: 0, blurZoom: 0 };
+
+// 街（手）の層も空の層も残っていないか（何もない空間。場面を描かず、重ねる処理もしない）
+export function layersEmpty(lens) {
+  return (lens.layer?.alpha ?? 1) <= 0 && (!lens.sky || lens.sky.alpha <= 0);
+}
 
 // renderer: WebGLRenderer。sky: 空の網（あれば空を別の層に描く。SKY_LAYER を足す）
 export function createLensFx(renderer, { sky = null, tier = 'high' } = {}) {
@@ -148,7 +167,7 @@ export function createLensFx(renderer, { sky = null, tier = 'high' } = {}) {
     uE: { value: 0 }, uShadow: { value: 0 }, uRing: { value: 0 }, uDisk: { value: 0 }, uTime: { value: 0 },
     uFade: { value: 0 }, uTilt: { value: 0 }, uBars: { value: 0 },
     uLm: { value: new THREE.Vector4() }, uLs: { value: new THREE.Vector4() },
-    uBm: { value: new THREE.Vector2() }, uBs: { value: new THREE.Vector2() },
+    uBm: { value: new THREE.Vector2() }, uBs: { value: new THREE.Vector2() }, uK: { value: new THREE.Vector2() },
     uCamBasis: { value: new THREE.Matrix3() }, uTan: { value: new THREE.Vector2(1, 1) },
     uGold: { value: srgb(1.0, 0.86, 0.55) }, uAmber: { value: srgb(0.98, 0.45, 0.12) },
     uViolet: { value: srgb(0.42, 0.36, 0.95) }, uWhite: { value: srgb(1.0, 0.98, 0.94) },
@@ -197,19 +216,25 @@ export function createLensFx(renderer, { sky = null, tier = 'high' } = {}) {
   return {
     material, rtMain, rtSky,
     get quality() { return quality; },
+    // 最後に描いた一コマで、場面を描いたか（何もない空間では描かない）
+    get drewLayers() { return drewLayers; },
     setTier(name) { quality = LENS_QUALITY[name] ?? quality; },
     // rect（CSS 画素、左下原点）へ、scene を camera で描いてゆがめて写す。size: レンダーターゲットの大きさ（CSS 画素。既定は rect）。
     // center: 黒い球の中心（rect の中の 0..1）。lens: { E, shadow, ring, disk, fade, bars, layer, sky?, time, tilt }
     // （長さは rect の短い辺が 1。layer は街・手の層、sky は空の層。sky を描かない効果では無視）
     render(scene, camera, rect, center, lens, size = rect) {
       const short = Math.max(1, Math.min(rect.w, rect.h));
-      const useSky = !!(rtSky && lens.sky);
-      fitAll(size, useSky);
-      drawLayers(scene, camera, useSky);
-      renderer.setRenderTarget(null);
+      // 街も空も飲まれきった（何もない空間）: 場面は描かず、重ねる処理もしない（黒い球・輪・円盤だけ）
+      const empty = layersEmpty(lens);
+      const useSky = !!(rtSky && lens.sky) && !empty;
+      if (!empty) {
+        fitAll(size, useSky);
+        drawLayers(scene, camera, useSky);
+        renderer.setRenderTarget(null);
+      }
 
       u.uSkyOn.value = useSky ? 1 : 0;
-      u.uTaps.value = quality.taps; u.uOct.value = quality.oct;
+      u.uTaps.value = empty ? 0 : quality.taps; u.uOct.value = quality.oct;
       u.uPx.value = 1 / short;
       u.uCenter.value.set(center[0], center[1]);
       u.uScale.value.set(rect.w / short, rect.h / short);
@@ -217,6 +242,7 @@ export function createLensFx(renderer, { sky = null, tier = 'high' } = {}) {
       u.uTime.value = lens.time ?? 0; u.uFade.value = lens.fade ?? 0; u.uTilt.value = lens.tilt ?? 0; u.uBars.value = lens.bars ?? 0;
       setLayer(u.uLm.value, u.uBm.value, lens.layer);
       setLayer(u.uLs.value, u.uBs.value, lens.sky ?? ZERO_LAYER);
+      u.uK.value.set(lens.layer?.k ?? 0, lens.sky?.k ?? 0);
       u.uCamBasis.value.setFromMatrix4(camera.matrixWorld);
       const tanV = Math.tan(THREE.MathUtils.degToRad(camera.fov ?? 50) / 2);
       u.uTan.value.set(tanV * (camera.aspect ?? 1), tanV);

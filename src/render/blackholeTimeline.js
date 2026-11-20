@@ -33,6 +33,10 @@ export const BLACKHOLE = {
 // 渦の強さ・流れ込み（log の倍率）・光の筋の幅（k の割合）・光の強まり
 export const LENS_CURVE = { swirl: 7.0, reach: 0.35, zoom: 4.2, blur: 0.35, boost: 1.6 };
 
+// 元の画の中で黒い球から from〜to（短い辺の単位）の所を消していく（飲まれていく画の縁を丸くし、何もない空間へ溶かす）。
+// 層の進み k が kFrom〜kTo の間に効き始める（始めは画面の端まで残す）
+export const SOURCE_FADE = { from: 0.45, to: 0.9, kFrom: 0.05, kTo: 0.3 };
+
 const clamp01 = (x) => Math.min(1, Math.max(0, x));
 const smooth = (x) => { const t = clamp01(x); return t * t * (3 - 2 * t); };
 const smoother = (e0, e1, x) => smooth((x - e0) / (e1 - e0));
@@ -130,4 +134,12 @@ export function lensMap(q, E, layer, half = [1.2, 1.2], C = LENS_CURVE) {
   const c = Math.cos(a), s = Math.sin(a);
   const p = [(c * sx - s * sy) * z, (s * sx + c * sy) * z];
   return { p, inside: Math.abs(p[0]) <= half[0] && Math.abs(p[1]) <= half[1] };
+}
+
+// 元の画の点 p（黒い球の中心から、短い辺の単位）を、層の進み k のときどれだけ残すか（lensFx.js のシェーダーと同じ式）
+export function sourceFade(p, k, F = SOURCE_FADE) {
+  const d = Math.hypot(p[0], p[1]);
+  const f = 1 - smoother(F.from, F.to, d);
+  const w = smoother(F.kFrom, F.kTo, k);
+  return 1 + (f - 1) * w;
 }

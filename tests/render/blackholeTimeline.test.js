@@ -133,3 +133,30 @@ test('値はどこでも有限（t が範囲の外・NaN でも）', () => {
     for (const v of vals) expect(Number.isFinite(v)).toBe(true);
   }
 });
+
+test('飲まれていく画の縁: 黒い球からの距離だけで消える（四角でなく丸い）。始めは消さず、進むと遠い所から何もない空間へ溶ける', async () => {
+  const { sourceFade, SOURCE_FADE: F } = await import('../../src/render/blackholeTimeline.js');
+  // k = 0: どこも残る（切り替わった瞬間の画は端まで見える）
+  for (const p of [[0, 0], [0.5, 0.9], [1.1, 0], [0.9, -1.0]]) expect(sourceFade(p, 0)).toBe(1);
+  // 同じ距離なら向きによらない（丸い）
+  for (const k of [0.2, 0.5, 1]) {
+    const d = 0.7, vals = [0, 1, 2, 3, 4, 5].map((i) => sourceFade([d * Math.cos(i), d * Math.sin(i)], k));
+    for (const v of vals) expect(v).toBeCloseTo(vals[0], 12);
+  }
+  // 進むと: 近くは残り、to より遠くは消える。距離が遠いほど小さい
+  expect(sourceFade([F.from * 0.9, 0], 0.5)).toBe(1);
+  expect(sourceFade([F.to * 1.01, 0], 0.5)).toBe(0);
+  let prev = 2;
+  for (let d = 0; d < 1.2; d += 0.05) { const v = sourceFade([0, d], 0.5); expect(v).toBeLessThanOrEqual(prev + 1e-12); prev = v; }
+});
+
+test('何もない空間（void 以降）は、場面を描かず重ねる処理もしない。その前は描く', async () => {
+  const { layersEmpty } = await import('../../src/render/lensFx.js');
+  // blackhole.js と同じ渡し方（街の層は layer、空の層は sky）
+  const lensOf = (t) => { const L = fullLensAt(t); return { layer: L.city, sky: L.sky }; };
+  for (const t of [B.void, B.void + 0.5, B.fade, B.end]) expect(layersEmpty(lensOf(t))).toBe(true);
+  for (const t of [B.cut, B.cityTo, B.skyFrom + 1, B.void - 0.3]) expect(layersEmpty(lensOf(t))).toBe(false);
+  // 2画面の間の手の画面（空の層なし）も、まだ描く
+  expect(layersEmpty(splitLensAt(B.cut - 0.01).hand)).toBe(false);
+  expect(layersEmpty({ layer: splitLensAt(B.cut - 0.01).hand.layer })).toBe(false);
+});
