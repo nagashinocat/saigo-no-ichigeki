@@ -119,3 +119,23 @@ test('ビルが遠くても近くても（爆発の半径より先でも）時�
     expect(tl.bHit).toBeGreaterThanOrEqual(tl.b0);
   }
 });
+
+test('宇宙の半球はゆっくりふくらむ: domeAt は chaseEnd で 0・domeEnd で 1、戻らず、街の前線の残りより先に進まず、ふくらむ速さは 1 秒あたり 0.8 以下で、9 割まで 1.4 秒以上かかる', () => {
+  for (const tl of lines()) {
+    expect(tl.domeAt(tl.chaseEnd)).toBe(0);
+    expect(tl.domeAt(tl.domeEnd)).toBe(1);
+    expect(tl.domeEnd - tl.chaseEnd).toBeGreaterThanOrEqual(2.2 - 1e-9);
+    const dt = 1 / 120;
+    let prev = 0, maxRate = 0, t90 = null;
+    for (let t = tl.chaseEnd + dt; t <= tl.domeEnd + 1e-9; t += dt) {
+      const p = tl.domeAt(t);
+      expect(p).toBeGreaterThanOrEqual(prev - 1e-12);
+      maxRate = Math.max(maxRate, (p - prev) / dt);
+      if (t90 === null && p >= 0.9) t90 = t - tl.chaseEnd;
+      if (tl.radius - tl.fCut > 1e-6) expect(p).toBeLessThanOrEqual((tl.front(t) - tl.fCut) / (tl.radius - tl.fCut) + 1e-9);
+      prev = p;
+    }
+    expect(maxRate).toBeLessThanOrEqual(0.8);
+    expect(t90).toBeGreaterThanOrEqual(1.4);
+  }
+});

@@ -14,7 +14,7 @@ export const CONFIG = {
   // 最後の一発（持ち主の要望 2026-11-21「爆発の広がるスピードをもう少し遅くして魅せるタイミング」）: じわじわ期のあと、
   // 弾ける期（burstSec で半径の burstFrac まで一気に。ease-out の次数 burstPow。終わりは見せる期のはじめの速さへ落ちる）、
   // 見せる期（showSec で半径まで、1 − (1 − u)^showPow でゆるんで止まる）
-  finalBlast: { burstSec: 0.6, burstMin: 0.15, burstFrac: 0.4, burstPow: 4, showSec: 3.0, showMin: 0.5, showPow: 1.6 },
+  finalBlast: { burstSec: 0.6, burstMin: 0.15, burstFrac: 0.4, burstPow: 4, showSec: 3.4, showMin: 0.5, showPow: 1.6 },
   cinematic: { freezeSec: 1.4, eyeBeatSec: 0.6 },
   // 湧く速さは spawnPerSec から、rampSec 秒で spawnRamp 倍へ一直線に増える。掴んだ一人ごとに貯めた力が drainPerSec ずつ減る。
   // 浮遊バイクは spawnDist（近い上空カメラの画面の端のすぐ外〜少し内）の道路に湧き、道路に沿って searchSpeed m/s で探し回る

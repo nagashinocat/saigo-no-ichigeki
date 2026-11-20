@@ -10,8 +10,9 @@ import { frontAt, timeAtFront, phaseTimes, blastDuration } from '../game/blast.j
 //   beatEnd〜snap   瞳の光が画面を満たす（白）→ 時間が戻り一気に弾ける（戻った直後は burstRate から現実の速さへ）
 //   snap〜chaseEnd  追ってくる爆発からカメラが引く。弾ける期の光の壁が通りを走り、見せる期（ゆっくり進む光の壁）に
 //                   ビルが飲まれていくのを通りの高さで見て、上へ引いて球の全体を見せる。前線が半径の spaceFront に来たら宇宙へ
-//   chaseEnd〜flatten 宇宙のカメラ: 夕暮れの地球の丸みの上で光の半球がふくらみ（前線が半径に届いて止まる domeEnd に
-//                   合わせてゆるみ、止まる）、衝撃波の輪が雲の上を走る。止まった半球を spaceHold 秒見せる
+//   chaseEnd〜flatten 宇宙のカメラ: 夕暮れの地球の丸みの上で光の半球が、街の前線の残りと同じくゆっくりゆるみながら
+//                   ふくらみ（domeAt。前線が半径に届いて止まるまで、少なくとも domeMin 秒）、衝撃波の輪が雲の上を走る。
+//                   ふくらみきった半球を spaceHold 秒見せる
 //   flatten〜lineEnd 半球が地平に沿って押しつぶされ、横一線の光になり、細くなって消える
 //   lineEnd〜rumble 無音
 //   rumble〜end     低い地鳴り。end で結果へ渡す
@@ -22,9 +23,9 @@ export const FINALE = {
   beatEnd: 3.7,
   snapSec: 0.12,
   chaseMin: 1.5,       // 追われて引く最短の秒
-  spaceFront: 0.85,    // 前線が半径のこの割合に来たら宇宙へ切り替わる（光の壁がまだ動いているうちに）
-  domeMin: 1.4,        // 宇宙で半球がふくらむ最短の秒
-  spaceHold: 0.7,      // 前線が止まってから（半球がふくらみきってから）押しつぶされるまで
+  spaceFront: 0.8,    // 前線が半径のこの割合に来たら宇宙へ切り替わる（光の壁がまだ動いているうちに）
+  domeMin: 2.2,        // 宇宙で半球がふくらむ最短の秒（前線が先に止まっていても、この秒をかけてゆっくりふくらむ）
+  spaceHold: 0.5,      // 半球がふくらみきってから押しつぶされるまで
   spaceMin: 2.3,       // 宇宙のカットの最短の秒
   flattenSec: 1.0,
   thinSec: 0.5,
@@ -112,11 +113,25 @@ export function createTimeline({ radius, hitDist }, F = FINALE, cfg = CONFIG) {
     return bSnap + after(t - snap);
   }
 
+  // 宇宙の半球のふくらみ（0 → 1）: 街の前線の残り（宇宙へ切り替わったときの前線 fCut から半径まで）の進みと、
+  // chaseEnd〜domeEnd を見せる期と同じゆるみ方（1 − (1 − u)^showPow）で進む時計の、遅い方。
+  // 前線より先にふくらまず、前線が先に止まっていても domeMin 秒かけてゆっくりふくらむ
+  const fCut = frontAt(Math.max(0, blastClock(chaseEnd)), radius, cfg);
+  const domePow = cfg.finalBlast.showPow;
+  function domeAt(t) {
+    if (t <= chaseEnd) return 0;
+    if (t >= domeEnd) return 1;
+    const pt = 1 - (1 - (t - chaseEnd) / (domeEnd - chaseEnd)) ** domePow;
+    if (radius - fCut < 1e-6) return pt;
+    const pf = (frontAt(Math.max(0, blastClock(t)), radius, cfg) - fCut) / (radius - fCut);
+    return Math.max(0, Math.min(pt, pf));
+  }
+
   const self = {
     radius, hitDist: dHit, bHit, b0, bEnd, bSnap, total,
     hands: F.hands, white: F.white, contact: F.contact, beatEnd: F.beatEnd, snap, chaseEnd, frontDone, domeEnd, flatten, lineEnd, rumble, end,
     beats: F.beats,
-    blastClock,
+    blastClock, domeAt, fCut,
     // 放ってからのゲームの時計（freezeSec の止まった間を含む）
     gameClock: (t) => freeze + blastClock(t),
     // 演出の t0 → t1 の間に、ゲームを進める秒

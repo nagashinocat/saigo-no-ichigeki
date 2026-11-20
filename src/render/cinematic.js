@@ -12,8 +12,8 @@ import { createSpaceView } from './spaceView.js';
 //      その一人の目が映る。目がゆっくり見開き、瞳の中で光が育つ。音は心臓の鼓動だけ
 //   3. 瞳の光があふれて白 → 時間が戻り一気に弾ける。追ってくる爆発から、カメラが通りを上へ・外へ逃げ、
 //      ゆっくり進む光の壁（見せる期）を止まって待ち受ける: 手前のビルが飲まれ、球の全体がだんだん大きく迫る
-//   4. 宇宙（光の壁がまだ進んでいるうちに切り替わる）: 夕暮れの地球の丸みの上で、光の半球がゆるみながらふくらみ、
-//      前線が止まるのと同時に止まる。衝撃波の輪が雲の上を走る
+//   4. 宇宙（光の壁がまだ進んでいるうちに切り替わる）: 夕暮れの地球の丸みの上で、光の半球が街の前線の残りと同じく
+//      ゆっくりゆるみながら 2 秒あまりかけてふくらみ、止まる（domeAt）。衝撃波の輪が雲の上を走る
 //   5. 半球が地平に沿って押しつぶされ、横一線の光になり、細くなって消える。無音のあと、低い地鳴り
 // 終わると 'end' を知らせ（結果へ。G4 のリプレイはここに入る）、最後の宇宙の絵を出したまま待つ（held）。
 // ゲームの時計はこの演出が決める（gameDt）。前線の進みは演出の時刻表どおりになる。
@@ -74,8 +74,9 @@ const pulse = (t, beats) => {
 };
 
 const EYE_RT = { high: [768, 480], mid: [512, 320], low: [384, 240] };
-// 宇宙へ切り替わった瞬間の光の半球の大きさ（最大に対する割合）
-const DOME0 = 0.22;
+// 宇宙へ切り替わった瞬間の光の半球の大きさ（最大に対する割合）。街の画で大きく迫っていた球が、
+// 宇宙で急に小さく見えないよう大きめから始める
+const DOME0 = 0.4;
 // 宇宙のカメラの画角（縦長は横の、横長は縦の、度）
 const SPACE_FOV = { h: 54, v: 36 };
 
@@ -206,7 +207,7 @@ export function createCinematic(views, enemyView, explosionView, { renderer, sce
       chaseC = Math.max(0.35, (d[0] * P.radial.x + d[1] * P.radial.z));
       // 見せる期: カメラは宇宙へ切り替わるときの前線（fCut）の外の hold で止まり、ゆっくり進む光の壁が
       // 手前のビルを飲みながら迫ってくるのを待ち受ける（球の全体が入り、だんだん大きくなる）
-      const fCut = tl.front(tl.chaseEnd);
+      const fCut = tl.fCut;
       chase = createChase(chaseR0, {
         lead: (f) => (16 + 0.55 * f) * (1 - wideK) + (24 + 1.25 * f) * wideK,
         minLead: (f) => (8 + 0.2 * f) * (1 - wideK) + (8 + 0.35 * f) * wideK,
@@ -247,8 +248,8 @@ export function createCinematic(views, enemyView, explosionView, { renderer, sce
     // 光の半球: ふくらむ → 押しつぶされて横一線 → 細くなって消える
     const f = clamp01((t - tl.flatten) / FINALE.flattenSec);
     const th = clamp01((t - tl.flatten - FINALE.flattenSec) / FINALE.thinSec);
-    // 半球は前線と同じく、ゆるみながらふくらんで、前線が半径に届いて止まる（domeEnd）のと同時に止まる
-    const r = rMax * (DOME0 + (1 - DOME0) * easeOut((t - tl.chaseEnd) / (tl.domeEnd - tl.chaseEnd)));
+    // 半球は街の前線の残りと同じく、ゆっくりゆるみながらふくらみ、domeEnd に止まる（finaleTimeline の domeAt）
+    const r = rMax * (DOME0 + (1 - DOME0) * tl.domeAt(t));
     const flat = easeInOut(f);
     const domeI = (0.75 + 0.35 * Math.sin(Math.PI * f)) * (1 - smooth((f - 0.3) / 0.4));
     space.setDome(r, flat, domeI, t);
