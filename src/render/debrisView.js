@@ -30,8 +30,12 @@ export function createDebrisView(style, pool, nearPhysics, capacity) {
         n++;
       }
       mesh.count = n;
-      mesh.instanceMatrix.needsUpdate = true;
-      mesh.instanceColor.needsUpdate = true;
+      // 使っている分だけ GPU へ送る（容量いっぱいを毎フレーム送らない）
+      for (const [attr, size] of [[mesh.instanceMatrix, 16], [mesh.instanceColor, 3]]) {
+        attr.clearUpdateRanges();
+        if (n > 0) attr.addUpdateRange(0, n * size);
+        attr.needsUpdate = n > 0;
+      }
     },
   };
 }

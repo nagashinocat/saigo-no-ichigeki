@@ -129,7 +129,8 @@ export function createDustView(capacity) {
   mesh.renderOrder = 6;
   mesh.name = 'dust';
 
-  let next = 0, used = 0, dirty = false, lastDeath = -Infinity;
+  let next = 0, used = 0, lastDeath = -Infinity;
+  let lo = Infinity, hi = -1; // このフレームに書いた粒の範囲（GPU へはここだけ送る）
   const sunWorld = new THREE.Vector3();
 
   return {
@@ -145,15 +146,19 @@ export function createDustView(capacity) {
       aLife.array.set([time, p.life, p.size, p.grow ?? 2], i * 4);
       aTint.array.set([p.tint[0], p.tint[1], p.tint[2], p.rise ?? 1], i * 4);
       lastDeath = Math.max(lastDeath, time + p.life);
-      dirty = true;
+      lo = Math.min(lo, i); hi = Math.max(hi, i);
     },
     update(time, camera, sunDir) {
       uniforms.uTime.value = time;
       if (sunDir && camera) uniforms.uSunView.value.copy(sunWorld.copy(sunDir).transformDirection(camera.matrixWorldInverse));
-      if (dirty) {
-        for (const a of [aPos, aVel, aLife, aTint]) a.needsUpdate = true;
+      if (hi >= 0) {
+        for (const a of [aPos, aVel, aLife, aTint]) {
+          a.clearUpdateRanges();
+          a.addUpdateRange(lo * a.itemSize, (hi - lo + 1) * a.itemSize);
+          a.needsUpdate = true;
+        }
         geo.instanceCount = used;
-        dirty = false;
+        lo = Infinity; hi = -1;
       }
     },
   };

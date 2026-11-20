@@ -100,3 +100,23 @@ test('同時の一発が球の数を超えても、一番古い球を使い回�
   run(view, list.slice(2), 4);
   expect(spheresVisible(scene)).toBe(0);
 });
+
+test('球を取られた一発は、生きている間も球を作り直さず、閃光も出し直さない', () => {
+  const { scene, view } = make();
+  const list = Array.from({ length: 8 }, (_, i) => ({ id: i + 1, shot: shot(400), front: 0 }));
+  view.update(1 / 60, list, camera, 500); // 8つ同時に始まる
+  for (let i = 0; i < 30; i++) view.update(1 / 60, list, camera, 500);
+  expect(spheresVisible(scene)).toBe(6);
+  expect(view.screen.flash).toBe(0); // 毎フレーム球を奪い合って光り続けない
+  run(view, list, 1.0);
+  expect(spheresVisible(scene)).toBe(6);
+});
+
+test('cameraInfo と screen は毎フレーム同じオブジェクトを書き換える（ゴミを出さない）', () => {
+  const { view } = make();
+  const c = view.cameraInfo, s = view.screen;
+  run(view, [{ id: 1, shot: shot(100), front: 0 }], 0.2);
+  expect(view.cameraInfo).toBe(c);
+  expect(view.screen).toBe(s);
+  expect(c.front).toBeGreaterThan(0);
+});

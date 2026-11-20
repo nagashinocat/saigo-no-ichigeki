@@ -225,13 +225,18 @@ export function createExplosionView(scene, tierName, { sunDir = null, seed = 7 }
   for (const s of spheres) { s.mesh.visible = s.ring.visible = false; group.add(s.mesh, s.ring); }
 
   let time = 0, flash = 0, shake = 0, lastBegin = -Infinity;
-  let cameraInfo = { front: 0, goal: 0, shake: 0 }, screen = { flash: 0, time: 0, heat: null };
+  // 毎フレーム作り直さず、中身だけ書き換えて返す
+  const cameraInfo = { front: 0, goal: 0, shake: 0 };
+  const heat = { center: [0, 0, 0], radius: 0, strength: 0 };
+  const screen = { flash: 0, time: 0, heat: null };
   const live = new Map(); // blast id -> sphere slot
+  const seen = new Set();
+  const evicted = new Set(); // 球を取られた一発（もう球を作り直さない）
 
   function startSphere(b) {
     // 空きがなければ一番古い球を使い回す（古い一発の対応は外す）
     const s = spheres.find((x) => !x.active) ?? spheres.reduce((a, x) => (x.age > a.age ? x : a));
-    if (live.get(s.id) === s) live.delete(s.id);
+    if (live.get(s.id) === s) { live.delete(s.id); evicted.add(s.id); }
     Object.assign(s, { active: true, id: b.id, radius: b.shot.radius, front: 0, prev: 0, age: 0, done: false, fadeAge: 0, ringFront: 0, dustAcc: 0 });
     s.uniforms.uSeed.value = rng() * 100;
     s.mesh.visible = s.ring.visible = true;
@@ -276,16 +281,18 @@ export function createExplosionView(scene, tierName, { sunDir = null, seed = 7 }
     // camera は上空カメラ（粉の陰影の向き）、pointScale は 1m を画素へ直す係数（光の粒の大きさ）
     update(dt, blasts, camera, pointScale) {
       time += dt;
-      const seen = new Set();
+      seen.clear();
       let shakeWant = 0;
       for (const b of blasts) {
         seen.add(b.id);
+        if (evicted.has(b.id)) continue;
         const s = live.get(b.id) ?? startSphere(b);
         s.prev = s.front;
         s.front = b.front;
         if (dt > 0) shakeWant += ((s.front - s.prev) / dt) * SHAKE_K * (0.35 + 0.65 * Math.sqrt(s.radius / CONFIG.radius.max));
       }
       for (const [id, s] of live) if (!seen.has(id)) { s.done = true; s.front = s.radius; live.delete(id); }
+      for (const id of evicted) if (!seen.has(id)) evicted.delete(id);
 
       let maxFront = 0, maxGoal = 0, cover = 0, lightI = 0;
       for (const s of spheres) {
@@ -346,8 +353,9 @@ export function createExplosionView(scene, tierName, { sunDir = null, seed = 7 }
       dust.uniforms.uGlow.value = cover;
       dust.update(time, camera, sunDir);
       vapor.update(time, pointScale);
-      cameraInfo = { front: maxFront, goal: maxGoal, shake };
-      screen = { flash, time, heat: maxFront > 0 ? { center: [0, 0, 0], radius: maxFront, strength: cover } : null };
+      cameraInfo.front = maxFront; cameraInfo.goal = maxGoal; cameraInfo.shake = shake;
+      heat.radius = maxFront; heat.strength = cover;
+      screen.flash = flash; screen.time = time; screen.heat = maxFront > 0 ? heat : null;
     },
     // 遠くへ飛んだ破片が変わる粉（DustEvent: { pos, size }）
     dust(events) {

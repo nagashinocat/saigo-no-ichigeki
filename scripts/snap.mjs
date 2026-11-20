@@ -4,7 +4,7 @@
 // --step: 実時間ではなく window.__debug.step で決まった dt ずつ進める（ヘッドレスは遅いので、爆発の瞬間を正確に撮る）。
 //   --idle 秒だけ待って器を満たし、--press ミリ秒貯めて離し、--at の各時刻（--from の時点からの秒）で撮る。
 //   out の {t} は時刻に置き換わる（例 shots/t9-max-{t}.png）。
-// --perf N: 離した後の N フレームを毎フレーム進めて描き、1フレームの JS の時間（ms）の平均と最大を出す。
+// --perf N: 離した後の N フレームを毎フレーム進めて描き、1フレームの JS の時間（ms）の平均・p95・最大と、GPU を待った時間を出す。
 // --cpu R: CDP の Emulation.setCPUThrottlingRate で CPU を R 倍遅くする。
 import { chromium } from 'playwright';
 
@@ -38,7 +38,8 @@ let failed = false;
 const stats = (xs) => {
   const s = [...xs].sort((a, b) => a - b);
   const avg = xs.reduce((a, b) => a + b, 0) / Math.max(1, xs.length);
-  return { avg: +avg.toFixed(2), p50: +s[Math.floor(s.length / 2)]?.toFixed(2), max: +s[s.length - 1]?.toFixed(2), n: xs.length };
+  const at = (q) => +s[Math.min(s.length - 1, Math.floor(s.length * q))]?.toFixed(2);
+  return { avg: +avg.toFixed(2), p50: at(0.5), p95: at(0.95), max: at(1), n: xs.length };
 };
 
 async function stepped(page) {
@@ -66,6 +67,7 @@ async function stepped(page) {
     const t = await page.evaluate((n) => window.__debug.timeFrames(n), args.perf);
     console.log('frame JS ms (simulate+draw)', JSON.stringify(stats(t.js)));
     console.log('  of which simulate ms', JSON.stringify(stats(t.sim)));
+    console.log('  GPU wait before frame ms (software rendering here, not JS)', JSON.stringify(stats(t.gpu)));
     const slow = t.js.map((ms, i) => [i, +ms.toFixed(1)]).sort((a, b) => b[1] - a[1]).slice(0, 5);
     console.log('  slowest frames [index, ms]', JSON.stringify(slow));
     return;

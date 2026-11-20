@@ -125,22 +125,24 @@ window.__debug = {
   },
   draw,
   // 実際のフレームと同じく毎フレーム進めて描いたときの時間 (ms)。
-  // js: simulate+draw の JS の時間, sim: そのうち simulate の時間。
-  // ソフトウェア描画では GPU の遅れが JS 側の待ちとして混ざるので、各フレームの前に GPU の完了を待ってから測る。
+  // js: simulate+draw の JS の時間, sim: そのうち simulate の時間, gpu: 前のフレームの描画が終わるのを待った時間。
+  // gl.finish だけでは Chrome は描画の完了を待ち切らず、ソフトウェア描画の遅れが次のフレームの JS に混ざる。
+  // そこで 1 画素を読み出して、本当に完了するまで待ってから測る。
   timeFrames(count, dt = 1 / 60) {
-    const js = [], sim = [];
-    const gl = renderer.getContext();
+    const js = [], sim = [], gpu = [];
+    const gl = renderer.getContext(), px = new Uint8Array(4);
     for (let i = 0; i < count; i++) {
-      gl.finish();
+      const g0 = performance.now();
+      gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
       const t0 = performance.now();
+      gpu.push(t0 - g0);
       simulate(dt);
       const t1 = performance.now();
       draw();
-      const t2 = performance.now();
-      js.push(t2 - t0);
+      js.push(performance.now() - t0);
       sim.push(t1 - t0);
     }
-    return { js, sim };
+    return { js, sim, gpu };
   },
 };
 
