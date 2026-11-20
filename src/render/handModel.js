@@ -2,11 +2,12 @@ import * as THREE from 'three';
 import { HAND_JOINTS } from './handPose.js';
 import { surfaceNets } from './surfaceNets.js';
 
-// 主人公の右手を、コードで組み立てる（1つの SkinnedMesh と、WebXR の関節名の骨）。
+// 主人公の手を、コードで組み立てる（1つの SkinnedMesh と、WebXR の関節名の骨）。
+// 組み立てるのは右手だけで、左手は右手の形を鏡に映して作る（距離の場は細かさごとに1回しか計算しない）。
 // 形は「距離の場」で作る: 骨ごとのカプセルを滑らかにつなぎ、関節・拳・親指の付け根をふくらませ、
 // その 0 の面を Surface Nets で網にする。各頂点は最も近い 2 本の骨に重みづけする。
 //
-// 手の空間（メートル）: 手首の関節が原点、指先は -Z、手の甲は +Y、親指は -X（右手）。
+// 手の空間（メートル）: 手首の関節が原点、指先は -Z、手の甲は +Y、親指は -X（右手。左手は +X）。
 // どの骨も WebXR と同じく、-Z が子の関節の向き、+Y が甲の側。poseFor の rx は -X 軸まわりで手のひらの側へ曲がる。
 // 形は力の抜けた、指を少し開いた右手（handPose の open がこれに少し丸みを足す）。
 
@@ -213,8 +214,8 @@ function axis(a, spans) {
 
 const SKIN = [1, 1, 1];
 
-export function buildHandModel({ detail = 'high' } = {}) {
-  const opt = DETAIL[detail] ?? DETAIL.high;
+// 右手の形（網・重み・色）と関節を、距離の場から組み立てる。いちばん重い処理なので、細かさごとに1回だけ
+function buildRight(opt) {
   const { joints, parts } = layout(opt);
   const field = makeField(parts);
   const h = opt.cell;
@@ -272,6 +273,16 @@ export function buildHandModel({ detail = 'high' } = {}) {
         for (const k of [a, b, c]) if (flippedVerts.has(k)) { N[k] += nx; N[k + 1] += ny; N[k + 2] += nz; }
       }
       for (const k of flippedVerts) { const l = len3(N[k], N[k + 1], N[k + 2]) || 1; N[k] /= l; N[k + 1] /= l; N[k + 2] /= l; }
+    }
+    // それでも折れ目に残るごく小さな裏向きの三角形（high で 1、low で 2 ほど）は、巻きを逆にして外へ向ける。
+    // そのままだと裏として省かれて肌に小さな穴が開き、輪郭線の色の点が見える
+    for (let t = 0; t < I.length; t += 3) {
+      const a = I[t] * 3, b = I[t + 1] * 3, c = I[t + 2] * 3;
+      const ux = P[b] - P[a], uy = P[b + 1] - P[a + 1], uz = P[b + 2] - P[a + 2];
+      const vx = P[c] - P[a], vy = P[c + 1] - P[a + 1], vz = P[c + 2] - P[a + 2];
+      const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+      const dot = nx * (N[a] + N[b] + N[c]) + ny * (N[a + 1] + N[b + 1] + N[c + 1]) + nz * (N[a + 2] + N[b + 2] + N[c + 2]);
+      if (dot <= 0) { const k = I[t + 1]; I[t + 1] = I[t + 2]; I[t + 2] = k; }
     }
   }
 
@@ -392,18 +403,55 @@ export function buildHandModel({ detail = 'high' } = {}) {
     col.set(SKIN, i * 3); // 爪の色は爪の材質で
   }
 
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-  geo.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
-  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
-  geo.setAttribute('skinIndex', new THREE.BufferAttribute(skinIndex, 4));
-  geo.setAttribute('skinWeight', new THREE.BufferAttribute(skinWeight, 4));
   const allIdx = new Uint32Array(indices.length + nailIdx.length);
   allIdx.set(indices); allIdx.set(nailIdx, indices.length);
-  geo.setIndex(new THREE.BufferAttribute(total > 65535 ? allIdx : new Uint16Array(allIdx), 1));
-  // 描き分けのまとまり: 0 が肌、1 が爪（輪郭線は肌だけに付ける）
-  geo.addGroup(0, indices.length, 0);
-  geo.addGroup(indices.length, nailIdx.length, 1);
+  return {
+    attrs: { position: pos, normal: nrm, color: col, skinIndex, skinWeight },
+    index: total > 65535 ? allIdx : new Uint16Array(allIdx),
+    // 描き分けのまとまり: 0 が肌、1 が爪（輪郭線は肌だけに付ける）
+    groups: [[0, indices.length, 0], [indices.length, nailIdx.length, 1]],
+    joints,
+  };
+}
+
+// 右手の形を鏡（x を反転）に映して左手にする。三角形は巻きを逆にして外向きを保ち、
+// 関節の向きは鏡に映したうえで右手系に直す（-Z が子の関節、+Y が甲の側のまま。親指は +X の側になる）
+function mirror(r) {
+  const flipX = (a, stride) => { const o = a.slice(); for (let i = 0; i < o.length; i += stride) o[i] = -o[i]; return o; };
+  const index = r.index.slice();
+  for (let t = 0; t < index.length; t += 3) { const k = index[t + 1]; index[t + 1] = index[t + 2]; index[t + 2] = k; }
+  const joints = {};
+  for (const [n, j] of Object.entries(r.joints)) {
+    joints[n] = { p: v3(-j.p.x, j.p.y, j.p.z), q: new THREE.Quaternion(j.q.x, -j.q.y, -j.q.z, j.q.w) };
+  }
+  return {
+    attrs: { ...r.attrs, position: flipX(r.attrs.position, 3), normal: flipX(r.attrs.normal, 3) },
+    index, groups: r.groups, joints,
+  };
+}
+
+const built = new Map(); // `${detail}:${side}` -> 形の元データ（左手は右手から作る）
+function handData(detail, side) {
+  const key = `${detail}:${side}`;
+  if (!built.has(key)) built.set(key, side === 'left' ? mirror(handData(detail, 'right')) : buildRight(DETAIL[detail]));
+  return built.get(key);
+}
+
+// detail: 'high' | 'low'、side: 'right'（省いたとき）| 'left'。
+// 返す setPose(pose) は poseFor の構え（左右共通の意味: rx は手のひらの側へ曲げ、ry は親指の側へ開く）を骨に当てる
+export function buildHandModel({ detail = 'high', side = 'right' } = {}) {
+  const d = DETAIL[detail] ? detail : 'high';
+  const s = side === 'left' ? 'left' : 'right';
+  const { attrs, index, groups, joints } = handData(d, s);
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(attrs.position, 3));
+  geo.setAttribute('normal', new THREE.BufferAttribute(attrs.normal, 3));
+  geo.setAttribute('color', new THREE.BufferAttribute(attrs.color, 3));
+  geo.setAttribute('skinIndex', new THREE.BufferAttribute(attrs.skinIndex, 4));
+  geo.setAttribute('skinWeight', new THREE.BufferAttribute(attrs.skinWeight, 4));
+  geo.setIndex(new THREE.BufferAttribute(index, 1));
+  for (const g of groups) geo.addGroup(...g);
   geo.computeBoundingSphere();
 
   // ---- 骨 ----
@@ -436,5 +484,16 @@ export function buildHandModel({ detail = 'high' } = {}) {
   root.add(bones.wrist, mesh);
   root.updateMatrixWorld(true);
   mesh.bind(new THREE.Skeleton(HAND_JOINTS.map((n) => bones[n])));
-  return { root, mesh, bones };
+
+  // 構え: 骨ごとに、休みの向きへ構えの回転を重ねる。左手は鏡に映した骨なので、開き（ry）とひねり（rz）の符号を逆にする
+  const rest = HAND_JOINTS.map((n) => bones[n].quaternion.clone());
+  const sign = s === 'left' ? -1 : 1, e = new THREE.Euler(0, 0, 0, 'YXZ'), q = new THREE.Quaternion();
+  function setPose(pose) {
+    HAND_JOINTS.forEach((n, i) => {
+      const r = pose[n];
+      e.set(-r[0], sign * r[1], sign * r[2]);
+      bones[n].quaternion.copy(rest[i]).multiply(q.setFromEuler(e));
+    });
+  }
+  return { root, mesh, bones, side: s, setPose };
 }

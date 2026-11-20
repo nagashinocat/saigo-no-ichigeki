@@ -1,13 +1,85 @@
 import { test, expect } from 'vitest';
 import * as THREE from 'three';
 import { buildHandModel } from '../../src/render/handModel.js';
-import { createHandView } from '../../src/render/handView.js';
-import { HAND_JOINTS, poseFor, RELEASE_POSE } from '../../src/render/handPose.js';
+import { HAND_JOINTS, poseFor, CLASP_POSE } from '../../src/render/handPose.js';
 
-const DT = 1 / 60;
-const run = (view, sec, ...args) => { for (let t = 0; t < sec - 1e-9; t += DT) view.update(DT, ...args); };
-const TIPS = ['thumb-tip', 'index-finger-tip', 'middle-finger-tip', 'ring-finger-tip', 'pinky-finger-tip'];
 const models = { high: buildHandModel({ detail: 'high' }), low: buildHandModel({ detail: 'low' }) };
+
+const lefts = { high: buildHandModel({ detail: 'high', side: 'left' }), low: buildHandModel({ detail: 'low', side: 'left' }) };
+
+test('side を省くと右手', () => {
+  for (const m of Object.values(models)) expect(m.side).toBe('right');
+  for (const m of Object.values(lefts)) expect(m.side).toBe('left');
+});
+
+test('左手は右手の鏡像: 頂点は x が反転し、三角形の向きはどれも外向き', () => {
+  const faceN = (P, a, b, c) => {
+    const A = new THREE.Vector3().fromBufferAttribute(P, a);
+    const u = new THREE.Vector3().fromBufferAttribute(P, b).sub(A), v = new THREE.Vector3().fromBufferAttribute(P, c).sub(A);
+    return u.cross(v);
+  };
+  for (const detail of ['high', 'low']) {
+    const R = models[detail].mesh.geometry, L = lefts[detail].mesh.geometry;
+    const RP = R.attributes.position, LP = L.attributes.position, RN = R.attributes.normal, LN = L.attributes.normal;
+    expect(LP.count).toBe(RP.count);
+    expect(L.index.count).toBe(R.index.count);
+    expect(L.groups).toEqual(R.groups);
+    for (let i = 0; i < RP.count; i++) {
+      expect(LP.getX(i)).toBe(-RP.getX(i));
+      expect(LP.getY(i)).toBe(RP.getY(i));
+      expect(LP.getZ(i)).toBe(RP.getZ(i));
+      expect(LN.getX(i)).toBe(-RN.getX(i));
+      expect(LN.getY(i)).toBe(RN.getY(i));
+    }
+    // 巻き方向から出る面の向きが、頂点の法線（外向き）とそろっている
+    for (const [name, g] of [['right', R], ['left', L]]) {
+      const I = g.index.array, P = g.attributes.position, N = g.attributes.normal;
+      let inward = 0;
+      const n = new THREE.Vector3();
+      for (let t = 0; t < I.length; t += 3) {
+        n.set(0, 0, 0);
+        for (let k = 0; k < 3; k++) n.add(new THREE.Vector3().fromBufferAttribute(N, I[t + k]));
+        if (faceN(P, I[t], I[t + 1], I[t + 2]).dot(n) <= 0) inward++;
+      }
+      expect(inward, `${detail} ${name}: 内向きの三角形`).toBe(0);
+    }
+    // 右手を作り直さない（同じ細かさの左手は右手の形を使い回す）
+    expect(L.attributes.skinIndex.array).toEqual(R.attributes.skinIndex.array);
+  }
+});
+
+test('同じ構えを当てると、左手の肌は右手の肌の鏡像になる（骨も鏡に映っている）', () => {
+  for (const detail of ['high', 'low']) {
+    const r = buildHandModel({ detail }), l = buildHandModel({ detail, side: 'left' });
+    const pose = poseFor(0.9, 0.4);
+    for (const m of [r, l]) { m.setPose(pose); m.root.updateMatrixWorld(true); m.mesh.skeleton.update(); }
+    const P = r.mesh.geometry.attributes.position, a = new THREE.Vector3(), b = new THREE.Vector3();
+    let worst = 0;
+    for (let i = 0; i < P.count; i += 7) {
+      a.fromBufferAttribute(P, i); r.mesh.applyBoneTransform(i, a);
+      b.fromBufferAttribute(l.mesh.geometry.attributes.position, i); l.mesh.applyBoneTransform(i, b);
+      worst = Math.max(worst, a.distanceTo(b.set(-b.x, b.y, b.z)));
+    }
+    expect(worst, detail).toBeLessThan(1e-5);
+    // 構えはきちんと形を変えている（何もしない setPose ではない）
+    const rest = models[detail].bones['index-finger-tip'].getWorldPosition(new THREE.Vector3());
+    expect(r.bones['index-finger-tip'].getWorldPosition(new THREE.Vector3()).distanceTo(rest)).toBeGreaterThan(0.02);
+  }
+});
+
+test('両手とも25関節の骨がある', () => {
+  for (const [side, m] of [...Object.values(models).map((m) => ['right', m]), ...Object.values(lefts).map((m) => ['left', m])]) {
+    expect(m.mesh.skeleton.bones).toHaveLength(25);
+    for (const name of HAND_JOINTS) expect(m.bones[name]?.isBone, `${side} ${name}`).toBe(true);
+  }
+  // 左手の関節は右手の関節の鏡の位置
+  for (const d of ['high', 'low']) {
+    for (const name of HAND_JOINTS) {
+      const a = models[d].bones[name].getWorldPosition(new THREE.Vector3()), b = lefts[d].bones[name].getWorldPosition(new THREE.Vector3());
+      expect(b.x).toBeCloseTo(-a.x, 6); expect(b.y).toBeCloseTo(a.y, 6); expect(b.z).toBeCloseTo(a.z, 6);
+    }
+  }
+});
 
 test('25関節（wrist と各指の metacarpal〜tip）すべてのボーンがある', () => {
   for (const m of Object.values(models)) {
@@ -72,37 +144,6 @@ test('隣り合う指は肌でつながらない（手袋のように指がく�
   }
 });
 
-test('poseFor(0.9) を当てると、どの指先も手首から一定以上離れ、球の中心より手前（カメラ側）か横にある', () => {
-  for (const [tier, aspect] of [['high', 384 / 432], ['low', 234 / 296], ['high', 16 / 9]]) {
-    const model = buildHandModel({ detail: tier });
-    const p = new THREE.Vector3(), w = new THREE.Vector3();
-    model.root.updateMatrixWorld(true);
-    model.bones.wrist.getWorldPosition(w);
-    const restDist = Object.fromEntries(TIPS.map((n) => [n, model.bones[n].getWorldPosition(p).distanceTo(w)]));
-
-    const view = createHandView(model, tier);
-    view.resize(aspect);
-    run(view, 1.2, 0.9, true, 1);
-    for (let frame = 0; frame < 12; frame++) {
-      run(view, 0.037, 0.9, true, 1); // 震えのいろいろな瞬間で
-      const { center, radius } = view.orbSphere;
-      const cam = view.camera.position;
-      const toOrb = center.clone().sub(cam);
-      const orbAngle = Math.asin(Math.min(1, radius / toOrb.length()));
-      model.bones.wrist.getWorldPosition(w);
-      for (const n of TIPS) {
-        model.bones[n].getWorldPosition(p);
-        // 握りこぶしにならない: 手首から、開いた手の 45% 以上は離れている
-        expect(p.distanceTo(w) / model.root.matrixWorld.getMaxScaleOnAxis(), n).toBeGreaterThan(restDist[n] * 0.45);
-        const toTip = p.clone().sub(cam);
-        const nearer = toTip.dot(toOrb.clone().normalize()) < toOrb.length() - radius * 0.3;
-        const beside = toTip.angleTo(toOrb) > orbAngle * 1.05;
-        expect(nearer || beside, `${tier} ${aspect.toFixed(2)} ${n}`).toBe(true);
-      }
-    }
-  }
-});
-
 test('手首に切れ目がない: 指をどう曲げても、手首の近くの肌は前腕と一緒にいて、手のひらの付け根の三角形も裏返らない', () => {
   // 手首の関節は構えで回らないので、手首より腕側の肌は動かないはず。手のひらの付け根（拳の手前）もほとんど動かない
   const nrm = (A, a, b, c) => {
@@ -111,7 +152,7 @@ test('手首に切れ目がない: 指をどう曲げても、手首の近くの
     return u.cross(v).normalize();
   };
   for (const detail of ['high', 'low']) {
-    for (const [name, pose] of [['0', poseFor(0, 0)], ['0.9', poseFor(0.9, 0.3)], ['1', poseFor(1, 0.7)], ['release', RELEASE_POSE]]) {
+    for (const [name, pose] of [['0', poseFor(0, 0)], ['0.9', poseFor(0.9, 0.3)], ['1', poseFor(1, 0.7)], ['clasp', CLASP_POSE]]) {
       const m = buildHandModel({ detail });
       const e = new THREE.Euler(0, 0, 0, 'YXZ'), q = new THREE.Quaternion();
       for (const n of HAND_JOINTS) { const r = pose[n]; e.set(-r[0], r[1], r[2]); m.bones[n].quaternion.multiply(q.setFromEuler(e)); }

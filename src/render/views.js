@@ -1,29 +1,21 @@
 import * as THREE from 'three';
 import { createScreenFx } from './screenFx.js';
 
-// 1つの WebGLRenderer で「街（上空）」と「手」の2画面を描く。HUD の区画は DOM を重ねる場所で、WebGL では塗りつぶすだけ。
+// 1つの WebGLRenderer で「街（上空）」と「手」の2画面を描く。縦横どちらも、街が上、手が下の帯（どちらも全幅）。
+// HUD は DOM を街の画面の上端に重ねる（WebGL では何も描かない）。
 
-const PORTRAIT = { city: 0.65, hand: 0.6 };  // 縦長: 街は上 65%、下の帯の左 60% が手
-const LANDSCAPE = { city: 0.7, hand: 0.6 };  // 横長: 街は左 70%、右列の上 60% が手
+const CITY_FRAC = 0.65;  // 街は上 65%、手は下 35%
+const HUD_FRAC = 0.12;   // HUD を重ねる帯: 街の画面の上端から、街の高さのこの割合
 
-// Rect は WebGL と同じ左下原点。すべて整数で、3つ合わせて画面をすき間なく埋める（端数は HUD 側へ）。
+// Rect は WebGL と同じ左下原点。すべて整数で、街と手の2つで画面をすき間なく埋める。hud は街の中の上端の帯。
 export function layoutViews(width, height) {
   const W = Math.max(0, Math.floor(width)), H = Math.max(0, Math.floor(height));
-  if (H >= W) {
-    const cityH = Math.round(H * PORTRAIT.city), stripH = H - cityH;
-    const handW = Math.round(W * PORTRAIT.hand);
-    return {
-      city: { x: 0, y: stripH, w: W, h: cityH },
-      hand: { x: 0, y: 0, w: handW, h: stripH },
-      hud: { x: handW, y: 0, w: W - handW, h: stripH },
-    };
-  }
-  const cityW = Math.round(W * LANDSCAPE.city), colW = W - cityW;
-  const handH = Math.round(H * LANDSCAPE.hand), hudH = H - handH;
+  const cityH = Math.round(H * CITY_FRAC), handH = H - cityH;
+  const hudH = Math.round(cityH * HUD_FRAC);
   return {
-    city: { x: 0, y: 0, w: cityW, h: H },
-    hand: { x: cityW, y: hudH, w: colW, h: handH },
-    hud: { x: cityW, y: 0, w: colW, h: hudH },
+    city: { x: 0, y: handH, w: W, h: cityH },
+    hand: { x: 0, y: 0, w: W, h: handH },
+    hud: { x: 0, y: H - hudH, w: W, h: hudH },
   };
 }
 
@@ -93,7 +85,6 @@ export function createCameraFollow({ ratio = 1.3, goalRatio = 1.7, outRate = 4, 
   };
 }
 
-const HUD_CLEAR = new THREE.Color(0x0b0d16);
 const WHITE = new THREE.Color(1, 1, 1);
 const _clear = new THREE.Color();
 
@@ -167,12 +158,7 @@ export function createViews(renderer, getTier = () => ({ bloom: false, heatHaze:
     // fx は screenFx の効果（閃光・熱のゆがみ）。街の画面だけに掛ける。handCam は手の画面のカメラ（手の場面が持つもの）。
     render(cityScene, handScene, fx, handCam = handCamera) {
       renderer.setScissorTest(true);
-      const { hud, city, hand } = layout;
-      if (hud.w > 0 && hud.h > 0) {
-        renderer.setScissor(hud.x, hud.y, hud.w, hud.h);
-        renderer.setClearColor(HUD_CLEAR, 1);
-        renderer.clear(true, true, false);
-      }
+      const { city, hand } = layout;
       if (city.w > 0 && city.h > 0) {
         setRect(city);
         screenFx.render(cityScene, cityCamera, city, getTier(), fx);

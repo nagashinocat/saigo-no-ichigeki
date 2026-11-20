@@ -1,5 +1,5 @@
 import { test, expect } from 'vitest';
-import { poseFor, HAND_JOINTS } from '../../src/render/handPose.js';
+import { poseFor, HAND_JOINTS, CLASP_POSE } from '../../src/render/handPose.js';
 
 const DEG = Math.PI / 180;
 const flex = (pose, name) => pose[name][0];
@@ -63,4 +63,17 @@ test('どの level でも関節の角度は自然な範囲（曲げ 0〜100°）
   }
   // 範囲の外の level でもこわれない
   for (const l of [-1, 2, NaN]) for (const name of HAND_JOINTS) expect(poseFor(l, 0)[name].every(Number.isFinite)).toBe(true);
+});
+
+test('組み合わせた手（CLASP_POSE）は指を手のひらの側へ深く曲げ、角度は自然な範囲に収まる', () => {
+  for (const f of ['index', 'middle', 'ring', 'pinky']) {
+    expect(CLASP_POSE[`${f}-finger-phalanx-proximal`][0]).toBeGreaterThan(60 * DEG);
+  }
+  for (const name of HAND_JOINTS) {
+    const [rx, ry, rz] = CLASP_POSE[name];
+    expect(rx).toBeGreaterThanOrEqual(0);
+    expect(rx).toBeLessThanOrEqual(100 * DEG);
+    expect(Math.abs(ry)).toBeLessThanOrEqual(30 * DEG);
+    expect(Math.abs(rz)).toBeLessThanOrEqual(30 * DEG);
+  }
 });
