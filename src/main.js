@@ -17,6 +17,7 @@ import { createEnemyView } from './render/enemyView.js';
 import { createCinematic, leadFor } from './render/cinematic.js';
 import { planFinale, planRetreat } from './render/finalePlan.js';
 import { createReplay } from './render/replay.js';
+import { createBlackhole } from './render/blackhole.js';
 import { createReplaySim, replayTargets } from './game/replaySim.js';
 import { createRng } from './rng.js';
 import { createPressTracker } from './input/press.js';
@@ -64,8 +65,6 @@ const audio = createAudio();
 // BGM（打楽器とマリンバの民族音楽風）: 遊びが始まると鳴り、時間と貯めた力で層が増え、放った瞬間に止まる。
 // リプレイと結果画面では同じ旋律をゆっくり静かに。時間切れ（ブラックホール）では引き伸ばされて消える
 const bgm = createBgm(() => audio.bgmOutput);
-const BLACKHOLE_STRETCH_SEC = 3.5; // G5 の演出が stretchOut を呼ぶまでは、時間切れの瞬間に引き伸ばす
-const BLACKHOLE_QUIET_DELAY = BLACKHOLE_STRETCH_SEC + 1.5;
 // 小爆発のボタン（長押しの指とは別の指で押す）。ボタンの上の押下はボタンだけが受け、キャンバスの長押しにはならない
 const hud = createHud(document.getElementById('hud'), { onPuff() { game.puff(); } });
 const startHint = document.getElementById('start');
@@ -116,23 +115,20 @@ document.addEventListener('visibilitychange', () => {
   if (document.hidden) { bgm.pause(); audio.suspend(); } else { audio.resume(); bgm.resume(); }
 });
 // 終わり: 最後の一発は、演出（cinematic）とリプレイが最後まで終わって（replay の 'replayEnd'）から結果。
-// ブラックホールは（演出は G5）すぐ結果
+// ブラックホール（時間切れ）は、その演出（blackhole）が暗転しきって 'end' を知らせてから結果
 const RESULT_DELAY = 0.15;
+const BLACKHOLE_DRONE_SEC = 7; // 唸りが上がりきるまで（何もない空間になる時刻）
 let pendingResult = null;
 let lastResult = null;
 let finaleDone = false;
 game.on('over', ({ reason, total }) => {
   audio.chargeHum(0); audio.rumble(0);
-  if (reason === 'released') pendingResult = { reason, total, wait: RESULT_DELAY };
-  else {
-    // 時間切れ: BGM は渦に吸い込まれるように消え、少しの無音のあと結果画面の静かな変奏
-    bgm.stretchOut(BLACKHOLE_STRETCH_SEC);
-    bgm.quiet({ delay: BLACKHOLE_QUIET_DELAY });
-    result.show(total, reason);
-  }
+  pendingResult = { reason, total, wait: RESULT_DELAY };
+  // 時間切れ: 主人公がブラックホールになり、すべてを飲み込む（BGM と唸りの段取りは演出の cue）
+  if (reason === 'blackhole') { finaleDone = false; blackhole.play(); }
 });
 function updateResult(dt) {
-  if (!pendingResult || (!finaleDone && (cinematic.active || replay.active))) return;
+  if (!pendingResult || (!finaleDone && (cinematic.active || replay.active || blackhole.active))) return;
   pendingResult.wait -= dt;
   if (pendingResult.wait > 0) return;
   result.show(pendingResult.total, pendingResult.reason, { replay: !!replaySnap });
@@ -193,7 +189,22 @@ cityScene.add(heroAura.group);
 // 画質の段は演出を始めるたびに読む（途中で段が下がっていれば、その段の重さで演じる）
 const cinematic = createCinematic(views, enemyView, explosionView, { renderer, scene: cityScene, sunDir: style.sunDir, tier, getTier: () => tier, lights: { sun: style.lights[0], fill: style.lights[2] } });
 warmBoth(() => cinematic.warmup(renderer, views.cityCamera));
+
+// 時間切れの結末（仕様 12 章「時間切れの結末」）: 手の中の球がつぶれて両手が引き込まれ、画面全体で重力レンズが育ち、
+// 街、続いて夕焼けの空・雲・夕日・地平線が渦を巻いて飲み込まれ、黒い球と光の輪だけが残って暗転（blackhole.js）
+const blackhole = createBlackhole(views, hand, { renderer, scene: cityScene, sky: style.sky, sunDir: style.sunDir, buildings: game.city.buildings, tier, getTier: () => tier });
+// 場面はレンダーターゲットへ、ゆがめる段は画面へ描く。どちらも両方の描き先で前もって作る（low の段の街は、ふだん画面へ直接
+// 描くのでレンダーターゲット向けがまだ無い。手の場面も同じ）
+warmBoth(() => blackhole.warmup());
 warmTarget.dispose();
+blackhole.on('cue', ({ name }) => {
+  if (name === 'collapse') audio.blackholeDrone(BLACKHOLE_DRONE_SEC);
+  // 飲み込みが始まると、BGM は音程が下がりながら引き伸ばされ、渦に吸い込まれるように消える（何もない空間の手前で）
+  else if (name === 'cut') bgm.stretchOut(blackhole.timeline.stretchSec);
+  else if (name === 'void') audio.droneCut(); // 何もない空間は無音
+});
+// 暗転しきった: 結果（「ブラックホールになった」）。結果画面では同じ旋律をゆっくり静かに
+blackhole.on('end', () => { finaleDone = true; bgm.quiet(); });
 const shotRng = createRng(seed ^ 0xc1a3e);
 const standing = new Set(game.city.buildings.map((b) => b.id)); // まだ壊れていないビル
 // 撮る場所の計算を一度空回しして JIT を温めておく（放つ瞬間、両手が組み合わさる間に止まらないように）。乱数は別のものを使う
@@ -316,8 +327,8 @@ const fronts = createFrontTracker();
 let handInput = null;
 
 // 今描いている街のカメラ（演出の間は画面全体の演出のカメラ）と、1m を光の粒の画素の大きさへ直す係数
-const cityCam = () => (replay.active ? replay.camera : cinematic.fullscreen ? cinematic.camera : views.cityCamera);
-const fullscreen = () => replay.active || cinematic.fullscreen;
+const cityCam = () => (replay.active ? replay.camera : blackhole.fullscreen ? blackhole.camera : cinematic.fullscreen ? cinematic.camera : views.cityCamera);
+const fullscreen = () => replay.active || cinematic.fullscreen || blackhole.fullscreen;
 const pointScaleFor = (cam) => (fullscreen() ? views.size.h : views.layout.city.h) * renderer.getPixelRatio() / (2 * Math.tan(THREE.MathUtils.degToRad(cam.fov) / 2));
 
 // ゲームを gdt 秒進める（一度に進めるのは最大 0.1 秒ずつ。演出は時間を一気に進めることがある）
@@ -355,6 +366,8 @@ function simulate(dt) {
   // 最後の一発の演出の間は、ゲームの時計（爆発の前線の進み）も、描画側の世界（破片・粉・ビルのつぶれ・爆発の見た目）の時間も、
   // 演出の時刻表が決める（白の間に進め、体感時間の一拍の間はほとんど止め、時間が戻ると一気に弾ける）。
   cinematic.update(dt);
+  // 時間切れの結末: 演出を先に進める（始まったフレームは進めない）。ゲームは終わっていて、世界と軍勢の見た目だけが動く
+  blackhole.update(dt);
   if (replay.active) { finishFrame(dt, []); return; } // 演出が終わってリプレイが始まった（そのフレームは描くだけ）
   const cdt = cinematic.gameDt;
   if (cdt === null) game.update(dt); else stepGame(cdt);
@@ -376,7 +389,7 @@ function finishFrame(dt, live) {
   hand.update(dt, h.level, h.active, h.steady);
   hud.update({ remaining: game.timer.remaining, power: game.power.value, max: CONFIG.power.max, canPuff: game.canPuff });
   // 最後の一発を放ってから結果までずっと HUD は出さない（両手が組み合わさる間も、リプレイの間も）
-  hud.setVisible(!cinematic.active && !replay.active);
+  hud.setVisible(!cinematic.active && !replay.active && !blackhole.active);
   updateAudio(live);
   updateResult(dt);
 }
@@ -414,7 +427,8 @@ function updateAudio(live) {
   hitsThisFrame = 0;
 }
 function draw() {
-  if (replay.active) views.renderFull(cityScene, replay.camera, replay.screen);
+  if (blackhole.active) blackhole.draw();
+  else if (replay.active) views.renderFull(cityScene, replay.camera, replay.screen);
   else if (cinematic.white) views.renderWhite();
   else if (cinematic.fullscreen) views.renderFull(cinematic.renderScene ?? cityScene, cinematic.camera, cinematic.screen);
   else views.render(cityScene, hand.scene, cinematic.screen ?? explosionView.screen, hand.camera);
@@ -487,5 +501,6 @@ if (debugMode) {
   window.__enemyView = enemyView;
   window.__cinematic = cinematic;
   window.__replay = replay;
+  window.__blackhole = blackhole;
   window.__bgm = bgm;
 }

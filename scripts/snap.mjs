@@ -11,6 +11,7 @@
 // --hand-release A: 手の画面だけに、量 A の一発を放つ瞬間を起こす（A が小爆発の量以下なら小爆発）。--at はその時点からの秒。
 // --skip S: リプレイを、--at の時刻 S で飛ばす（画面のタップと同じ）。
 // --keep-holding: --press の後も離さない（最後の一発を放たない）。--puff N: そのあと小爆発を N 回（0.25 秒おき）押す。--at はその時点からの秒。
+// --timeout: そのあと残り時間を 0 にする（次の一歩で時間切れ → ブラックホールの結末）。--at はその時点からの秒。
 // 力は長押しの間だけ貯まる（CONFIG.power.chargePerSec）。--press が短すぎると離しても放たれない。
 import { chromium } from 'playwright';
 import { CONFIG } from '../src/config.js';
@@ -21,6 +22,7 @@ function parseArgs(argv) {
     const a = argv[i];
     if (a === '--step') opt.step = true;
     else if (a === '--keep-holding') opt.keepHolding = true;
+    else if (a === '--timeout') opt.timeout = true;
     else if (a.startsWith('--')) opt[a.slice(2)] = argv[++i];
     else pos.push(a);
   }
@@ -32,7 +34,7 @@ function parseArgs(argv) {
   const at = String(opt.at).split(',').filter(Boolean).map(Number);
   return { url: pos[0], out: pos[1], wait: Number(opt.wait), press: Number(opt.press), width: w, height: h,
     skip: opt.skip !== undefined ? Number(opt.skip) : null,
-    step: !!opt.step, fire: Number(opt.fire ?? 0), keepHolding: !!opt.keepHolding, puff: Number(opt.puff ?? 0), idle: Number(opt.idle), at, from: opt.from, perf: Number(opt.perf), cpu: Number(opt.cpu),
+    step: !!opt.step, timeout: !!opt.timeout, fire: Number(opt.fire ?? 0), keepHolding: !!opt.keepHolding, puff: Number(opt.puff ?? 0), idle: Number(opt.idle), at, from: opt.from, perf: Number(opt.perf), cpu: Number(opt.cpu),
     hand: opt.hand ? String(opt.hand).split(',').map(Number) : null, handRelease: opt['hand-release'] !== undefined ? Number(opt['hand-release']) : null };
 }
 
@@ -71,6 +73,9 @@ async function stepped(page) {
   for (let i = 0; i < args.puff; i++) {
     console.log('puff', await page.evaluate(() => window.__game.puff()));
     if (i < args.puff - 1) await step(0.25);
+  }
+  if (args.timeout) {
+    await page.evaluate(() => { const g = window.__game; document.getElementById('start').hidden = true; if (g.phase === 'ready') { g.pressStart(); g.pressEnd(); } g.timer.update(1e9); });
   }
   if (args.from === 'blast') {
     // 大きな一発は演出の時間が終わって球が生まれるまで進める
@@ -118,7 +123,8 @@ async function stepped(page) {
     const st = await page.evaluate(() => {
       const rp = window.__replay;
       const replay = rp?.active ? { phase: rp.phase, cut: rp.cut, t: +rp.time.toFixed(2), front: +rp.timeline.frontAt(rp.time).toFixed(1), result: !document.getElementById('result').hidden } : null;
-      return { blasts: window.__game.blasts.map((b) => +b.front.toFixed(1)), pull: +window.__views.pullback.toFixed(1), busy: window.__explosionView.busy, replay };
+      const bh = window.__blackhole?.active ? { stage: window.__blackhole.stage, t: +window.__blackhole.time.toFixed(2), result: !document.getElementById('result').hidden, hud: document.getElementById('hud').style.visibility !== 'hidden' } : null;
+      return { blasts: window.__game.blasts.map((b) => +b.front.toFixed(1)), pull: +window.__views.pullback.toFixed(1), busy: window.__explosionView.busy, replay, blackhole: bh };
     });
     console.log('saved', file, 't=' + target, JSON.stringify(st), 'sim ms/frame', r.simMs.toFixed(2), 'draw ms', r.drawMs.toFixed(1));
   }

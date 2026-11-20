@@ -33,6 +33,7 @@ export function createAudio() {
   // スピーカーへ直接つなぐ: 地鳴りが master を 0 に保つ間にも、リプレイの静かな変奏を鳴らせるように。
   // BGM は放った瞬間に自分で止まるので、演出の無音を邪魔しない
   let bgmBus = null;
+  let drone = null; // 時間切れの結末の低い唸り（鳴っている間だけ）
 
   function build() {
     const AC = window.AudioContext || window.webkitAudioContext;
@@ -190,6 +191,52 @@ export function createAudio() {
       master.gain.cancelScheduledValues(back);
       master.gain.setValueAtTime(0, back);
       master.gain.linearRampToValueAtTime(0.8, back + 0.3);
+    },
+    // ---- 時間切れの結末（ブラックホール）----
+    // 低い唸り: rise 秒かけて、うなる低音（正弦波と鋸歯の重なり）が上がりながら強まり、吸い込む風の音が細く高くなる。
+    // 演出の道（cine）から鳴らす。droneCut でぴたりと止める（何もない空間の無音）
+    blackholeDrone(rise = 7) {
+      if (!ready()) return;
+      this.droneCut();
+      const t = now(), end = t + rise;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.linearRampToValueAtTime(0.3, t + 1.5);
+      g.gain.linearRampToValueAtTime(0.85, end);
+      const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.Q.value = 5;
+      lp.frequency.setValueAtTime(90, t); lp.frequency.exponentialRampToValueAtTime(900, end);
+      lp.connect(g);
+      const srcs = [];
+      const osc = (type, f0, f1, gain, dest) => {
+        const o = ctx.createOscillator(); o.type = type;
+        o.frequency.setValueAtTime(f0, t); o.frequency.exponentialRampToValueAtTime(f1, end);
+        const og = ctx.createGain(); og.gain.value = gain;
+        o.connect(og); og.connect(dest); o.start(t); o.stop(end + 3);
+        srcs.push(o);
+      };
+      osc('sine', 29, 52, 0.9, g);
+      osc('sawtooth', 29.4, 52.9, 0.35, lp);
+      osc('sine', 43.5, 78, 0.25, g); // 五度上の薄い倍音
+      // 吸い込む風: 帯域のノイズが細く高くなる
+      const n = ctx.createBufferSource(); n.buffer = noiseBuf; n.loop = true;
+      const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 6;
+      bp.frequency.setValueAtTime(180, t); bp.frequency.exponentialRampToValueAtTime(1600, end);
+      const ng = ctx.createGain();
+      ng.gain.setValueAtTime(0.0001, t); ng.gain.exponentialRampToValueAtTime(0.5, end);
+      n.connect(bp); bp.connect(ng); ng.connect(g);
+      n.start(t); n.stop(end + 3);
+      srcs.push(n);
+      g.connect(cine);
+      drone = { g, srcs };
+    },
+    droneCut() {
+      if (!drone || !ready()) { drone = null; return; }
+      const t = now();
+      drone.g.gain.cancelScheduledValues(t);
+      drone.g.gain.setValueAtTime(drone.g.gain.value, t);
+      drone.g.gain.linearRampToValueAtTime(0.0001, t + 0.05);
+      for (const s of drone.srcs) s.stop(t + 0.1);
+      drone = null;
     },
     // size 0〜1: 大きいほど長く低い
     boom(size) {

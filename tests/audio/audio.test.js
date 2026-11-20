@@ -96,3 +96,35 @@ test('BGM の出口: unlock の前は無く、あとはスピーカーへ直接�
     delete globalThis.window;
   }
 });
+
+test('ブラックホールの唸り: 低い音が rise 秒かけて強く・高くなり、droneCut でぴたりと無音になる（演出の道 cine を通る）', async () => {
+  const { createAudio } = await import('../../src/audio/audio.js');
+  const ctx = fakeCtx();
+  const oscs = [], links = [];
+  const mkOsc = ctx.createOscillator, mkGain = ctx.createGain;
+  ctx.createOscillator = () => { const o = mkOsc(); o.stops = []; o.stop = (t) => o.stops.push(t); oscs.push(o); return o; };
+  ctx.createGain = () => { const g = mkGain(); g.connect = (to) => links.push([g, to]); return g; };
+  globalThis.window = { AudioContext: function AC() { return ctx; } };
+  try {
+    const audio = createAudio();
+    audio.unlock();
+    audio.droneCut(); // 鳴っていなくてもこわれない
+    const cine = ctx.gains[1];
+    const before = ctx.gains.length, oscBefore = oscs.length;
+    audio.blackholeDrone(7);
+    const g = ctx.gains[before];
+    expect(links.some(([a, to]) => a === g && to === cine)).toBe(true);
+    expect(g.gain.final()).toBeGreaterThan(0.5);
+    expect(g.gain.lastT()).toBeCloseTo(10 + 7, 5);
+    const mine = oscs.slice(oscBefore);
+    expect(mine.length).toBeGreaterThan(0);
+    for (const o of mine) expect(o.frequency.final()).toBeGreaterThan(o.frequency.ev[0].v); // 音程が上がる
+    ctx.currentTime = 16.2;
+    audio.droneCut();
+    expect(g.gain.final()).toBeLessThanOrEqual(0.0001);
+    expect(g.gain.lastT()).toBeLessThan(16.2 + 0.1);
+    for (const o of mine) expect(Math.min(...o.stops)).toBeLessThan(16.2 + 0.2);
+  } finally {
+    delete globalThis.window;
+  }
+});
