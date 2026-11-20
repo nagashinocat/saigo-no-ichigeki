@@ -4,14 +4,14 @@ import { NOISE_GLSL } from './glslNoise.js';
 import { TOON_RAMP, TOON_LIGHTS } from './style.js';
 import { poseFor, HAND_JOINTS, RELEASE_POSE, TREMOR_FROM } from './handPose.js';
 
-// 手の画面: 主人公の右手（手のひらを上に、少し丸めてこちらへ向ける）と、その上に浮かぶ力の球。
-// 光は球が主役（球の色の点光源）で、夕暮れの淡い縁の光を少しだけ足す。背景は暗いグラデーション。
+// 手の画面: 主人公の右手（handModel.js で組み立てた手。手のひらを上に、指先をこちらへ）と、その上に浮かぶ力の球。
+// 光は球が主役（球の色の点光源）で、夕暮れの淡い縁の光と、手の形を見せる手前の光を足す。肌には街と同じ暗い紫の輪郭線。
+// 背景は暗いグラデーション。
 // 球は爆発（explosionView.js）と同じ力: 白い芯 → 淡い金 → 琥珀、縁だけ冷たい青紫〜水色。
 
-const HAND_SCALE = 10;           // 手のモデル（約 19cm）を、この場面の単位で約 1.9 にする
+const HAND_SCALE = 10;           // 手のモデル（メートル。手首から中指の先まで約 20cm）を、この場面の単位で約 2 にする
 const ORB_R = [0.07, 0.29];      // level 0 と 1 の球の半径
-const ORB_GAP = [0.07, 0.36];    // 手のひらの面から球の下端まで（貯めるほど浮き上がり、鉤爪の指が球の下に見える）
-const INFLATE = 0.0022;          // 肌を法線の向きへ膨らませる量（モデルの単位 m）。細い指をたくましく見せる
+const ORB_GAP = [0.06, 0.28];    // 手のひらの面から球の下端まで（貯めるほど浮き上がり、鉤爪の指の上に出る）
 const SNAP_SEC = 0.06;           // 放つとき、指が開き切るまで
 const LINGER_SEC = 0.18;         // 小さな一発: 開いたまま止まる時間
 const RELAX_SEC = 0.55;          // 開いた手が元の構えへ戻るまで
@@ -24,20 +24,11 @@ const PAL = {
   rimA: srgb(0.5, 0.78, 1.0), rimB: srgb(0.72, 0.52, 1.0),
   light: srgb(1.0, 0.78, 0.52),     // 球から手を照らす光（芯の白と金の間）
   skin: srgb(0.80, 0.58, 0.48),
+  nail: srgb(0.95, 0.78, 0.72),     // 爪: 肌より明るく、少し白い
   skinShade: srgb(0.20, 0.12, 0.17), // 影の側に回る、夕暮れの紫がかった暗い肌
   dusk: srgb(0.62, 0.50, 0.95),      // 縁の光（夕空の青紫）
   sss: srgb(1.0, 0.36, 0.16),        // 球の光が肌を透ける赤み
 };
-
-// 関節の親（手首から指先へ）
-function parentOf(name) {
-  if (name === 'wrist') return null;
-  const m = name.match(/^(thumb|index-finger|middle-finger|ring-finger|pinky-finger)-(.+)$/);
-  const parts = m[1] === 'thumb' ? ['metacarpal', 'phalanx-proximal', 'phalanx-distal', 'tip']
-    : ['metacarpal', 'phalanx-proximal', 'phalanx-intermediate', 'phalanx-distal', 'tip'];
-  const i = parts.indexOf(m[2]);
-  return i === 0 ? 'wrist' : `${m[1]}-${parts[i - 1]}`;
-}
 
 const BG_FRAG = /* glsl */`
 uniform vec3 uGlow;
@@ -144,13 +135,24 @@ void main() {
   #include <colorspace_fragment>
 }`;
 
+// 輪郭線（街の縁取りと同じ暗い紫）: 肌の裏面を法線の向きへ少し膨らませて描く。
+// 太さはカメラからの距離に比例させ、画面の上でほぼ一定にする。重なった指どうしの境目がはっきりする
+const OUTLINE_WIDTH = 0.0032;
+function makeOutlineMaterial() {
+  const mat = new THREE.MeshBasicMaterial({ color: srgb(0.14, 0.10, 0.17), side: THREE.BackSide });
+  mat.onBeforeCompile = (shader) => {
+    shader.vertexShader = shader.vertexShader.replace('#include <project_vertex>', `#include <project_vertex>
+mvPosition.xyz += normalize(normalMatrix * objectNormal) * (-mvPosition.z) * ${OUTLINE_WIDTH.toFixed(4)};
+gl_Position = projectionMatrix * mvPosition;`);
+  };
+  return mat;
+}
+
 // 肌: 3段の陰影（style.js と同じ）に、夕暮れの縁の光と、球の光が肌を透ける赤み・球の色の縁取りを足す
-function makeSkinMaterial(uniforms) {
-  const mat = new THREE.MeshStandardMaterial({ color: PAL.skin, roughness: 0.62, metalness: 0 });
+function makeSkinMaterial(uniforms, color) {
+  const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.62, metalness: 0, vertexColors: true });
   mat.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, uniforms);
-    shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>', `#include <begin_vertex>
-transformed += objectNormal * ${INFLATE.toFixed(4)};`);
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <lights_physical_pars_fragment>', TOON_RAMP + TOON_LIGHTS)
       .replace('#include <common>', `#include <common>
@@ -179,8 +181,8 @@ uniform float uOrbPower, uOrbR;`)
   return mat;
 }
 
-// gltf は null でもよい（球だけを描く）。あとから attachModel(gltf) で手を付けられる
-export function createHandView(gltf, tierName) {
+// model: buildHandModel() の手（null なら球だけを描く）
+export function createHandView(model, tierName) {
   const low = tierName === 'low';
   const defines = low ? { LOW: 1 } : {};
   const scene = new THREE.Scene();
@@ -196,21 +198,24 @@ export function createHandView(gltf, tierName) {
   bg.renderOrder = -1;
   scene.add(bg);
 
-  // 光: 球の点光源（主役）、夕暮れの縁の光、ごく弱い環境光
+  // 光: 球の点光源（主役）、夕暮れの縁の光、手の形を見せる手前の光、ごく弱い環境光
   const orbLight = new THREE.PointLight(PAL.light, 1, 0, 2);
   const rimLight = new THREE.DirectionalLight(PAL.dusk, 0.35);
   rimLight.position.set(-1.2, 1.0, -1.6);
+  // 手の形を見せる光: 手前の左上から、夕焼けの暖かい色で（3段の陰影で関節の角が立つ）
+  const keyLight = new THREE.DirectionalLight(srgb(1.0, 0.8, 0.78), 2.2);
+  keyLight.position.set(-0.6, 1.4, 1.2);
   const ambient = new THREE.HemisphereLight(srgb(0.30, 0.26, 0.46), srgb(0.20, 0.10, 0.08), 0.25);
-  scene.add(orbLight, rimLight, rimLight.target, ambient);
+  scene.add(orbLight, rimLight, rimLight.target, keyLight, keyLight.target, ambient);
 
-  // 手の向き: 右手を前へ差し出し、指先は左奥へ。手のひらは上へ向けてこちらへ少し傾ける。
-  // 斜めから見るので、曲がった指が球の横に輪郭として立ち上がって見える
-  const F = new THREE.Vector3(-0.72, 0.12, -0.68).normalize();
-  const N = new THREE.Vector3(0.12, 1, 0.38);
+  // 手の向き: 右手を手のひらを上にして差し出し、指先はこちら（左手前）へ。前腕は右奥へ画面の外まで伸びる。
+  // 貯めると指がこちらへ鉤爪に曲がり、5本とも球の手前に並ぶ（球は手のひらの上に浮かぶ）
+  const F = new THREE.Vector3(-0.45, 0.12, 0.85).normalize();
+  const N = new THREE.Vector3(0.05, 1, 0.3);
   N.addScaledVector(F, -N.dot(F)).normalize();
-  const T = new THREE.Vector3().crossVectors(F, N);
   const rig = new THREE.Group();
-  rig.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(N.clone().negate(), F.clone().negate(), T.clone().negate()));
+  // 手の空間: -Y が手のひらの向き（N）、-Z が指先（F）、X = Y × Z
+  rig.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(new THREE.Vector3().crossVectors(N, F), N.clone().negate(), F.clone().negate()));
   rig.scale.setScalar(HAND_SCALE);
   const root = new THREE.Group(); // 震え・反動はこの上で
   root.add(rig);
@@ -222,39 +227,29 @@ export function createHandView(gltf, tierName) {
     uSss: { value: PAL.sss }, uShade: { value: PAL.skinShade }, uOrbPower: { value: 0 }, uOrbR: { value: 0.1 },
   };
 
-  // 骨: WebXR の手は関節が平ら（すべて Armature の子）なので、手首から順に自分で FK する
-  const bones = new Map(), localRest = new Map();
-  const palmLocal = new THREE.Vector3(0.033, -0.004, 0.006); // モデルの空間での手のひらの中心
-  const placeRig = () => rig.position.copy(palmLocal).multiplyScalar(-HAND_SCALE).applyQuaternion(rig.quaternion); // 手のひらの中心を原点へ
-  placeRig();
-
-  // 手のモデルを付ける（読み込みが遅れても、それまでは球だけで描ける）。2回目以降は何もしない
-  function attachModel(model) {
-    if (!model || bones.size) return;
-    const rest = new Map();
-    model.scene.traverse((o) => {
-      if (o.isBone || HAND_JOINTS.includes(o.name)) bones.set(o.name, o);
-      if (o.isSkinnedMesh || o.isMesh) {
-        o.material = makeSkinMaterial(skinU);
-        o.frustumCulled = false;
-      }
-    });
-    for (const [name, b] of bones) rest.set(name, { p: b.position.clone(), q: b.quaternion.clone() });
-    const mc = rest.get('middle-finger-metacarpal'), pp = rest.get('middle-finger-phalanx-proximal');
-    if (mc && pp) palmLocal.copy(mc.p).lerp(pp.p, 0.55).add(new THREE.Vector3(-0.022, 0, 0));
-    placeRig();
-    // 親から見た休みの姿勢（骨ごとに1回だけ求める）
-    for (const name of HAND_JOINTS) {
-      const r = rest.get(name), par = parentOf(name);
-      if (!r) continue;
-      if (!par || !rest.get(par)) { localRest.set(name, { p: r.p.clone(), q: r.q.clone(), parent: null }); continue; }
-      const pr = rest.get(par);
-      const inv = pr.q.clone().invert();
-      localRest.set(name, { p: r.p.clone().sub(pr.p).applyQuaternion(inv), q: inv.multiply(r.q), parent: par });
-    }
-    rig.add(model.scene);
+  // 手: 骨の休みの向きを覚えておき、構えはその上に重ねる
+  const bones = new Map(), restQ = new Map();
+  const palmLocal = new THREE.Vector3(); // 手の空間での手のひらの中心（面の上）
+  if (model) {
+    for (const name of HAND_JOINTS) { bones.set(name, model.bones[name]); restQ.set(name, model.bones[name].quaternion.clone()); }
+    model.mesh.material = [makeSkinMaterial(skinU, PAL.skin), makeSkinMaterial(skinU, PAL.nail)];
+    // 輪郭線は同じ形・同じ骨のもう1枚（肌のまとまりだけ。爪には付けない）
+    const skinGroup = model.mesh.geometry.groups[0];
+    const lineGeo = new THREE.BufferGeometry();
+    for (const [k, a] of Object.entries(model.mesh.geometry.attributes)) lineGeo.setAttribute(k, a);
+    lineGeo.setIndex(model.mesh.geometry.index);
+    lineGeo.setDrawRange(skinGroup.start, skinGroup.count);
+    const outline = new THREE.SkinnedMesh(lineGeo, makeOutlineMaterial());
+    outline.frustumCulled = false;
+    outline.bind(model.mesh.skeleton, model.mesh.bindMatrix);
+    model.mesh.parent.add(outline);
+    model.root.updateMatrixWorld(true);
+    const mc = model.bones['middle-finger-metacarpal'].getWorldPosition(new THREE.Vector3());
+    const pp = model.bones['middle-finger-phalanx-proximal'].getWorldPosition(new THREE.Vector3());
+    palmLocal.copy(mc).lerp(pp, 0.5).add(new THREE.Vector3(-0.004, -0.014, 0));
+    rig.add(model.root);
   }
-  attachModel(gltf);
+  rig.position.copy(palmLocal).multiplyScalar(-HAND_SCALE).applyQuaternion(rig.quaternion); // 手のひらの中心を原点へ
 
   // 球
   const orbU = {
@@ -288,38 +283,25 @@ export function createHandView(gltf, tierName) {
   camera.add(flash);
   scene.add(camera);
 
-  // カメラ: 手首の少し後ろ上から、手のひらと球を見下ろす
-  const LOOK = new THREE.Vector3(-0.42, 0.42, -0.5);
+  // カメラ: 指先の側の右上から、手のひらと球を見下ろす
+  const LOOK = new THREE.Vector3(-0.3, 0.42, 0.1);
   function frame(aspect) {
     camera.aspect = aspect;
     // 縦長の画面では少し引いて、指先と球の光の筋が切れないようにする
-    const back = aspect < 1 ? 1 + (1 - aspect) * 0.7 : 1;
-    camera.position.set(0.45, 1.05, 2.8).sub(LOOK).multiplyScalar(back).add(LOOK);
+    const back = aspect < 1 ? 1 + (1 - aspect) * 1.3 : 1;
+    camera.position.set(0.55, 2.1, 3.3).sub(LOOK).multiplyScalar(back).add(LOOK);
     camera.lookAt(LOOK);
     camera.updateProjectionMatrix();
   }
   frame(1);
 
   const tmpQ = new THREE.Quaternion(), tmpE = new THREE.Euler(0, 0, 0, 'YXZ');
-  const world = new Map(); // 関節ごとの Armature 空間の姿勢（FK の結果）
-  for (const name of HAND_JOINTS) world.set(name, { p: new THREE.Vector3(), q: new THREE.Quaternion() });
-
+  // 骨ごとに、休みの向きへ構えの回転（rx は手のひらの側へ曲げる）を重ねる
   function applyPose(pose) {
     for (const name of HAND_JOINTS) {
-      const lr = localRest.get(name);
-      if (!lr) continue;
-      const w = world.get(name), r = pose[name];
+      const r = pose[name];
       tmpE.set(-r[0], r[1], r[2]);
-      tmpQ.setFromEuler(tmpE);
-      if (!lr.parent) { w.p.copy(lr.p); w.q.copy(lr.q).multiply(tmpQ); }
-      else {
-        const pw = world.get(lr.parent);
-        w.p.copy(lr.p).applyQuaternion(pw.q).add(pw.p);
-        w.q.copy(pw.q).multiply(lr.q).multiply(tmpQ);
-      }
-      const b = bones.get(name);
-      b.position.copy(w.p);
-      b.quaternion.copy(w.q);
+      bones.get(name).quaternion.copy(restQ.get(name)).multiply(tmpQ.setFromEuler(tmpE));
     }
   }
 
@@ -340,9 +322,10 @@ export function createHandView(gltf, tierName) {
 
   return {
     scene, camera,
-    attachModel,
     // 放ったあと、手がどれだけ開いているか（0〜1）。演出の間開いたままかの確かめに使う
     get openness() { return openness; },
+    // 球の中心と半径（場面の空間）
+    get orbSphere() { return { center: orb.position.clone(), radius: orb.scale.x }; },
     resize(aspect) { if (Number.isFinite(aspect) && aspect > 0) frame(aspect); },
     // level: 貯めの量（0〜1）, active: 長押し中, reserveFrac: 器の残り（0〜1）
     update(rawDt, level = 0, active = false, rawReserve = 1) {

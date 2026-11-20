@@ -1,9 +1,9 @@
 import * as THREE from 'three';
 import { createGame } from './game/game.js';
 import { TIERS, pickTier, nextTier, createFpsGovernor } from './render/quality.js';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { createViews } from './render/views.js';
 import { createHandView } from './render/handView.js';
+import { buildHandModel } from './render/handModel.js';
 import { CONFIG } from './config.js';
 import { createStyle } from './render/style.js';
 import { createCityView } from './render/cityView.js';
@@ -38,18 +38,8 @@ const cityView = createCityView(game.city, style, tier);
 
 const cityScene = new THREE.Scene();
 cityScene.add(style.sky, ...style.lights, cityView.group);
-// 手の画面は、手のモデルを待たずに球だけで始め、届いたら手を付ける。
-// HAND_LOAD_TIMEOUT_MS を過ぎても届かなければ、球だけのまま遊べる（後から届いても付けない）
-const HAND_LOAD_TIMEOUT_MS = 5000;
-const hand = createHandView(null, tier);
-{
-  let timedOut = false;
-  const timer = setTimeout(() => { timedOut = true; console.warn('hand model load timed out; showing the orb only'); }, HAND_LOAD_TIMEOUT_MS);
-  new GLTFLoader().loadAsync(`${import.meta.env.BASE_URL}models/hand-right.glb`).then(
-    (gltf) => { clearTimeout(timer); if (!timedOut) hand.attachModel(gltf); },
-    (e) => { clearTimeout(timer); console.warn('hand model failed to load; showing the orb only', e); },
-  );
-}
+// 手の画面: 主人公の右手はコードで組み立てる（読み込みを待たない）。low の段は粗い手にする
+const hand = createHandView(buildHandModel({ detail: tier === 'low' ? 'low' : 'high' }), tier);
 
 const views = createViews(renderer, () => TIERS[tier]);
 // CSS で決まったキャンバスの実寸に合わせる（スマホのアドレスバーで 100vh がずれる問題を避ける）

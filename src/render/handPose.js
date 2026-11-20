@@ -17,7 +17,7 @@ export const HAND_JOINTS = [
 ];
 
 // 度で書いた [rx, ry, rz]。open: 力の抜けた、手のひらを上へ向けて少し丸めた手。
-// tense: 力がこもりきった手。指は鉤爪のように曲がってこわばり、外へ張る。
+// tense: 力がこもりきった手。付け根は浅く、第二・第一関節を深く曲げた鉤爪の形でこわばり、指は外へ張る。
 // 薬指・小指の中手骨も曲げて、手のひら全体をくぼませる。
 const POSES = {
   open: {
@@ -28,11 +28,11 @@ const POSES = {
     'pinky-finger-metacarpal': [6, 0, 0], 'pinky-finger-phalanx-proximal': [16, -10, 0], 'pinky-finger-phalanx-intermediate': [20, 0, 0], 'pinky-finger-phalanx-distal': [12, 0, 0],
   },
   tense: {
-    'thumb-metacarpal': [22, 10, 0], 'thumb-phalanx-proximal': [26, 0, 0], 'thumb-phalanx-distal': [32, 0, 0],
-    'index-finger-metacarpal': [2, 0, 0], 'index-finger-phalanx-proximal': [46, 16, -4], 'index-finger-phalanx-intermediate': [72, 0, 0], 'index-finger-phalanx-distal': [46, 0, 0],
-    'middle-finger-metacarpal': [3, 0, 0], 'middle-finger-phalanx-proximal': [50, 3, 0], 'middle-finger-phalanx-intermediate': [76, 0, 0], 'middle-finger-phalanx-distal': [50, 0, 0],
-    'ring-finger-metacarpal': [8, 0, 3], 'ring-finger-phalanx-proximal': [53, -12, 3], 'ring-finger-phalanx-intermediate': [78, 0, 0], 'ring-finger-phalanx-distal': [52, 0, 0],
-    'pinky-finger-metacarpal': [14, 0, 6], 'pinky-finger-phalanx-proximal': [57, -24, 6], 'pinky-finger-phalanx-intermediate': [80, 0, 0], 'pinky-finger-phalanx-distal': [55, 0, 0],
+    'thumb-metacarpal': [24, 12, 0], 'thumb-phalanx-proximal': [24, 0, 0], 'thumb-phalanx-distal': [40, 0, 0],
+    'index-finger-metacarpal': [2, 0, 0], 'index-finger-phalanx-proximal': [34, 20, -4], 'index-finger-phalanx-intermediate': [84, 0, 0], 'index-finger-phalanx-distal': [58, 0, 0],
+    'middle-finger-metacarpal': [3, 0, 0], 'middle-finger-phalanx-proximal': [37, 4, 0], 'middle-finger-phalanx-intermediate': [88, 0, 0], 'middle-finger-phalanx-distal': [60, 0, 0],
+    'ring-finger-metacarpal': [8, 0, 3], 'ring-finger-phalanx-proximal': [40, -14, 3], 'ring-finger-phalanx-intermediate': [88, 0, 0], 'ring-finger-phalanx-distal': [60, 0, 0],
+    'pinky-finger-metacarpal': [14, 0, 6], 'pinky-finger-phalanx-proximal': [44, -28, 6], 'pinky-finger-phalanx-intermediate': [86, 0, 0], 'pinky-finger-phalanx-distal': [62, 0, 0],
   },
   // 放つ瞬間: 指を一気に開き切る（反らさず、まっすぐ大きく張る）
   release: {
