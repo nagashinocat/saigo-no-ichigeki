@@ -188,7 +188,8 @@ function simulate(dt) {
   cityView.update(wdt, { fronts: list, heat: explosionView.ground.heat, ember: explosionView.ground.ember });
   enemyView.sync(game.enemies.list, { fronts: list, pointScale: ps, glow: explosionView.ground.heat, dt: wdt, pixelRatio: renderer.getPixelRatio() });
   // 上空カメラは、ゲームが動いている間はいつも進める（演出の終わりにこの姿勢へなじむ）
-  if (!cinematic.frozen) views.updateCamera(dt, explosionView.cameraInfo);
+  // 大きな一発の演出の間は、終わった一発の「保つ」時間を進めない（演出が全体の構図で止まったあと、2画面でも保ってから戻る）
+  if (!cinematic.frozen) views.updateCamera(dt, explosionView.cameraInfo, live, cinematic.active);
   const h = handInput ?? { level: game.charge.level(), active: game.charge.active, reserve: game.reserve.value / CONFIG.reserve.max };
   hand.update(dt, h.level, h.active, h.reserve);
   hud.update({ total: game.score.total, remaining: game.timer.remaining, reserve: game.reserve.value, max: CONFIG.reserve.max });

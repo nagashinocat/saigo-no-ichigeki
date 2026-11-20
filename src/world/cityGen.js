@@ -12,8 +12,8 @@ const CENTER_MAX_H = 150;    // 中心付近の最大の高さ m
 const EDGE_H = [6, 15];      // 街の端の高さ m
 const TOWER_H = 60;          // これ以上は tower
 const OFFICE_H = 20;         // これ以上は office、未満は house
-const NEAR_DIST = 100;       // 中心からこの距離未満は低くする（上空から広場と軍勢が見えるように）
-const NEAR_MAX_H = 35;       // その範囲の最大の高さ m
+const NEAR_DIST = 110;       // 中心からこの距離未満は低くする（上空から広場と軍勢が見えるように）
+const NEAR_MAX_H = 28;       // その範囲の最大の高さ m
 
 // 体積(m³)あたりの金額（円）
 const RATE = { house: 20000, office: 60000, tower: 120000 };

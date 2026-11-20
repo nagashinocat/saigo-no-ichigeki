@@ -5,7 +5,6 @@ import { createRng } from '../rng.js';
 import { NOISE_GLSL } from './glslNoise.js';
 import { createDustView } from './dustView.js';
 import { createVaporizeView } from './vaporizeView.js';
-import { frontAt, timeAtFront } from '../game/blast.js';
 
 // 爆発の見た目: 一発ごとの光の球と地面を走る衝撃波の輪、爆心から街を照らす光、閃光・揺れ・熱のゆがみの量、
 // 粉（DustEvent）と土煙の輪、光に溶ける建物。
@@ -16,7 +15,6 @@ const AFTER_GROW = 0.07;     // 消えながら、さらに広がる割合
 const RING_AHEAD = 1.03;     // 衝撃波の輪は球の少し先を走る
 const FLASH_SEC = 0.07;
 const MAX_SPHERES = 6;
-const LOOKAHEAD_SEC = 0.25;   // じわじわ期のカメラは、球がこの秒数のうちに届く大きさへ先回りする（弾けたら最後の半径へ）
 const SPEED_REF = 800;        // 弾ける期の最大の速さの目安 (m/s)。揺れ・粉の量の基準
 const SHAKE_K = 0.012 / SPEED_REF; // front の速さ (m/s) あたりの揺れ (rad)
 const DONE_RING_SPEED = 128;  // 前線が届いたあとの衝撃波の輪の速さ (m/s)
@@ -199,7 +197,7 @@ export function createExplosionView(scene, tierName, { sunDir = null, seed = 7 }
 
   let time = 0, flash = 0, shake = 0;
   // 毎フレーム作り直さず、中身だけ書き換えて返す
-  const cameraInfo = { front: 0, goal: 0, shake: 0 };
+  const cameraInfo = { front: 0, shake: 0 };
   const heat = { center: [0, 0, 0], radius: 0, strength: 0 };
   const screen = { flash: 0, time: 0, heat: null };
   // 地面のえぐれへ: 球の明るさ（穴の中が内側から照らされ、割れ目が溶けて光る）と熾火の残り
@@ -219,11 +217,6 @@ export function createExplosionView(scene, tierName, { sunDir = null, seed = 7 }
     return s;
   }
 
-  // カメラが先回りする半径: じわじわ期は少し先、弾けたら最後の半径まで一気に
-  function goalOf(s) {
-    if (s.burst) return s.radius;
-    return frontAt(timeAtFront(s.front, s.radius) + LOOKAHEAD_SEC, s.radius);
-  }
 
   // 衝撃波が地面を走るとき、先頭で土煙が舞い上がる
   function ringDust(s, grow) {
@@ -282,7 +275,7 @@ export function createExplosionView(scene, tierName, { sunDir = null, seed = 7 }
       for (const [id, s] of live) if (!seen.has(id)) { s.done = true; s.front = s.radius; live.delete(id); }
       for (const id of evicted) if (!seen.has(id)) evicted.delete(id);
 
-      let maxFront = 0, maxGoal = 0, cover = 0, lightI = 0;
+      let maxFront = 0, cover = 0, lightI = 0;
       for (const s of spheres) {
         if (!s.active) continue;
         s.age += dt;
@@ -314,7 +307,6 @@ export function createExplosionView(scene, tierName, { sunDir = null, seed = 7 }
         s.ringU.uTime.value = time;
         s.ringU.uFade.value = s.done ? Math.max(0, 1 - s.fadeAge / (FADE_SEC * 1.2)) : 1;
         maxFront = Math.max(maxFront, r);
-        maxGoal = Math.max(maxGoal, s.done ? r : goalOf(s));
         cover = Math.max(cover, fade);
         lightI = Math.max(lightI, fade * (1 + 2 * u.uBirth.value) * r);
       }
@@ -341,7 +333,7 @@ export function createExplosionView(scene, tierName, { sunDir = null, seed = 7 }
       dust.uniforms.uGlow.value = cover;
       dust.update(time, camera, sunDir);
       vapor.update(time, pointScale);
-      cameraInfo.front = maxFront; cameraInfo.goal = maxGoal; cameraInfo.shake = shake;
+      cameraInfo.front = maxFront; cameraInfo.shake = shake;
       heat.radius = maxFront; heat.strength = cover;
       screen.flash = flash; screen.time = time; screen.heat = maxFront > 0 ? heat : null;
     },
@@ -360,7 +352,7 @@ export function createExplosionView(scene, tierName, { sunDir = null, seed = 7 }
     // 爆心近くで光に溶ける対象: { x, z, w, d, h, color }
     vaporize(target) { vapor.add(time, target); },
     get busy() { return flash > 0 || spheres.some((s) => s.active) || vapor.busy(time); },
-    // 上空カメラへ: 球の今の半径・最後に届く半径・揺れ (rad)
+    // 上空カメラへ: 見えている球の一番大きい半径・揺れ (rad)
     get cameraInfo() { return cameraInfo; },
     // 画面効果へ: 閃光・熱のゆがみ
     get screen() { return screen; },

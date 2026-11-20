@@ -189,13 +189,19 @@ test('追われ始め（front が狙うビルに届くまで）は、カメラ�
 
 // createCinematic の進み方（描画の部品は小さな身代わり）
 function makeCinematic() {
-  const views = { size: { w: 1280, h: 720 }, cityCamera: new THREE.PerspectiveCamera(60, 16 / 9, 1, 6000) };
+  const cityCamera = new THREE.PerspectiveCamera(60, 16 / 9, 1, 6000);
+  cityCamera.position.set(0, 175, 160);
+  cityCamera.lookAt(0, 0, 0);
+  cityCamera.userData.baseQuat = cityCamera.quaternion.clone();
+  // 全体が見える位置: 半径に比例して視線と逆へ下がる（身代わり）
+  const views = { size: { w: 1280, h: 720 }, cityCamera, wideCalls: [],
+    widePosition(radius, aspect, out) { views.wideCalls.push({ radius, aspect }); return out.set(0, 175 + radius, 160 + radius); } };
   const enemyView = { setHeroYaw() {}, eyeCloseup: (id) => buildEyeCloseup(id) };
   const explosionView = { screen: { flash: 0.3, time: 0, heat: null } };
   const renderer = { getRenderTarget: () => null, setRenderTarget() {}, render() {} };
   const cin = createCinematic(views, enemyView, explosionView, { renderer, scene: new THREE.Scene() });
   const plan = chooseShot({ shot: SHOTS[1], buildings: city.buildings, enemies: ARMY, rng: createRng(3) });
-  return { cin, plan };
+  return { cin, plan, views };
 }
 const advance = (cin, sec, blasts = [], dt = 1 / 60) => { for (let t = 0; t < sec - 1e-9; t += dt) cin.update(dt, blasts); };
 
@@ -236,6 +242,34 @@ test('createCinematic: 手の画面 → 真っ白 → 全画面で止まった�
   advance(cin, 2);
   expect(cin.active).toBe(false);
   expect(cin.fullscreen).toBe(false);
+});
+
+test('createCinematic: 追われて引いた最後に、球の全体が見える上空の構図へなじみ、そこで一度止まってから終わる', () => {
+  const { cin, plan, views } = makeCinematic();
+  const R = SHOTS[1].radius;
+  cin.play(plan, SHOTS[1]);
+  advance(cin, CONFIG.cinematic.freezeSec);
+  cin.end();
+  advance(cin, 0.1, [{ id: 1, shot: SHOTS[1], front: R * (CINE.wideFrontFrac - 0.02) }]);
+  expect(cin.phase).toBe('chase');
+  // 球が消える前に全体の構図へ着くよう、前線が最後の半径の手前まで来たら引くのをやめてなじみ始める
+  advance(cin, 0.1, [{ id: 1, shot: SHOTS[1], front: R * CINE.wideFrontFrac }]);
+  expect(cin.phase).toBe('settle');
+  advance(cin, 1.15);
+  expect(cin.phase).toBe('hold');
+  expect(cin.fullscreen).toBe(true);
+  const wide = new THREE.Vector3(0, 175 + R, 160 + R);
+  expect(cin.camera.position.distanceTo(wide)).toBeLessThan(1e-6);
+  expect(cin.camera.quaternion.angleTo(views.cityCamera.userData.baseQuat)).toBeLessThan(1e-4);
+  expect(cin.camera.fov).toBeCloseTo(views.cityCamera.fov, 6);
+  // 全体は全画面の縦横比で収める
+  expect(views.wideCalls.at(-1)).toEqual({ radius: R, aspect: 1280 / 720 });
+  const p = cin.camera.position.clone();
+  advance(cin, 0.3);
+  expect(cin.phase).toBe('hold');
+  expect(cin.camera.position.distanceTo(p)).toBeLessThan(1e-6); // 止まっている
+  advance(cin, 0.3);
+  expect(cin.active).toBe(false);
 });
 
 test('createCinematic: 追う一発が見つからないままでも、決まった時間で上空へ戻る', () => {

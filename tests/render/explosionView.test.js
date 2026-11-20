@@ -71,17 +71,14 @@ test('放つと白く光ってすぐ収まり、揺れは front が速く広が�
   expect(view.cameraInfo.shake).toBeLessThan(growing * 0.01);
 });
 
-test('cameraInfo は今の球の大きさと、先回りの大きさ（最後の半径を超えない）を返す', () => {
+test('cameraInfo は今の球の大きさを返す（先回りは上空カメラの側 blastCamera.js が前線から決める）', () => {
   const { view } = make();
   const b = { id: 3, shot: shot(400), front: 0 };
   run(view, [b], 0.5);
-  const { front, goal } = view.cameraInfo;
-  expect(front).toBeCloseTo(b.front, 5);
-  expect(goal).toBeGreaterThan(front);
-  expect(goal).toBeLessThanOrEqual(400);
+  expect(view.cameraInfo.front).toBeCloseTo(b.front, 5);
 });
 
-test('じわじわ期は球が脈打って揺れず、弾けた瞬間に光が跳ね上がり揺れの一撃が出て、カメラの先回りが最後の半径になる', () => {
+test('じわじわ期は球が脈打って揺れず、弾けた瞬間に光が跳ね上がり揺れの一撃が出る', () => {
   const { view } = make();
   const b = { id: 5, shot: shot(400), front: 0, t: 0 };
   const burstAt = CONFIG.blast.creepSec * Math.sqrt(400 / CONFIG.radius.max);
@@ -89,10 +86,8 @@ test('じわじわ期は球が脈打って揺れず、弾けた瞬間に光が�
   run(view, [b], burstAt - 0.2);
   expect(view.screen.flash).toBe(0);
   expect(view.cameraInfo.shake).toBe(0);
-  expect(view.cameraInfo.goal).toBeLessThan(400 * 0.5);
   run(view, [b], 0.3); // 弾ける
   expect(view.cameraInfo.shake).toBeGreaterThan(0.002);
-  expect(view.cameraInfo.goal).toBe(400);
 });
 test('弾ける瞬間（front が creepFrac × radius を越えた更新）に一度だけ閃光が出る', () => {
   const { view } = make();

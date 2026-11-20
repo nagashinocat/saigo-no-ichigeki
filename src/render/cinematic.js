@@ -6,7 +6,7 @@ import { createCinematicProps } from './cinematicProps.js';
 // 大きな一発を放つ瞬間の演出（画面全体を使う）。
 // 離す → 手の画面で両手が組み合わさる → 画面全体が真っ白 → カメラが主人公の目から後ろ上へ引いていく →
 // 時間が止まり、飛んでくるガラスに軍団の一人の目が映る → 時間が動き出し、追ってくる爆発の front を読みながら引き続ける →
-// 上空のカメラへなめらかに戻り、2画面に戻る。
+// 球の全体が見える遠めの構図で一度止まり、2画面に戻る（上空カメラは少し保ってから近い位置へ戻る）。
 // chooseShot: 引いていく道（向き・上がり方）と目の一拍の位置を選ぶ純粋な関数。createChase: front を読んで引く距離。
 
 export const CINE = {
@@ -19,7 +19,7 @@ export const CINE = {
   candidates: 16,       // 道の向きの候補の数
   beatDist: { glass: 16, visor: 16, puddle: 11 }, // 目の一拍のとき、カメラが目から引いた横の距離（m）
   // 道の形: 横に x 引いたときの高さ = 目の高さ + rise·(1 − e^(−x/riseLen)) + slope·x。
-  // 最初に急に上がって広場のまわりのビル（〜35m）を越え、そのあとはゆるい角度で街の上を引く。
+  // 最初に急に上がって広場のまわりのビル（〜28m）を越え、そのあとはゆるい角度で街の上を引く。
   rises: [3, 8, 16, 26, 38, 50, 64, 80, 100, 125], // 低い順に試す（低いほど、迫る球の壁が大きく見える）
   riseLen: 10,
   slope: [0.12, 0.42],
@@ -28,6 +28,7 @@ export const CINE = {
   losFronts: [0.3, 0.5, 0.75, 1.0], // 球が狙うビルのこの割合まで来たとき、カメラから迫る球の壁への見通しがあること
   riseWeight: 1 / 40,   // 低い道を好む強さ（上がる高さ 1m あたりの減点）
   chaseMaxSec: 6,       // 追う一発が見つからなくても、この秒数で上空へ戻る
+  wideFrontFrac: 0.8,   // 前線がその一発の半径のこの割合に届いたら、追うのをやめて全体が見える構図へなじむ（球が消える前に着く）
   sideAz: 0.2,          // 道の向きを、狙うビルの向きからずらす最大（rad。ビルの横をかすめる）
   reflectAhead: 2.8,    // ガラス片・バイザー片は一拍のカメラのこの距離の前で止まる（m）
   puddleAhead: 4.2,
@@ -234,11 +235,13 @@ export function createChase(s0, { rate = 6 } = {}) {
 //   HAND〜WHITE: 画面全体が真っ白
 //   WHITE〜BEAT: 全画面。カメラが主人公の目から後ろ上へ beatDist まで引く（白が晴れていく）
 //   BEAT〜BEAT+eyeBeatSec: 時間が止まり、ガラスに目が映る一拍
-//   その後: 時間が動き出し（cinematicEnd でゲームも動く）、front を読んで引き続け、上空のカメラへ SETTLE 秒でなじむ
+//   その後: 時間が動き出し（cinematicEnd でゲームも動く）、front を読んで引き続け、球の全体が見える上空の構図へ
+//   SETTLE 秒でなじみ、WIDE_HOLD 秒止まってから 2画面に戻る
 const HAND = 0.25, WHITE = 0.4, PULL = 0.35;
 const BEAT = WHITE + PULL;
 const BEAT_FOV = 34;
 const SETTLE = 1.1;
+const WIDE_HOLD = 0.5; // 全体が見える構図で止まる秒
 const EYE_RT = [512, 256];
 const ease = (x) => { const t = Math.min(1, Math.max(0, x)); return t * t * (3 - 2 * t); };
 const easeOut = (x) => { const t = Math.min(1, Math.max(0, x)); return 1 - (1 - t) ** 3; };
@@ -263,11 +266,11 @@ export function createCinematic(views, enemyView, explosionView, { renderer, sce
   eyeCam.position.z = 1;
   const props = createCinematicProps(scene, rt.texture, { sunDir });
 
-  // phase: 'off' | 'freeze'（ゲームが止まっている間） | 'chase' | 'settle'
+  // phase: 'off' | 'freeze'（ゲームが止まっている間） | 'chase' | 'settle'（全体が見える構図へ） | 'hold'（そこで止まる）
   let phase = 'off', t = 0, plan = null, shot = null, eye = null;
   let chase = null, trackedId = null, front = 0, settleT = 0, chaseS = 0, chaseT = 0;
   const V = (a) => new THREE.Vector3().fromArray(a);
-  const P = { eye: new THREE.Vector3(), fwdLook: new THREE.Vector3(), hero: new THREE.Vector3(), cam: new THREE.Vector3(), refl: new THREE.Vector3(), beatPos: new THREE.Vector3(), beatEndPos: new THREE.Vector3() };
+  const P = { eye: new THREE.Vector3(), fwdLook: new THREE.Vector3(), hero: new THREE.Vector3(), cam: new THREE.Vector3(), refl: new THREE.Vector3(), beatPos: new THREE.Vector3(), beatEndPos: new THREE.Vector3(), wide: new THREE.Vector3() };
   const _pos = new THREE.Vector3(), _look = new THREE.Vector3(), _q = new THREE.Quaternion();
   const facing = new THREE.Quaternion();
   const screen = { flash: 0, time: 0, heat: null };
@@ -300,7 +303,7 @@ export function createCinematic(views, enemyView, explosionView, { renderer, sce
     chaseS = chase.update(dt, front);
     _pos.fromArray(pathPoint(plan.path, chaseS));
     _look.fromArray(chaseLook(plan.path, front));
-    return done || (b && b.front >= shot.radius - 1e-6);
+    return done || (b && b.front >= shot.radius * CINE.wideFrontFrac);
   }
 
   const self = {
@@ -387,22 +390,26 @@ export function createCinematic(views, enemyView, explosionView, { renderer, sce
     update(dt, blasts = []) {
       if (phase === 'off') return;
       t += dt;
-      if (phase === 'chase' || phase === 'settle') {
+      if (phase === 'chase' || phase === 'settle' || phase === 'hold') {
         chaseT += dt;
         // 追う一発が見つからない・終わらないときも、決まった時間で上空へ戻る
         const finished = chasePose(dt, blasts) || chaseT >= CINE.chaseMaxSec;
         let fov = CINE.fovDeg;
         if (phase === 'chase' && finished) { phase = 'settle'; settleT = 0; }
-        if (phase === 'settle') {
+        if (phase === 'settle' || phase === 'hold') {
+          // 球の全体が見える遠めの構図（上空カメラと同じ向きで、全画面に全体が収まるまで下がった位置）へなじみ、一度止まる
           settleT += dt;
           const k = ease(settleT / SETTLE);
           const city = views.cityCamera;
-          _pos.lerp(city.position, k);
+          views.widePosition(shot.radius, cam.aspect, P.wide);
+          _pos.lerp(P.wide, k);
           aim(_pos, _look, fov + (city.fov - fov) * k);
-          _q.copy(cam.quaternion).slerp(city.quaternion, k);
+          _q.copy(cam.quaternion).slerp(city.userData.baseQuat ?? city.quaternion, k);
           cam.quaternion.copy(_q);
           cam.updateMatrixWorld();
-          if (settleT >= SETTLE) self.stop();
+          if (phase === 'settle' && settleT >= SETTLE) phase = 'hold';
+          // 止まったあと 2画面に戻り、上空カメラは保ってから近い位置へ戻る（views / blastCamera.js）
+          if (settleT >= SETTLE + WIDE_HOLD) self.stop();
         } else {
           aim(_pos, _look, fov);
         }
