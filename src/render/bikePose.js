@@ -9,7 +9,7 @@ import { groundHeight } from './sphereDeform.js';
 //   乗り手の右手側に主人公がいて手を伸ばす。
 // - 倒れる: バイクごと外へ吹き飛び、回りながら上がって落ち、deadFling 秒で消える。
 // 返す値: x, y, z（バイクの底の中心）、yaw（y 軸まわり。0 で +z を向く）、pitch、roll、
-//   reach（手を伸ばす 0〜1）、anchor（大きく描くときの中心を主人公へ寄せる 0〜1。anchorFor）、thrust（推進の光 0〜1）、keep（大きさ。消えるとき 0 へ）
+//   reach（手を伸ばす 0〜1）、anchor（大きく描くときの中心を主人公へ寄せる 0〜1。anchorFor）、thrust（推進の光 0〜1。見つけた一拍は 1.8 まで）、keep（大きさ。消えるとき 0 へ）
 export const BIKE = {
   hover: [2, 4],      // m。地面からの浮く高さ（人ごとにばらつく）
   bob: 0.18,          // m。上下の揺れ
@@ -42,6 +42,9 @@ export function anchorFor(r) {
   return (BIKE.clingRadius * (1 - smooth(BIKE.anchorNear, BIKE.anchorFar, r))) / r;
 }
 
+// 見つけた一拍（chase で止まってにらんでいる間）は、推進の光が強く明滅する（1〜1.8 倍）
+const spotted = (e, time) => (e.state === 'chase' && e.pause > 0 ? 1.4 + 0.4 * Math.sin(time * 14) : 1);
+
 const posOf = (e) => (e.x != null ? [e.x, e.z] : [Math.cos(e.angle) * e.dist, Math.sin(e.angle) * e.dist]);
 
 // 探している・近づいている者（と倒れた瞬間の者）の置き方
@@ -67,7 +70,7 @@ function approachPose(e, fronts, time, cfg) {
   const roll = 0.05 * Math.sin(time * 1.7 + h * 23) * (1 - settle) + bank * (1 - turn) - 0.32 * Math.sin(Math.PI * turn); // 曲がる・横を向くとき、内へ傾く
   return {
     x, y, z, yaw, pitch: 0.06 * (1 - settle), roll,
-    reach: smooth(grab + 2, grab, dist) * 0.5, anchor: anchorFor(r), thrust: 1 - 0.4 * turn, keep: 1,
+    reach: smooth(grab + 2, grab, dist) * 0.5, anchor: anchorFor(r), thrust: (1 - 0.4 * turn) * spotted(e, time), keep: 1,
   };
 }
 

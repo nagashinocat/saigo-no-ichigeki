@@ -154,3 +154,13 @@ test('倒れる: バイクごと外へ吹き飛び、上がってから落ち、
     expect(Math.hypot(before.x - at0.x, before.y - at0.y, before.z - at0.z)).toBeLessThan(1e-9);
   }
 });
+
+test('見つけた一拍（chase で止まってにらむ間）は推進の光が強く明滅し、走り出したら元に戻る', () => {
+  const e = { id: 4, x: 20, z: 5, dist: Math.hypot(20, 5), angle: Math.atan2(5, 20), state: 'chase', heading: Math.PI, pause: 0.5 };
+  const ts = Array.from({ length: 20 }, (_, i) => i * 0.03);
+  const th = ts.map((t) => bikePose(e, [], t).thrust);
+  expect(Math.max(...th)).toBeGreaterThan(1.5);
+  expect(Math.min(...th)).toBeGreaterThanOrEqual(1 - 1e-9);
+  expect(bikePose({ ...e, pause: 0 }, [], 0.1).thrust).toBe(1);
+  expect(bikePose({ ...e, state: 'search', pause: 0.5 }, [], 0.1).thrust).toBe(1);
+});

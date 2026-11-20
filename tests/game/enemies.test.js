@@ -146,6 +146,34 @@ test('grabRange に入ると grab になり、update が掴んでいる数を返
   expect(w.state).toBe('grab');
 });
 
+test('近づく途中（queueDist の内側）で掴む枠が埋まっても、外へ押し戻されずその場で待ち、枠が空けば寄って掴む', () => {
+  const e = createEnemies(createRng(3), cfgWith({ spawnPerSec: 0 }));
+  // 5 人が掴んでいて枠は残り 1。3m に来ている者と、もう掴む寸前の者
+  for (let i = 0; i < E.maxGrabbing - 1; i++) e.list.push({ id: 100 + i, angle: i, dist: E.grabRange, state: 'grab', grabTime: 1 });
+  const w = { id: 1, angle: 0.5, dist: 3, state: 'chase' };
+  const last = { id: 2, angle: 2.5, dist: E.grabRange + 0.01, state: 'chase' };
+  e.list.push(w, last);
+  expect(3).toBeLessThan(E.queueDist);
+  let prev = w.dist;
+  for (let i = 0; i < 60; i++) {
+    e.update(1 / 60);
+    expect(w.dist).toBeLessThanOrEqual(prev + 1e-12);
+    prev = w.dist;
+  }
+  expect(last.state).toBe('grab'); // 6 つ目の枠は埋まった
+  expect(w.state).toBe('chase');
+  expect(w.dist).toBeGreaterThan(E.grabRange);
+  expect(w.speed).toBe(0);
+  // 枠が空けば、離れずに寄って掴む
+  last.state = 'dead'; last.deadTime = 0;
+  for (let i = 0; i < 120 && w.state !== 'grab'; i++) {
+    e.update(1 / 60);
+    expect(w.dist).toBeLessThanOrEqual(prev + 1e-12);
+    prev = w.dist;
+  }
+  expect(w.state).toBe('grab');
+});
+
 test('applyBlastFront: front 内の軍勢は dead、掴んでいた者も外れる', () => {
   const e = createEnemies(createRng(3), cfgWith({ spawnPerSec: 100, spawnDist: [10, 10], speed: 100 }));
   for (let i = 0; i < 5; i++) e.update(0.1);

@@ -155,6 +155,8 @@ export function createEnemies(rng, cfg = CONFIG, { buildings = [] } = {}) {
     } else {
       e.speed = Math.min(approachSpeed(e.dist, cfg), e.speed + E.chaseAccel * dt); // 減速の曲線より速くならない
     }
+    // もう stop の内側にいる（近づく途中で掴む枠が埋まった）なら、その場で待つ（外へ押し戻さない）
+    if (e.dist <= stop) { e.speed = 0; return; }
     const step = e.speed * dt;
     let nx = e.x + Math.cos(e.heading) * step, nz = e.z + Math.sin(e.heading) * step;
     const nd = Math.hypot(nx, nz);
