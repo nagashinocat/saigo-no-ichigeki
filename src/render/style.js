@@ -132,7 +132,7 @@ function buildingDeform(withNormal) {
 }
 
 // 種類ごとのファサード（窓の格子）の決め方。単位は m。
-const FACADE = {
+export const FACADE = {
   house: { bay: 3.4, floor: 2.9, ground: 0.8, corner: 0.9, top: 0.9, wx: 0.42, wy: 0.46, refl: 0.30, lit: 0.34, shop: 0.0, glass: [0.10, 0.11, 0.14] },
   office: { bay: 3.1, floor: 3.6, ground: 4.6, corner: 1.2, top: 1.4, wx: 0.66, wy: 0.52, refl: 0.55, lit: 0.22, shop: 0.65, glass: [0.08, 0.11, 0.17] },
   tower: { bay: 1.7, floor: 3.9, ground: 6.0, corner: 0.8, top: 3.0, wx: 0.86, wy: 0.74, refl: 0.85, lit: 0.13, shop: 0.8, glass: [0.06, 0.12, 0.17] },

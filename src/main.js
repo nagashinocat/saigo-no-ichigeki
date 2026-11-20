@@ -14,7 +14,8 @@ import { createExplosionView } from './render/explosionView.js';
 import { createFrontTracker } from './render/sphereDeform.js';
 import { createHeroAura } from './render/heroAura.js';
 import { createEnemyView } from './render/enemyView.js';
-import { chooseShot, createCinematic } from './render/cinematic.js';
+import { createCinematic, leadFor } from './render/cinematic.js';
+import { planFinale } from './render/finalePlan.js';
 import { createRng } from './rng.js';
 import { createPressTracker } from './input/press.js';
 import { createHud } from './ui/hud.js';
@@ -96,16 +97,17 @@ document.addEventListener('visibilitychange', () => {
   game.setHidden(document.hidden);
   if (document.hidden) audio.suspend(); else audio.resume();
 });
-// 終わり: 最後の一発は、爆発と演出が終わって2画面に戻り、少し保ってから結果。ブラックホールは（演出は G5）すぐ結果
-const RESULT_DELAY = 0.8;
+// 終わり: 最後の一発は、演出が最後まで終わって（cinematic の 'end'）から結果。ブラックホールは（演出は G5）すぐ結果
+const RESULT_DELAY = 0.15;
 let pendingResult = null;
+let finaleDone = false;
 game.on('over', ({ reason, total }) => {
   audio.chargeHum(0); audio.rumble(0);
   if (reason === 'released') pendingResult = { reason, total, wait: RESULT_DELAY };
   else result.show(total, reason);
 });
 function updateResult(dt) {
-  if (!pendingResult || cinematic.active) return;
+  if (!pendingResult || (cinematic.active && !finaleDone)) return;
   pendingResult.wait -= dt;
   if (pendingResult.wait > 0) return;
   result.show(pendingResult.total, pendingResult.reason);
@@ -135,10 +137,9 @@ cityScene.add(rubbleView.mesh);
 // 爆発の見た目（光の球・衝撃波・閃光・粉・光に溶ける建物）
 const explosionView = createExplosionView(cityScene, tier, { sunDir: style.sunDir, seed });
 explosionView.warmup(renderer, views.cityCamera);
-// 最後の一発: 放つ瞬間は無音。白くなってから目が映る一拍まで（時間が止まっている間）ずっと無音
+// 最後の一発: 放つ瞬間から、時間が戻るまで世界の音は消える（鳴るのは心臓の鼓動だけ。音の段取りは演出が cue で知らせる）
 game.on('shot', (shot) => {
   explosionView.begin(shot); hand.release(shot);
-  audio.releaseSilence(CONFIG.cinematic.freezeSec);
 });
 // 小爆発: 両手が素早く組み合わさって弾け、主人公のまわりに小さな光の球（貯めの唸りは止めない）
 // 足りずに離した: 放たず、両手がびくっと震え、ひとこと知らせる
@@ -150,22 +151,33 @@ const enemyView = createEnemyView(cityScene, tier, { sunDir: style.sunDir });
 const heroAura = createHeroAura(tier); // 浮いている主人公のまわりの力のゆらぎ
 cityScene.add(heroAura.group);
 
-// 大きな一発を放つ瞬間の演出（画面全体）: 白くなり、主人公の目から後ろ上へ引き、ガラスに軍団の一人の目が映り、
-// 追ってくる爆発の front を読みながら引き続けて、上空のカメラへ戻る（cinematic.js）
-const cinematic = createCinematic(views, enemyView, explosionView, { renderer, scene: cityScene, sunDir: style.sunDir });
+// 最後の一発の演出（画面全体、仕様 12 章の絵コンテ 1〜5）: 白 → 軍勢の一人の体感時間（砕けた窓ガラスに映る目）→
+// 時間が戻り弾ける爆発から逃げる → 宇宙から見た光の半球と衝撃波の輪 → 横一線の光 → 無音と地鳴り（cinematic.js）
+const cinematic = createCinematic(views, enemyView, explosionView, { renderer, scene: cityScene, sunDir: style.sunDir, tier, lights: { sun: style.lights[0], fill: style.lights[2] } });
 cinematic.warmup(renderer, views.cityCamera);
 const shotRng = createRng(seed ^ 0xc1a3e);
 const standing = new Set(game.city.buildings.map((b) => b.id)); // まだ壊れていないビル
+let finalBlastSize = 0;
 game.on('cinematicStart', (shot) => {
-  const plan = chooseShot({
-    shot, rng: shotRng, crater: fronts.crater,
+  const plan = planFinale({
+    shot, rng: shotRng, crater: fronts.crater, lead: leadFor(shot.radius),
     buildings: game.city.buildings.filter((b) => standing.has(b.id)),
     enemies: game.enemies.list,
   });
+  finalBlastSize = Math.sqrt(shot.radius / CONFIG.radius.max);
   cinematic.play(plan, shot);
 });
-// ゲームが動き出す。演出は爆発に追われて引き続け、上空のカメラへなじんでから終わる
 game.on('cinematicEnd', () => cinematic.end());
+// 演出の音の段取り
+cinematic.on('cue', ({ name, arg }) => {
+  if (name === 'silence') audio.silence();
+  else if (name === 'heart') audio.heartbeat(arg);
+  else if (name === 'snap') { audio.unsilence(); audio.boom(finalBlastSize); }
+  else if (name === 'space') audio.muffle(1.4);
+  else if (name === 'rumble') audio.deepRumble();
+});
+// 演出が最後まで終わった（G4 のリプレイはここに入る）。最後の絵のまま、結果を重ねる
+cinematic.on('end', () => { finaleDone = true; });
 
 // 光に溶ける対象の見た目の箱（隠す前に色と位置を読む）
 function vaporTarget({ hit, target }) {
@@ -205,12 +217,19 @@ let handInput = null;
 const cityCam = () => (cinematic.fullscreen ? cinematic.camera : views.cityCamera);
 const pointScaleFor = (cam) => (cinematic.fullscreen ? views.size.h : views.layout.city.h) * renderer.getPixelRatio() / (2 * Math.tan(THREE.MathUtils.degToRad(cam.fov) / 2));
 
+// ゲームを gdt 秒進める（一度に進めるのは最大 0.1 秒ずつ。演出は時間を一気に進めることがある）
+function stepGame(gdt) {
+  let left = gdt;
+  do { const d = Math.min(left, 0.1); game.update(d); left -= d; } while (left > 1e-9);
+}
+
 function simulate(dt) {
-  game.update(dt);
-  // 大きな一発の演出でゲームが止まっている間は、描画側の世界（破片・粉・ビルのつぶれ・軍勢の歩み・爆発の見た目）も止める。
-  // 動くのは演出が自分で動かすもの（カメラ・飛んでくるガラス片・目のアップ）と手の画面だけで、一拍の後から世界がまた動き出す。
-  cinematic.update(dt, game.blasts);
-  const wdt = dt * cinematic.worldScale;
+  // 最後の一発の演出の間は、ゲームの時計（爆発の前線の進み）も、描画側の世界（破片・粉・ビルのつぶれ・爆発の見た目）の時間も、
+  // 演出の時刻表が決める（白の間に進め、体感時間の一拍の間はほとんど止め、時間が戻ると一気に弾ける）。
+  cinematic.update(dt);
+  const cdt = cinematic.gameDt;
+  if (cdt === null) game.update(dt); else stepGame(cdt);
+  const wdt = cinematic.active ? cinematic.worldDt : dt;
   const cam = cityCam(), ps = pointScaleFor(cam);
   // 手前の物理は、演出の間は演出のカメラの近くの破片だけ（ふだんは null で全部プール）
   destruction.setPhysicsFocus(cinematic.active ? cam.position.toArray() : null);
@@ -241,6 +260,14 @@ function simulate(dt) {
 // 音: 貯めの唸り、じわじわ期の脈動、弾けた瞬間の爆発、崩落
 function updateAudio(live) {
   audio.chargeHum(game.charge.active ? game.power.level : 0);
+  // 最後の一発の音は演出が段取りする（cue）。崩落の音だけは時間が戻ったあと鳴る
+  if (cinematic.active) {
+    audio.rumble(0);
+    for (const b of live) burstSeen.add(b.id);
+    if (cinematic.stage === 'chase') audio.crumble(hitsThisFrame); else audio.crumble(0);
+    hitsThisFrame = 0;
+    return;
+  }
   let creep = 0;
   for (const b of live) {
     const k = Math.sqrt(b.shot.radius / CONFIG.radius.max);
@@ -254,7 +281,7 @@ function updateAudio(live) {
 }
 function draw() {
   if (cinematic.white) views.renderWhite();
-  else if (cinematic.fullscreen) views.renderFull(cityScene, cinematic.camera, cinematic.screen);
+  else if (cinematic.fullscreen) views.renderFull(cinematic.renderScene ?? cityScene, cinematic.camera, cinematic.screen);
   else views.render(cityScene, hand.scene, cinematic.screen ?? explosionView.screen, hand.camera);
 }
 

@@ -1,5 +1,5 @@
 // Web Audio で合成する音。素材ファイルは使わない。
-// master を経由するので、releaseSilence で全部まとめて黙らせられる。
+// 世界の音は master を経由するので、silence で全部まとめて黙らせられる（演出の音は cine から鳴る）。
 // boom を鳴らすまでの待ち（秒）: 無音の間（silenceEnd まで）に弾けても、無音が明けてから鳴らす
 export function boomDelay(silenceEnd, now) {
   return Math.max(0, silenceEnd - now);
@@ -27,14 +27,22 @@ export function createAudio() {
   const crumbleGate = createCrumbleGate();
   let silenceEnd = 0;
   let ctx = null, master = null, hum = null, rumbleNode = null, noiseBuf = null;
+  // 最後の一発の演出: 世界の音（master）と演出の音（cine: 心臓の鼓動・地鳴り）は、どちらも out のこもりを通る
+  let cine = null, out = null;
 
   function build() {
     const AC = window.AudioContext || window.webkitAudioContext;
     if (!AC) return;
     ctx = new AC();
+    out = ctx.createBiquadFilter();
+    out.type = 'lowpass'; out.frequency.value = 20000; out.Q.value = 0.5;
+    out.connect(ctx.destination);
     master = ctx.createGain();
     master.gain.value = 0.8;
-    master.connect(ctx.destination);
+    master.connect(out);
+    cine = ctx.createGain();
+    cine.gain.value = 0.9;
+    cine.connect(out);
     noiseBuf = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
     const d = noiseBuf.getChannelData(0);
     for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
@@ -60,7 +68,7 @@ export function createAudio() {
   const ready = () => ctx && ctx.state === 'running';
   const now = () => ctx.currentTime;
 
-  function noiseBurst({ dur, freq, gain, attack = 0.005, when = 0, q = 0.7 }) {
+  function noiseBurst({ dur, freq, gain, attack = 0.005, when = 0, q = 0.7, dest = null }) {
     const t = now() + when;
     const src = ctx.createBufferSource(); src.buffer = noiseBuf;
     const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.Q.value = q;
@@ -70,8 +78,19 @@ export function createAudio() {
     g.gain.setValueAtTime(0.0001, t);
     g.gain.linearRampToValueAtTime(gain, t + attack);
     g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    src.connect(lp); lp.connect(g); g.connect(master);
+    src.connect(lp); lp.connect(g); g.connect(dest ?? master);
     src.start(t, Math.random()); src.stop(t + dur + 0.05);
+  }
+
+  // 低い正弦波の一打（周波数は f0 から f1 へ下がる）
+  function thump({ f0, f1, dur, gain, when = 0, dest, attack = 0.008 }) {
+    const t = now() + when;
+    const o = ctx.createOscillator(); o.type = 'sine';
+    o.frequency.setValueAtTime(f0, t); o.frequency.exponentialRampToValueAtTime(f1, t + dur);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(gain, t + attack);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.connect(g); g.connect(dest); o.start(t); o.stop(t + dur + 0.05);
   }
 
   return {
@@ -101,21 +120,67 @@ export function createAudio() {
       rumbleNode.gain.gain.setTargetAtTime(l > 0 ? 0.25 * l + 0.08 : 0, t, 0.15);
       rumbleNode.lfoGain.gain.setTargetAtTime(0.12 * l, t, 0.15);
     },
-    // 放つ瞬間の無音（大きな一発では演出の間ずっと）
-    releaseSilence(sec) {
+    // ---- 最後の一発の演出 ----
+    // 放った瞬間から、世界の音を消す（演出の音だけが鳴る）
+    silence() {
       if (!ready()) return;
       const t = now();
-      silenceEnd = t + sec + 0.04;
+      silenceEnd = Infinity;
       master.gain.cancelScheduledValues(t);
       master.gain.setValueAtTime(0, t);
-      master.gain.setValueAtTime(0, t + sec);
-      master.gain.linearRampToValueAtTime(0.8, t + sec + 0.04);
+      out.frequency.cancelScheduledValues(t);
+      out.frequency.setValueAtTime(20000, t);
+    },
+    // 時間が戻る: 世界の音が一気に戻る
+    unsilence() {
+      if (!ready()) return;
+      const t = now();
+      silenceEnd = t;
+      master.gain.cancelScheduledValues(t);
+      master.gain.setValueAtTime(0.8, t);
+    },
+    // 心臓の鼓動（ドクン）。i: 何回目か（だんだん強く）
+    heartbeat(i = 0) {
+      if (!ready()) return;
+      const k = Math.min(1, 0.6 + 0.2 * i);
+      thump({ f0: 62, f1: 38, dur: 0.22, gain: 0.85 * k, dest: cine });
+      noiseBurst({ dur: 0.09, freq: 160, gain: 0.25 * k, attack: 0.004, dest: cine });
+      thump({ f0: 70, f1: 44, dur: 0.18, gain: 0.55 * k, when: 0.21, dest: cine });
+      noiseBurst({ dur: 0.07, freq: 140, gain: 0.15 * k, attack: 0.004, when: 0.21, dest: cine });
+    },
+    // 宇宙へ: 音が遠くこもって消えていく（sec 秒で無音へ）
+    muffle(sec = 1.5) {
+      if (!ready()) return;
+      const t = now();
+      out.frequency.cancelScheduledValues(t);
+      out.frequency.setValueAtTime(900, t);
+      out.frequency.exponentialRampToValueAtTime(140, t + 0.4);
+      master.gain.cancelScheduledValues(t);
+      master.gain.setValueAtTime(0.8, t);
+      master.gain.linearRampToValueAtTime(0, t + sec);
+    },
+    // 無音のあとの、低い地鳴り（長くゆっくり来て、ゆっくり引く）
+    deepRumble() {
+      if (!ready()) return;
+      const t = now();
+      out.frequency.cancelScheduledValues(t);
+      out.frequency.setValueAtTime(400, t);
+      const src = ctx.createBufferSource(); src.buffer = noiseBuf; src.loop = true;
+      const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 70; lp.Q.value = 0.9;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.linearRampToValueAtTime(0.9, t + 1.2);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 6);
+      src.connect(lp); lp.connect(g); g.connect(cine);
+      src.start(t); src.stop(t + 6.1);
+      thump({ f0: 36, f1: 24, dur: 5, gain: 0.5, dest: cine, attack: 1.0 });
     },
     // size 0〜1: 大きいほど長く低い
     boom(size) {
       if (!ready()) return;
       const s = Math.max(0, Math.min(1, size));
       const wait = boomDelay(silenceEnd, now());
+      if (!Number.isFinite(wait)) return; // 演出の無音の間は鳴らさない
       noiseBurst({ dur: 0.8 + 2.6 * s, freq: 500 + 900 * s, gain: 0.5 + 0.5 * s, attack: 0.01, q: 1, when: wait });
       const t = now() + wait;
       const o = ctx.createOscillator(); o.type = 'sine';

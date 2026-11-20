@@ -1,6 +1,6 @@
 // 使い方: node scripts/snap.mjs <url> <out.png> [--wait ms] [--press ms] [--size WxH]
 //   [--step] [--idle s] [--at s,s,...] [--from release|blast] [--perf frames] [--cpu rate]
-//   [--hand level[,steady]] [--hand-release amount] [--keep-holding] [--puff n]
+//   [--fire amount] [--hand level[,steady]] [--hand-release amount] [--keep-holding] [--puff n]
 // ヘッドレスの Chrome（ソフトウェア WebGL）でページを開き、待ってから（必要なら長押しして）撮影する。
 // --step: 実時間ではなく window.__debug.step で決まった dt ずつ進める（ヘッドレスは遅いので、爆発の瞬間を正確に撮る）。
 //   --idle 秒だけ待って器を満たし、--press ミリ秒貯めて離し、--at の各時刻（--from の時点からの秒）で撮る。
@@ -30,7 +30,7 @@ function parseArgs(argv) {
   }
   const at = String(opt.at).split(',').filter(Boolean).map(Number);
   return { url: pos[0], out: pos[1], wait: Number(opt.wait), press: Number(opt.press), width: w, height: h,
-    step: !!opt.step, keepHolding: !!opt.keepHolding, puff: Number(opt.puff ?? 0), idle: Number(opt.idle), at, from: opt.from, perf: Number(opt.perf), cpu: Number(opt.cpu),
+    step: !!opt.step, fire: Number(opt.fire ?? 0), keepHolding: !!opt.keepHolding, puff: Number(opt.puff ?? 0), idle: Number(opt.idle), at, from: opt.from, perf: Number(opt.perf), cpu: Number(opt.cpu),
     hand: opt.hand ? String(opt.hand).split(',').map(Number) : null, handRelease: opt['hand-release'] !== undefined ? Number(opt['hand-release']) : null };
 }
 
@@ -56,6 +56,10 @@ async function stepped(page) {
   if (args.idle > 0) {
     await page.evaluate(() => { window.__game.pressStart(); window.__game.pressEnd(); }); // 始めるだけ（貯めずに離すと撃たない）
     await step(args.idle);
+  }
+  // --fire A: 力を A にして、すぐに離す（軍勢に掴まれて減らないので、演出を決まった大きさで撮れる）
+  if (args.fire > 0) {
+    await page.evaluate((a) => { const g = window.__game; document.getElementById('start').hidden = true; g.pressStart(); g.power.drain(1e9); g.power.add(a); g.pressEnd(); }, args.fire);
   }
   if (press > 0) {
     await page.evaluate(() => window.__game.pressStart());
@@ -86,6 +90,8 @@ async function stepped(page) {
   }
   const info = await page.evaluate(() => ({ phase: window.__game.phase, blasts: window.__game.blasts.map((b) => ({ r: +b.shot.radius.toFixed(1), front: +b.front.toFixed(1) })), tier: window.__tier }));
   console.log('released', JSON.stringify(info));
+  const plan = await page.evaluate(() => { const p = window.__cinematic?.plan; return p ? { building: p.buildingId, rider: p.riderId, cam: p.camPos.map((v) => +v.toFixed(1)), retreat: { ...p.retreat, origin: undefined }, end: +window.__cinematic.timeline.end.toFixed(2) } : null; });
+  if (plan) console.log('finale plan', JSON.stringify(plan));
   if (args.perf > 0) {
     const t = await page.evaluate((n) => window.__debug.timeFrames(n), args.perf);
     console.log('frame JS ms (simulate+draw)', JSON.stringify(stats(t.js)));

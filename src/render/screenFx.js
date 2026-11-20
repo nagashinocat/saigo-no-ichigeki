@@ -20,11 +20,16 @@ const FinalShader = {
     uHeatCenter: { value: new THREE.Vector2(0.5, 0.5) },
     uHeatRadius: { value: 0.3 },
     uAspect: { value: 1 },
+    // 演出の画づくり: 黒い帯（画面の高さに対する片側の割合）、色ずれ、周辺減光、彩度、暖色寄せ、粒子、横に伸びる光の筋、明るさ、暗転
+    uBars: { value: 0 }, uCA: { value: 0 }, uVig: { value: 0 }, uSat: { value: 1 }, uWarm: { value: 0 },
+    uGrain: { value: 0 }, uStreak: { value: 0 }, uExposure: { value: 1 }, uFade: { value: 0 }, uContrast: { value: 1 },
   },
   vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
   fragmentShader: /* glsl */`
     uniform sampler2D tDiffuse;
     uniform float uFlash, uTime, uHeat, uHeatRadius, uAspect;
+    uniform float uBars, uCA, uVig, uSat, uWarm, uGrain, uStreak, uExposure, uFade, uContrast;
+    float hash(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
     uniform vec2 uHeatCenter;
     varying vec2 vUv;
     void main() {
@@ -42,8 +47,42 @@ const FinalShader = {
       }
       #endif
       vec4 c = texture2D(tDiffuse, uv);
+      #ifdef GRADE
+      // 色ずれ: 画面の端ほど赤と青が外と内へずれる
+      if (uCA > 0.0) {
+        vec2 dc = (uv - 0.5);
+        vec2 o = dc * dot(dc, dc) * 0.025 * uCA;
+        c.r = texture2D(tDiffuse, uv + o).r;
+        c.b = texture2D(tDiffuse, uv - o).b;
+      }
+      // 横に伸びる光の筋（明るいところだけを横に引き伸ばす）
+      if (uStreak > 0.0) {
+        vec3 s = vec3(0.0);
+        for (int i = 1; i <= 8; i++) {
+          float k = float(i) * 0.028;
+          vec3 a = texture2D(tDiffuse, uv + vec2(k, 0.0)).rgb, b = texture2D(tDiffuse, uv - vec2(k, 0.0)).rgb;
+          s += (max(a - 1.0, 0.0) + max(b - 1.0, 0.0)) * (1.0 - float(i) / 9.0);
+        }
+        c.rgb += s * vec3(0.9, 0.75, 0.6) * 0.35 * uStreak;
+      }
+      c.rgb *= uExposure;
+      // コントラスト（中間の灰色を軸に、暗いところはより暗く）
+      c.rgb = max(vec3(0.0), 0.18 * pow(max(c.rgb, vec3(0.0)) / 0.18, vec3(uContrast)));
+      float lum = dot(c.rgb, vec3(0.2126, 0.7152, 0.0722));
+      c.rgb = mix(vec3(lum), c.rgb, uSat);
+      // 暗部は冷たく、明部は暖かく
+      c.rgb *= mix(vec3(1.0), mix(vec3(0.82, 0.9, 1.12), vec3(1.12, 0.98, 0.84), smoothstep(0.05, 0.7, lum)), uWarm);
+      vec2 q = (uv - 0.5) * vec2(uAspect, 1.0);
+      c.rgb *= 1.0 - uVig * smoothstep(0.35, 1.1, length(q) / max(0.75, uAspect * 0.75));
+      c.rgb += (hash(uv * 977.0 + fract(uTime * 7.13)) - 0.5) * uGrain * (0.4 + lum);
+      #endif
       // 閃光: 白へ飛ばす（トーンマップ前なので強く足しても白に収まる）
       c.rgb = mix(c.rgb, vec3(4.0), uFlash * 0.85) + vec3(uFlash * 1.5);
+      #ifdef GRADE
+      c.rgb *= 1.0 - uFade;
+      // 黒い帯
+      c.rgb *= step(uBars, uv.y) * step(uv.y, 1.0 - uBars);
+      #endif
       gl_FragColor = c;
     }`,
 };
@@ -55,6 +94,20 @@ export function createScreenFx(renderer) {
     color: 0xffffff, transparent: true, opacity: 0, depthTest: false, depthWrite: false, blending: THREE.AdditiveBlending,
   }));
   const _v = new THREE.Vector3(), _r = new THREE.Vector3();
+  // 光のにじみを使わない段（low）の、黒い帯・周辺減光・暗さ・暗転だけの重ね描き
+  const gradeQuad = new FullScreenQuad(new THREE.ShaderMaterial({
+    uniforms: { uBars: { value: 0 }, uVig: { value: 0 }, uFade: { value: 0 }, uAspect: { value: 1 }, uDark: { value: 0 } },
+    vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
+    fragmentShader: `uniform float uBars, uVig, uFade, uAspect, uDark; varying vec2 vUv;
+      void main() {
+        vec2 q = (vUv - 0.5) * vec2(uAspect, 1.0);
+        float v = uVig * smoothstep(0.35, 1.1, length(q) / max(0.75, uAspect * 0.75));
+        float bar = 1.0 - step(uBars, vUv.y) * step(vUv.y, 1.0 - uBars);
+        gl_FragColor = vec4(0.0, 0.0, 0.0, max(max(1.0 - (1.0 - v) * (1.0 - uDark), bar), uFade));
+      }`,
+    transparent: true, depthTest: false, depthWrite: false,
+  }));
+  const NO_GRADE = { bars: 0, ca: 0, vig: 0, sat: 1, grain: 0, streak: 0, exposure: 1, fade: 0, warm: 0, contrast: 1 };
 
   function build(tier, scene, camera) {
     composer?.dispose();
@@ -65,7 +118,7 @@ export function createScreenFx(renderer) {
     composer.addPass(renderPass);
     bloomPass = new UnrealBloomPass(new THREE.Vector2(1, 1), BLOOM.strength, BLOOM.radius, BLOOM.threshold);
     composer.addPass(bloomPass);
-    finalPass = new ShaderPass({ ...FinalShader, uniforms: THREE.UniformsUtils.clone(FinalShader.uniforms), defines: tier.heatHaze ? { HEAT_HAZE: '' } : {} });
+    finalPass = new ShaderPass({ ...FinalShader, uniforms: THREE.UniformsUtils.clone(FinalShader.uniforms), defines: { GRADE: '', ...(tier.heatHaze ? { HEAT_HAZE: '' } : {}) } });
     composer.addPass(finalPass);
     composer.addPass(new OutputPass());
     size = { w: 0, h: 0, pr: 0 };
@@ -91,15 +144,22 @@ export function createScreenFx(renderer) {
         if (want === 'plain') { composer?.dispose(); composer = null; } else build(tier, scene, camera);
       }
       const flash = Math.min(1, Math.max(0, fx.flash ?? 0));
+      const grade = fx.grade ?? NO_GRADE;
       if (!composer) {
         renderer.render(scene, camera);
+        const auto = renderer.autoClear;
+        renderer.autoClear = false;
         if (flash > 0) {
-          const auto = renderer.autoClear;
-          renderer.autoClear = false;
           flashQuad.material.opacity = flash;
           flashQuad.render(renderer);
-          renderer.autoClear = auto;
         }
+        if (fx.grade) {
+          const g = gradeQuad.material.uniforms;
+          g.uBars.value = grade.bars; g.uVig.value = grade.vig * 0.8; g.uFade.value = grade.fade; g.uAspect.value = rect.w / Math.max(1, rect.h);
+          g.uDark.value = Math.min(0.5, Math.max(0, 1 - grade.exposure) * 0.8);
+          gradeQuad.render(renderer);
+        }
+        renderer.autoClear = auto;
         return;
       }
       const pr = renderer.getPixelRatio();
@@ -113,6 +173,10 @@ export function createScreenFx(renderer) {
       const u = finalPass.uniforms;
       u.uFlash.value = flash;
       u.uTime.value = fx.time ?? 0;
+      u.uBars.value = grade.bars; u.uCA.value = grade.ca; u.uVig.value = grade.vig; u.uSat.value = grade.sat; u.uWarm.value = grade.warm;
+      u.uGrain.value = grade.grain; u.uStreak.value = grade.streak; u.uExposure.value = grade.exposure; u.uFade.value = grade.fade; u.uContrast.value = grade.contrast ?? 1;
+      u.uAspect.value = rect.w / Math.max(1, rect.h);
+      bloomPass.strength = BLOOM.strength * (grade.bloom ?? 1);
       if (tier.heatHaze && fx.heat && fx.heat.strength > 0) projectHeat(fx.heat, camera, rect, u); else u.uHeat.value = 0;
       composer.render();
     },
