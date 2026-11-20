@@ -199,3 +199,21 @@ test('小さな一発は約0.4秒で構えに戻り、大きな一発は組み�
   run(big, 1.5, 0, false, 0.6);
   expect(big.joined).toBe(0);
 });
+
+test('組み合わさる途中や戻る途中にもう一度放っても、両手は跳ばずに今の位置から続けて寄る', () => {
+  for (const wait of [0.12, 0.25 + 0.2 + 0.1]) {
+    const v = createHandView(hands('low'), 'low');
+    run(v, 1, 0.5, true, 0.6);
+    v.release({ amount: 10, isBig: false });
+    run(v, wait, 0, false, 0.6);
+    const before = v.joined;
+    expect(before).toBeGreaterThan(0.1);
+    v.release({ amount: 10, isBig: false });
+    v.update(DT, 0, false, 0.6);
+    expect(Math.abs(v.joined - before)).toBeLessThan(0.08);
+    expect(v.joined).toBeGreaterThanOrEqual(before - 1e-6); // 戻らず、また寄っていく
+    let peak = 0;
+    for (let t = 0; t < 0.25; t += DT) { v.update(DT, 0, false, 0.6); peak = Math.max(peak, v.joined); }
+    expect(peak).toBeCloseTo(1, 2);
+  }
+});

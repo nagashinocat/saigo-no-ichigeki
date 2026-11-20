@@ -5,7 +5,26 @@ export function boomDelay(silenceEnd, now) {
   return Math.max(0, silenceEnd - now);
 }
 
+// 崩落の音の最短の間隔（秒）。毎フレーム何発も重ねると、中くらいの Android で音の部品が百近く同時に鳴ってしまう
+export const CRUMBLE_GAP_SEC = 0.05;
+
+// 崩落の音の間引き: 間隔が空くまでの命中はためておき、次に鳴らす一回にまとめる。take は今鳴らす数（0 なら鳴らさない）
+export function createCrumbleGate(gap = CRUMBLE_GAP_SEC) {
+  let last = -Infinity, pending = 0;
+  return {
+    take(count, now) {
+      pending += Math.max(0, count);
+      if (pending <= 0 || now - last < gap - 1e-9) return 0;
+      last = now;
+      const out = pending;
+      pending = 0;
+      return out;
+    },
+  };
+}
+
 export function createAudio() {
+  const crumbleGate = createCrumbleGate();
   let silenceEnd = 0;
   let ctx = null, master = null, hum = null, rumbleNode = null, noiseBuf = null;
 
@@ -106,13 +125,14 @@ export function createAudio() {
       g.gain.exponentialRampToValueAtTime(0.0001, t + 0.8 + 1.6 * s);
       o.connect(g); g.connect(master); o.start(t); o.stop(t + 2.6 + s);
     },
-    // 壊れた数に応じて短いノイズの粒を重ねる
+    // 壊れた数に応じた短いノイズ。約 50 ms に一度だけ鳴らし、その間の命中はまとめる（毎フレーム呼んでよい）
     crumble(count) {
-      if (!ready() || count <= 0) return;
-      const n = Math.min(8, Math.ceil(Math.sqrt(count)));
-      for (let i = 0; i < n; i++) {
-        noiseBurst({ dur: 0.12 + Math.random() * 0.18, freq: 700 + Math.random() * 900, gain: 0.12, attack: 0.003, when: Math.random() * 0.08 });
-      }
+      if (!ready()) return;
+      const n = crumbleGate.take(count, now());
+      if (n <= 0) return;
+      // 一度に鳴らすのは一つだけ。まとめた命中が多いほど大きく、長く
+      const k = Math.min(1, Math.sqrt(n) / 8);
+      noiseBurst({ dur: 0.14 + 0.16 * k + Math.random() * 0.08, freq: 700 + Math.random() * 900, gain: 0.12 * (1 + 1.4 * k), attack: 0.003 });
     },
   };
 }

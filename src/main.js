@@ -73,10 +73,13 @@ canvas.addEventListener('pointerup', (e) => press.up(e.pointerId));
 canvas.addEventListener('pointercancel', (e) => press.cancel(e.pointerId));
 // 指が画面の外へ出ても、キャプチャが外れたら離したことにする
 canvas.addEventListener('lostpointercapture', (e) => press.cancel(e.pointerId));
+window.addEventListener('blur', () => press.reset());
 window.addEventListener('contextmenu', (e) => e.preventDefault());
 // iOS では最初の1回で running にならないことがあるので、鳴らせるまで毎回呼ぶ
 window.addEventListener('pointerdown', () => { if (!audio.running) audio.unlock(); }, { capture: true });
 document.addEventListener('visibilitychange', () => {
+  // 隠れる前に押下を打ち切る（貯めていた分は放つ。戻ってきたとき指が引っかかったままにならない）
+  if (document.hidden) press.reset();
   game.setHidden(document.hidden);
   if (document.hidden) audio.suspend(); else audio.resume();
 });
@@ -170,6 +173,8 @@ function simulate(dt) {
   // 大きな一発の演出でゲームが止まっている間は、描画側の世界（破片・粉・ビルのつぶれ・軍勢の歩み・爆発の見た目）も止める。
   // 動くのは演出が自分で動かすもの（カメラ・飛んでくるガラス片・目のアップ）と手の画面だけで、一拍の後から世界がまた動き出す。
   cinematic.update(dt, game.blasts);
+  // 演出が画面全体を使う間（追うカメラ・上空へ戻る間）は、爆発だけが進み、時間・軍勢・器・貯めは止まったまま
+  game.setHold(cinematic.fullscreen && !cinematic.frozen);
   const wdt = dt * cinematic.worldScale;
   const cam = cityCam(), ps = pointScaleFor(cam);
   // 手前の物理は、演出の間は演出のカメラの近くの破片だけ（ふだんは null で全部プール）
@@ -202,7 +207,7 @@ function updateAudio(live) {
     } else creep = Math.max(creep, k);
   }
   audio.rumble(creep);
-  if (hitsThisFrame > 0) audio.crumble(hitsThisFrame);
+  audio.crumble(hitsThisFrame); // ためた命中も、間隔が空いたら鳴らす
   hitsThisFrame = 0;
 }
 function draw() {

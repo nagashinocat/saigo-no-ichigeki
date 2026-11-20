@@ -230,3 +230,52 @@ test('blasts は進行中の一発ごとに id・shot・front を読み取り専
   step(g, 40);
   expect(g.blasts).toEqual([]);
 });
+
+test('setHold(true) の間はタイマー・軍勢・器・貯めが止まり、blast だけが進んで採点される', () => {
+  const cfg = { ...CONFIG, enemy: { ...CONFIG.enemy, spawnPerSec: 4, spawnDist: [200, 260] } };
+  const g = createGame({ seed: 1, cfg });
+  const log = record(g, ['hit', 'shotScored']);
+  big(g);
+  step(g, 15); // cinematicEnd、blast が走り出す
+  expect(g.phase).toBe('playing');
+  g.setHold(true);
+  const t = g.timer.remaining, v = g.reserve.value;
+  const enemies = JSON.stringify(g.enemies.list);
+  const f0 = g.blasts[0].front;
+  step(g, 3);
+  expect(g.blasts[0].front).toBeGreaterThan(f0);
+  expect(g.timer.remaining).toBe(t);
+  expect(g.reserve.value).toBe(v);
+  expect(JSON.stringify(g.enemies.list.filter((e) => e.state !== 'dead'))).toBe(
+    JSON.stringify(JSON.parse(enemies).filter((e) => e.dist > g.blasts[0].front)),
+  );
+  expect(g.enemies.list.length).toBe(JSON.parse(enemies).length); // 新しく湧かない
+  g.pressStart();
+  expect(g.charge.active).toBe(false);
+  step(g, 40);
+  expect(log.some(([n]) => n === 'hit')).toBe(true);
+  expect(log.filter(([n]) => n === 'shotScored')).toHaveLength(1);
+  expect(g.score.total).toBeGreaterThan(0);
+  expect(g.timer.remaining).toBe(t);
+  expect(g.reserve.value).toBe(v);
+  g.setHold(false);
+  g.update(0.1);
+  expect(g.timer.remaining).toBeLessThan(t);
+  g.pressStart();
+  expect(g.charge.active).toBe(true);
+});
+
+test('setHold(true) の間は時間切れでも終わらず、解けてから over(time)', () => {
+  const g = createGame({ seed: 1, cfg: { ...quiet, roundSeconds: 0.35 } });
+  const log = record(g, ['over']);
+  small(g);
+  g.setHold(true);
+  step(g, 30); // blast は終わるが、タイマーは止まっている
+  expect(g.blasts).toHaveLength(0);
+  expect(g.phase).toBe('playing');
+  expect(log).toHaveLength(0);
+  g.setHold(false);
+  step(g, 5);
+  expect(g.phase).toBe('over');
+  expect(log[0][1].reason).toBe('time');
+});

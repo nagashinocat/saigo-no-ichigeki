@@ -31,3 +31,17 @@ test('押していない指の up / cancel は何もしない', () => {
   t.up(1); t.cancel(1);
   expect(onEnd).not.toHaveBeenCalled();
 });
+
+test('reset は押している指を離したことにし（onEnd 一度）、その後は別の id の指で押せる', () => {
+  const { t, onStart, onEnd } = make();
+  t.down(1);
+  t.reset();
+  expect(onEnd).toHaveBeenCalledTimes(1);
+  t.reset(); // 押していなければ何もしない
+  t.up(1); // 古い指の up は無視
+  expect(onEnd).toHaveBeenCalledTimes(1);
+  t.down(7);
+  expect(onStart).toHaveBeenCalledTimes(2);
+  t.up(7);
+  expect(onEnd).toHaveBeenCalledTimes(2);
+});

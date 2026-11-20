@@ -30,6 +30,7 @@ export function createGame({ seed, cfg = CONFIG }) {
 
   let phase = 'ready';
   let hidden = false;
+  let hold = false; // 大きな一発の演出が画面全体を使う間: 爆発だけが進み、他は止まる
   let cinematicClock = 0;
   let pendingShot = null;
   let blasts = []; // { id, shot, blast, values }
@@ -80,9 +81,11 @@ export function createGame({ seed, cfg = CONFIG }) {
     },
     on(event, fn) { (listeners[event] ??= []).push(fn); },
     setHidden(h) { hidden = h; },
+    // 演出（追うカメラ・上空へ戻る間）の間は、タイマー・軍勢・器・貯めを止め、爆発・命中・採点だけ進める
+    setHold(h) { hold = h; },
 
     pressStart() {
-      if (hidden) return;
+      if (hidden || hold) return;
       if (phase === 'ready') phase = 'playing';
       if (phase !== 'playing' || timer.isOver()) return;
       if (!charge.active) charge.start();
@@ -119,6 +122,8 @@ export function createGame({ seed, cfg = CONFIG }) {
         }
         return;
       }
+
+      if (hold) { updateBlasts(dt); return; }
 
       reserve.regen(dt);
       charge.update(dt);

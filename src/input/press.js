@@ -14,5 +14,7 @@ export function createPressTracker({ onStart, onEnd }) {
     },
     up: end,
     cancel: end,
+    // タブやアプリが切り替わって up/cancel が来ないまま指の id が変わることがあるので、外から押下を打ち切る
+    reset() { if (active !== null) end(active); },
   };
 }

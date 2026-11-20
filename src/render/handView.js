@@ -460,9 +460,11 @@ export function createHandView(models, tierName) {
     // 放つ瞬間: 両手が中央へ寄って組み合わさる（約 0.25 秒）。大きな一発は演出の間そのまま、小さな一発は約 0.4 秒で構えへ戻る
     release(shot) {
       const strength = Math.min(1, (shot?.amount ?? 0) / CONFIG.charge.maxDraw);
+      // 組み合わさる途中・戻る途中にまた放ったら、今の合わさり具合から続けて寄る（手が跳ばない）
+      const t = rel ? JOIN_SEC * Math.sqrt(joined) : 0;
       rel = shot?.isBig
-        ? { t: 0, hold: CONFIG.cinematic.freezeSec, back: BIG_BACK_SEC, strength, lvl }
-        : { t: 0, hold: SMALL_HOLD_SEC, back: SMALL_BACK_SEC, strength, lvl };
+        ? { t, hold: CONFIG.cinematic.freezeSec, back: BIG_BACK_SEC, strength, lvl }
+        : { t, hold: SMALL_HOLD_SEC, back: SMALL_BACK_SEC, strength, lvl };
     },
   };
 }
