@@ -66,13 +66,14 @@ const press = createPressTracker({
   onStart() { startHint.hidden = true; game.pressStart(); },
   onEnd() { game.pressEnd(); },
 });
-canvas.addEventListener('pointerdown', (e) => { canvas.setPointerCapture?.(e.pointerId); press.down(e.pointerId); });
+canvas.addEventListener('pointerdown', (e) => { if (e.pointerType === 'mouse' && e.button !== 0) return; canvas.setPointerCapture?.(e.pointerId); press.down(e.pointerId); });
 canvas.addEventListener('pointerup', (e) => press.up(e.pointerId));
 canvas.addEventListener('pointercancel', (e) => press.cancel(e.pointerId));
 // 指が画面の外へ出ても、キャプチャが外れたら離したことにする
 canvas.addEventListener('lostpointercapture', (e) => press.cancel(e.pointerId));
 window.addEventListener('contextmenu', (e) => e.preventDefault());
-window.addEventListener('pointerdown', () => audio.unlock(), { once: true, capture: true });
+// iOS では最初の1回で running にならないことがあるので、鳴らせるまで毎回呼ぶ
+window.addEventListener('pointerdown', () => { if (!audio.running) audio.unlock(); }, { capture: true });
 document.addEventListener('visibilitychange', () => {
   game.setHidden(document.hidden);
   if (document.hidden) audio.suspend(); else audio.resume();

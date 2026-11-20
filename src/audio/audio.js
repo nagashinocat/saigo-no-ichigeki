@@ -1,6 +1,12 @@
 // Web Audio で合成する音。素材ファイルは使わない。
 // master を経由するので、releaseSilence で全部まとめて黙らせられる。
+// boom を鳴らすまでの待ち（秒）: 無音の間（silenceEnd まで）に弾けても、無音が明けてから鳴らす
+export function boomDelay(silenceEnd, now) {
+  return Math.max(0, silenceEnd - now);
+}
+
 export function createAudio() {
+  let silenceEnd = 0;
   let ctx = null, master = null, hum = null, rumbleNode = null, noiseBuf = null;
 
   function build() {
@@ -53,8 +59,9 @@ export function createAudio() {
     // 最初のユーザー操作で呼ぶ（ブラウザの自動再生の制限）
     unlock() {
       if (!ctx) build();
-      if (ctx && ctx.state === 'suspended') ctx.resume();
+      if (ctx && ctx.state !== 'running') ctx.resume();
     },
+    get running() { return !!ctx && ctx.state === 'running'; },
     suspend() { if (ctx && ctx.state === 'running') ctx.suspend(); },
     resume() { if (ctx && ctx.state === 'suspended') ctx.resume(); },
     // level 0〜1。0 で止まる
@@ -79,6 +86,7 @@ export function createAudio() {
     releaseSilence(sec) {
       if (!ready()) return;
       const t = now();
+      silenceEnd = t + sec + 0.04;
       master.gain.cancelScheduledValues(t);
       master.gain.setValueAtTime(0, t);
       master.gain.setValueAtTime(0, t + sec);
@@ -88,8 +96,9 @@ export function createAudio() {
     boom(size) {
       if (!ready()) return;
       const s = Math.max(0, Math.min(1, size));
-      noiseBurst({ dur: 0.8 + 2.6 * s, freq: 500 + 900 * s, gain: 0.5 + 0.5 * s, attack: 0.01, q: 1 });
-      const t = now();
+      const wait = boomDelay(silenceEnd, now());
+      noiseBurst({ dur: 0.8 + 2.6 * s, freq: 500 + 900 * s, gain: 0.5 + 0.5 * s, attack: 0.01, q: 1, when: wait });
+      const t = now() + wait;
       const o = ctx.createOscillator(); o.type = 'sine';
       o.frequency.setValueAtTime(90, t); o.frequency.exponentialRampToValueAtTime(28, t + 0.6 + s);
       const g = ctx.createGain();
