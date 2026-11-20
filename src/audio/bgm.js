@@ -11,7 +11,11 @@ export const BGM_BUS = {
   gain: 0.26,
   echoSec: 0.27, echoFeedback: 0.26, echoWet: 0.18, echoCutoff: 2600,
 };
-export const LOOKAHEAD = 0.3;
+// 先読み（秒）: これだけ先までの音を予約しておく。予約は毎フレームのメインスレッドで行うので、メインスレッドが止まる一瞬
+// （中くらいの Android でのシェーダーの作り直し・画質の段の切り替え・GC）が先読みより長いと、その間の音が抜け落ちて
+// BGM が途切れる。長めに取り、長押しが変わったときは、まだ始まっていない拍を作り直す（反応は遅くならない）
+export const LOOKAHEAD = 1.0;
+const REWIND_AFTER = 0.03; // 長押しが変わったとき、これより後に頭がある拍を作り直す
 const START_DELAY = 0.06;
 const STOP_RAMP = 0.006; // ぴたりと止める（プツッと鳴らない最短）
 const LATE = 0.05; // これより遅れた音は鳴らさない（タブが隠れていた間の分をまとめて鳴らさない）
@@ -41,6 +45,7 @@ export function createBgm(getOutput) {
   let live = []; // { src, g, t, end, rate }
   let pendingQuiet = null; // 引き伸ばしが終わってから始める静かな変奏 { at, fadeIn }
   let stretchEnd = Infinity; // 引き伸ばしで出口の音量が 0 になる時刻（それより後まで鳴らさない）
+  let lastHolding = false;
   const rendered = new Map(); // 楽器の名前 → Float32Array
   const voiceData = (name) => { if (!rendered.has(name)) rendered.set(name, renderVoice(name, VOICE_SR)); return rendered.get(name); };
 
@@ -156,7 +161,16 @@ export function createBgm(getOutput) {
       const t = now();
       live = live.filter((n) => n.end > t);
       if (pendingQuiet && (seq.done || t >= pendingQuiet.at - LOOKAHEAD)) beginQuiet(Math.max(pendingQuiet.at, t + START_DELAY), pendingQuiet.fadeIn);
-      for (const e of seq.advance(t + LOOKAHEAD, () => cond)) {
+      // 長押しが変わった: 先読みで作ってあった、これから始まる拍を、新しい長押しの状態で作り直す
+      const holding = !!cond.holding;
+      if (state === 'play' && holding !== lastHolding) {
+        const from = seq.rewind(t + REWIND_AFTER);
+        if (from !== null) cancelFrom(from);
+      }
+      lastHolding = holding;
+      // 拍を作るときは、その拍の時刻の経った時間で強さを決める（先読みの分だけ早く読まない）
+      const condAt = Number.isFinite(cond.elapsed) ? (at) => ({ ...cond, elapsed: cond.elapsed + Math.max(0, at - t) }) : () => cond;
+      for (const e of seq.advance(t + LOOKAHEAD, condAt)) {
         if (e.t < t - LATE) continue;
         play(e, Math.max(e.t, t));
       }

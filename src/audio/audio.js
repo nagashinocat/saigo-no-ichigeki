@@ -38,6 +38,7 @@ export function createAudio() {
   // BGM は放った瞬間に自分で止まるので、演出の無音を邪魔しない
   let bgmBus = null;
   let drone = null; // 時間切れの結末の低い唸り（鳴っている間だけ）
+  let hidden = false; // タブが隠れている間（suspend から resume まで）
 
   function build() {
     const AC = window.AudioContext || window.webkitAudioContext;
@@ -117,8 +118,18 @@ export function createAudio() {
     get running() { return !!ctx && ctx.state === 'running'; },
     // BGM の出口（unlock の前は null）
     get bgmOutput() { return ctx && bgmBus ? { ctx, dest: bgmBus } : null; },
-    suspend() { if (ctx && ctx.state === 'running') ctx.suspend(); },
-    resume() { if (ctx && ctx.state === 'suspended') ctx.resume(); },
+    // タブが隠れた / 戻った。止める処理（suspend）は少しあとで終わるので、終わったときにもう戻っていたら鳴らし直す
+    // （すぐ戻ると、戻した時点ではまだ running のままで、そのあと止まりっぱなしになる）。
+    // 戻ったら suspended でなくても（iOS の interrupted など）鳴らし直す
+    suspend() {
+      hidden = true;
+      if (!ctx || ctx.state !== 'running') return;
+      Promise.resolve(ctx.suspend()).then(() => { if (!hidden && ctx.state !== 'running') ctx.resume(); }, () => {});
+    },
+    resume() {
+      hidden = false;
+      if (ctx && ctx.state !== 'running' && ctx.state !== 'closed') Promise.resolve(ctx.resume()).catch(() => {});
+    },
     // level 0〜1。0 で止まる
     chargeHum(level) {
       if (!ready()) return;

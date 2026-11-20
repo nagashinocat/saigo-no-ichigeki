@@ -372,3 +372,34 @@ test('オクターブ下のドローンは、ゆっくり読むぶん長く鳴�
   // 重なりを含めた底の厚さ（音量 × 鳴る長さ ∝ gain / rate）は、オクターブ下が根音を超えない
   expect(sub.gain / sub.rate).toBeLessThan(root.gain / root.rate);
 });
+
+test('作り直し（rewind）: 頭が at 以後の拍から作り直す。同じ状態なら同じ音、長押しが変われば新しい層の音になる', () => {
+  const key = (e) => `${e.t.toFixed(5)}:${e.voice}:${e.rate.toFixed(5)}:${e.gain.toFixed(5)}`;
+  const c = cond(20, 0.2, false);
+  // 小節の頭をまたいで先まで作ってから、途中へ戻して同じ状態で作り直すと、まったく同じ音（テンポ・小節の取り決めも戻る）
+  const a = createSequencer({ start: 0 });
+  const first = run(a, 12, c);
+  const from = a.rewind(6.1);
+  expect(from).toBeGreaterThanOrEqual(6.1);
+  expect(from - 6.1).toBeLessThan(60 / tempoFor(0));
+  const again = run(a, 12, c);
+  expect(again.map(key)).toEqual(first.filter((e) => e.t >= from - 1e-9).map(key));
+  expect(Math.min(...again.map((e) => e.t))).toBeGreaterThanOrEqual(from - 1e-9);
+  // 長押しに変わったら、作り直した拍は一段上（層 2: 木の打楽器が入る）
+  const b = createSequencer({ start: 0 });
+  const plain = run(b, 12, c);
+  expect(plain.some((e) => e.voice === 'wood')).toBe(false);
+  const fromB = b.rewind(6.1);
+  const held = run(b, 12, cond(20, 0.2, true));
+  expect(held.some((e) => e.voice === 'wood')).toBe(true);
+  expect(Math.min(...held.filter((e) => e.voice === 'wood').map((e) => e.t))).toBeGreaterThanOrEqual(fromB - 1e-9);
+  // 作り直す拍がない（まだ先を作っていない）・静かな変奏・引き伸ばしの間は何もしない
+  expect(createSequencer({ start: 0 }).rewind(1)).toBe(null);
+  const q = createSequencer({ start: 0, mode: 'quiet' });
+  run(q, 8, c);
+  expect(q.rewind(2)).toBe(null);
+  const s = createSequencer({ start: 0 });
+  run(s, 8, c);
+  s.stretch(3, 3);
+  expect(s.rewind(4)).toBe(null);
+});

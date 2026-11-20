@@ -248,6 +248,8 @@ export function createSequencer({ start = 0, mode = 'play' } = {}) {
   let keepBar = false; // 引き伸ばしで小節の途中（または頭）へ戻ったとき、その小節の取り決めをそのまま使う
   let hold = false, dwell = HOLD_MIN_BEATS; // 長押しの層（切り替えたら最低 HOLD_MIN_BEATS 拍は保つ）
   const history = [];
+  // 作った拍の頭ごとの状態（rewind で、その拍から作り直すため）。引き伸ばし・静かな変奏の拍は残さない
+  let marks = [];
 
   function beginBar(c) {
     let level, gainScale, intensity;
@@ -282,6 +284,10 @@ export function createSequencer({ start = 0, mode = 'play' } = {}) {
       while (!done) {
         const first = place(pos);
         if (!(first.t < until)) break;
+        if (!warp && mode === 'play') {
+          marks.push({ pos, bar, beat, tempo, cur, hold, dwell, keepBar });
+          if (marks.length > HISTORY_MAX) marks.shift();
+        }
         const c = cond(first.t);
         if (!!c.holding !== hold && dwell >= HOLD_MIN_BEATS) { hold = !!c.holding; dwell = 0; }
         dwell++;
@@ -308,8 +314,22 @@ export function createSequencer({ start = 0, mode = 'play' } = {}) {
       events.sort((a, b) => a.t - b.t);
       return events;
     },
+    // 時刻 at より後に頭がある、もう作った拍を作り直す（長押しが変わったとき。先読みが長くても、変わったあとの拍は新しい
+    // 長押しの状態で作る）。作り直す最初の拍の頭の時刻を返す（鳴らす側はそれより後の音を取り消す）。作り直す拍がなければ null
+    rewind(at) {
+      if (warp || mode !== 'play') return null;
+      const i = marks.findIndex((m) => m.pos >= at - 1e-9);
+      if (i < 0) return null;
+      const m = marks[i];
+      ({ pos, bar, beat, tempo, cur, hold, dwell, keepBar } = m);
+      // その拍の頭より後に始めた小節の取り決めは捨てる（拍が小節の頭なら、作り直すときに決め直す）
+      while (history.length && history.at(-1).t >= m.pos - 1e-9) history.pop();
+      marks = marks.slice(0, i);
+      return m.pos;
+    },
     // 時刻 at から静かな変奏を一小節目として始め直す（それより後に作った音は、鳴らす側が取り消す）
     setMode(next, at) {
+      marks = [];
       mode = next; pos = at; bar = 0; beat = 0; warp = null; done = false; keepBar = false;
       tempo = next === 'quiet' ? QUIET_TEMPO : tempoFor(0);
     },
