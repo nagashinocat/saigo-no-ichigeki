@@ -77,6 +77,9 @@ const EYE_RT = { high: [768, 480], mid: [512, 320], low: [384, 240] };
 // 宇宙へ切り替わった瞬間の光の半球の大きさ（最大に対する割合）。街の画で大きく迫っていた球が、
 // 宇宙で急に小さく見えないよう大きめから始める
 const DOME0 = 0.4;
+// 宇宙の衝撃波の殻の半径（rMax に対する割合）。p は半球のふくらみ（finaleTimeline の domeAt、0〜1）。
+// 半球（DOME0 + (1 − DOME0)·p）の少し先（1.05 倍から 1.45 倍へ）を、半球と同じ進みでふくらむ
+export const shellRadius = (p) => (DOME0 + (1 - DOME0) * p) * (1.05 + 0.4 * p);
 // 宇宙のカメラの画角（縦長は横の、横長は縦の、度）
 const SPACE_FOV = { h: 54, v: 36 };
 
@@ -258,8 +261,9 @@ export function createCinematic(views, enemyView, explosionView, { renderer, sce
     const ringR = r * 0.9 + (spaceDist * 0.78) * (1 - (1 - ru) ** 1.5);
     // カメラの下へ近づくほど太く見えるので、近づく前に薄れる
     space.setRing(ringR, ru > 0 ? (1 - smooth((ru - 0.45) / 0.45)) * (1 - f) * smooth(ru / 0.05) : 0);
-    // 衝撃波の殻: 半球のまわりに、薄い光の殻がふくらんで消える
-    space.setShell(r * (1.05 + 1.6 * easeOut(u / 0.75)), (1 - smooth(u / 0.75)) * smooth(u / 0.06) * (1 - f));
+    // 衝撃波の殻: 半球の少し先を、半球と同じゆっくりした進み（domeAt）でふくらみ、ふくらみきる前に薄れて消える
+    const pd = tl.domeAt(t);
+    space.setShell(rMax * shellRadius(pd), (1 - smooth((pd - 0.55) / 0.45)) * smooth(u / 0.06) * (1 - f));
     // 横一線の光: 画面の横幅の大半にわたる
     const hf = 2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(space.camera.fov) / 2) * space.camera.aspect);
     const d = space.camera.position.length();

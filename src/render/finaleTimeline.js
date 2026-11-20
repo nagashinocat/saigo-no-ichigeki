@@ -96,7 +96,7 @@ export function createTimeline({ radius, hitDist }, F = FINALE, cfg = CONFIG) {
   const frontDone = snap + inv(total - bSnap);
   // 宇宙へ切り替わる: 前線が半径の spaceFront に来たとき（追われて引く最短の秒より短くはしない）
   const chaseEnd = snap + Math.max(F.chaseMin, inv(timeAtFront(F.spaceFront * radius, radius, cfg) - bSnap));
-  // 宇宙の半球がふくらみきる時刻（前線が止まるのと同じ。小さな一発で先に止まっていても domeMin 秒はふくらむ）
+  // 宇宙の半球がふくらみきる時刻: 前線が止まる時刻と、宇宙へ切り替わってから domeMin 秒の遅い方（半球はゆっくりふくらむ）
   const domeEnd = Math.max(chaseEnd + F.domeMin, frontDone);
   const flatten = Math.max(chaseEnd + F.spaceMin, domeEnd + F.spaceHold);
   const lineEnd = flatten + F.flattenSec + F.thinSec;

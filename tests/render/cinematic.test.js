@@ -1,6 +1,7 @@
 import { test, expect } from 'vitest';
 import * as THREE from 'three';
-import { leadFor, minLeadFor, createChase, createCinematic, barsFor } from '../../src/render/cinematic.js';
+import { leadFor, minLeadFor, createChase, createCinematic, barsFor, shellRadius } from '../../src/render/cinematic.js';
+import { createTimeline } from '../../src/render/finaleTimeline.js';
 import { planFinale, planRetreat } from '../../src/render/finalePlan.js';
 import { buildEyeCloseup } from '../../src/render/enemyView.js';
 import { generateCity } from '../../src/world/cityGen.js';
@@ -219,4 +220,20 @@ test('逃げる道を後回しにした plan: 放つ瞬間には求めず、止�
   expect(cin.stage).toBe('chase');
   expect(cin.camera.position.toArray().every(Number.isFinite)).toBe(true);
   expect(() => makeCinematic().cin.play(lazy, shot)).toThrow();
+});
+
+test('宇宙の衝撃波の殻もゆっくりふくらむ: いつも半球の少し先にいて、ふくらむ速さは 1 秒あたり 0.6 rMax 以下', () => {
+  for (const shot of SHOTS) {
+    const tl = createTimeline({ radius: shot.radius, hitDist: 30 });
+    const dt = 1 / 120;
+    let prev = shellRadius(tl.domeAt(tl.chaseEnd)), maxRate = 0;
+    for (let t = tl.chaseEnd + dt; t <= tl.flatten; t += dt) {
+      const p = tl.domeAt(t), s = shellRadius(p);
+      expect(s).toBeGreaterThanOrEqual(prev - 1e-12);
+      expect(s).toBeGreaterThan(0.4 + 0.6 * p); // 半球（DOME0 = 0.4）より外
+      maxRate = Math.max(maxRate, (s - prev) / dt);
+      prev = s;
+    }
+    expect(maxRate).toBeLessThanOrEqual(0.6);
+  }
 });
