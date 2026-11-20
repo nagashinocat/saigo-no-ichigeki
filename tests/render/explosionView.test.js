@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { createExplosionView } from '../../src/render/explosionView.js';
 import { TIERS } from '../../src/render/quality.js';
 import { CONFIG } from '../../src/config.js';
-import { frontAt } from '../../src/game/blast.js';
+import { frontAt, blastDuration } from '../../src/game/blast.js';
 
 const camera = new THREE.PerspectiveCamera(60, 1, 1, 5000);
 const make = (tier = 'mid') => {
@@ -31,7 +31,7 @@ test('同時に生きている一発ごとに球を描き、終わった球は�
   view.update(1 / 60, list, camera, 500);
   expect(spheresVisible(scene)).toBe(2);
   expect(view.busy).toBe(true);
-  run(view, list, 1.7 + CONFIG.blast.fadeSec + 0.3); // 半径 200 の一発（約 1.6 秒）が終わって、消えきるまで
+  run(view, list, blastDuration(200) + 0.1 + CONFIG.blast.fadeSec + 0.3); // 半径 200 の一発が終わって、消えきるまで
   expect(spheresVisible(scene)).toBe(0);
   expect(view.busy).toBe(false);
 });
@@ -67,7 +67,7 @@ test('放つと白く光ってすぐ収まり、揺れは front が速く広が�
   const small = make().view;
   run(small, [{ id: 1, shot: shot(60), front: 0 }], 0.4);
   expect(small.cameraInfo.shake).toBeLessThan(growing);
-  run(view, [b], 3);
+  run(view, [b], blastDuration(300));
   expect(view.cameraInfo.shake).toBeLessThan(growing * 0.01);
 });
 
@@ -117,7 +117,7 @@ test('同時の一発が球の数を超えても、一番古い球を使い回�
   // 使い回された古い一発が消えても、新しい一発の球は残る
   run(view, list.slice(2), 1.2); // 前線はまだ途中（160 m/s × 1.2 s < 400 m）
   expect(spheresVisible(scene)).toBe(6);
-  run(view, list.slice(2), 4);
+  run(view, list.slice(2), blastDuration(400) + CONFIG.blast.fadeSec);
   expect(spheresVisible(scene)).toBe(0);
 });
 
@@ -147,7 +147,7 @@ test('ground: heat は球の不透明さ、ember は球の間は満ちて、球�
   run(view, list, 0.3);
   expect(view.ground.heat).toBeCloseTo(1, 5);
   expect(view.ground.ember).toBeCloseTo(1, 5);
-  run(view, list, 1.2 + CONFIG.blast.fadeSec); // 前線が届き、球が消える
+  run(view, list, blastDuration(100) - 0.3 + CONFIG.blast.fadeSec + 0.35); // 前線が届き、球が消える
   expect(view.ground.heat).toBe(0);
   const e1 = view.ground.ember;
   expect(e1).toBeGreaterThan(0.2);

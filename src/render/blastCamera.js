@@ -60,8 +60,9 @@ export function wholeFitPullback(radius, pos, dir, tanV, tanH, margin = BLAST_CA
 }
 
 // 弾けてからの秒（じわじわ期は負）。front は今の前線の半径
-export function sinceBurstOf(front, radius, cfg = CONFIG) {
-  return timeAtFront(front, radius, cfg) - phaseTimes(radius, cfg).creep;
+// small: 払う（小爆発）の曲線
+export function sinceBurstOf(front, radius, cfg = CONFIG, small = false) {
+  return timeAtFront(front, radius, cfg, small) - phaseTimes(radius, cfg, small).creep;
 }
 
 // 弾けてから何秒で全体の位置へ引き始めるか（前線が wideFrontFrac に届く時刻と wideDelay の早い方）
@@ -87,7 +88,7 @@ export function cameraIntent(records, c = BLAST_CAM, cfg = CONFIG) {
 
 // 上空カメラが視線に沿って下がる量 t を、臨界減衰のばねで動かす（動き出しの速さは 0、大きな dt でも振動しない）。
 // update(dt, { pos, dir, tanV, tanH, blasts, front, hold }):
-//   blasts: 今の一発 [{ id, radius, front }]（終わった一発は来なくなる）、front: 見えている球の一番大きい半径、
+//   blasts: 今の一発 [{ id, radius, front, small }]（small: 払う）（終わった一発は来なくなる）、front: 見えている球の一番大きい半径、
 //   hold: true の間は、終わった一発の「保つ」時間を進めない（大きな一発の演出が遠めの構図で止まっている間）
 export function createCameraFollow(c = BLAST_CAM, cfg = CONFIG) {
   let t = 0, v = 0, goal = 0;
@@ -103,8 +104,8 @@ export function createCameraFollow(c = BLAST_CAM, cfg = CONFIG) {
         seen.add(b.id);
         let r = records.get(b.id);
         if (!r) records.set(b.id, (r = { radius: b.radius, sinceBurst: 0, endedAgo: -1 }));
-        r.sinceBurst = sinceBurstOf(b.front, b.radius, cfg);
-        soon = Math.max(soon, frontAt(timeAtFront(b.front, b.radius, cfg) + c.lookahead, b.radius, cfg));
+        r.sinceBurst = sinceBurstOf(b.front, b.radius, cfg, !!b.small);
+        soon = Math.max(soon, frontAt(timeAtFront(b.front, b.radius, cfg, !!b.small) + c.lookahead, b.radius, cfg, !!b.small));
       }
       for (const [id, r] of records) {
         if (seen.has(id)) continue;

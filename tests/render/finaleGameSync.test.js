@@ -62,3 +62,24 @@ test('演出が終わって最後の絵のまま待つ間も、ゲームが終�
   cin.update(1 / 30);
   expect(cin.gameDt).toBeCloseTo(1 / 30, 9);
 });
+
+test('弾けたあとの見せる期も、本物のゲームの前線は演出の前線と一致し、宇宙の半球がふくらみきる（domeEnd）までに一発が終わって over になる（60/30/20 fps）', () => {
+  for (const amount of [CONFIG.power.minRelease, 60, CONFIG.power.max]) {
+    for (const fps of [60, 30, 20]) {
+      const { game, cin } = setup(7, amount);
+      const tl = cin.timeline;
+      let worst = 0, phaseAtChaseEnd = null;
+      while (cin.time < tl.domeEnd + 2 / fps) {
+        cin.update(1 / fps);
+        stepGame(game, cin.gameDt);
+        if (phaseAtChaseEnd === null && cin.time >= tl.chaseEnd) phaseAtChaseEnd = game.phase;
+        const b = game.blasts[0];
+        if (cin.time > tl.snap && b) worst = Math.max(worst, Math.abs(b.front - tl.front(cin.time)));
+      }
+      expect(worst, `amount ${amount} ${fps}fps`).toBeLessThan(0.05);
+      if (tl.frontDone > tl.chaseEnd + 0.1) expect(phaseAtChaseEnd).toBe('finale'); // 宇宙へ切り替わっても、まだ広がっている
+      expect(game.phase, `amount ${amount} ${fps}fps`).toBe('over');
+      expect(cin.time).toBeLessThan(tl.flatten);
+    }
+  }
+});

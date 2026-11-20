@@ -52,6 +52,21 @@ test('追われて引くカメラ: 実際の爆発曲線（じわじわ → 弾�
 });
 
 
+test('追われて引くカメラ: hold で止まり、ゆっくり進む光の壁を待ち受ける（それでも front + minLead より近づかない）', () => {
+  const chase = createChase(30, { hold: 300 });
+  const dt = 1 / 60;
+  let front = 0, s = 30, held = 0;
+  for (let i = 0; i < 600; i++) {
+    front += 30 * dt;
+    s = chase.update(dt, front);
+    expect(s).toBeGreaterThanOrEqual(front + minLeadFor(front) - 1e-9);
+    if (front < 250) expect(s).toBeLessThanOrEqual(300 + 1e-6);
+    if (Math.abs(s - 300) < 0.5) held++;
+  }
+  expect(held).toBeGreaterThan(60); // しばらく止まって待つ
+  expect(s).toBeGreaterThan(300);   // 壁が迫れば、それより先へ押し出される
+});
+
 // createCinematic の進み方（描画の部品は小さな身代わり）
 function makeCinematic(size = { w: 390, h: 844 }, shot = SHOTS[2], opts = {}) {
   const views = { size };
@@ -122,8 +137,9 @@ test('ゲームの時計は演出の時刻表どおりに進み（合計が一�
   const frames = advance(cin, tl.end);
   const sum = frames.reduce((a, f) => a + f.g, 0);
   expect(sum).toBeCloseTo(tl.gameClock(cin.time), 6);
-  // 爆発は追う間に終わる（ゲームは over になれる）
-  expect(tl.gameClock(tl.chaseEnd)).toBeGreaterThanOrEqual(CONFIG.cinematic.freezeSec + blastDuration(shot.radius));
+  // 爆発は宇宙の半球がふくらみきる時刻（domeEnd、押しつぶされる前）に終わる（ゲームは over になれる）。追う間はまだ広がっている
+  expect(tl.gameClock(tl.domeEnd)).toBeGreaterThanOrEqual(CONFIG.cinematic.freezeSec + blastDuration(shot.radius) - 1e-9);
+  expect(tl.gameClock(tl.chaseEnd)).toBeLessThan(CONFIG.cinematic.freezeSec + blastDuration(shot.radius));
   for (const f of frames.filter((x) => x.stage === 'beat')) expect(f.w).toBeLessThan(0.02 / 60);
   for (const f of frames.filter((x) => x.stage === 'hands')) { expect(f.g).toBe(0); expect(f.w).toBe(0); }
 });

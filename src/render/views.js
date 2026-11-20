@@ -147,7 +147,7 @@ export function createViews(renderer, getTier = () => ({ bloom: false, heatHaze:
       const { basePos, baseQuat } = cityCamera.userData;
       _dir.set(0, 0, -1).applyQuaternion(baseQuat);
       _blasts.length = 0;
-      for (const b of blasts) _blasts.push({ id: b.id, radius: b.shot.radius, front: b.front });
+      for (const b of blasts) _blasts.push({ id: b.id, radius: b.shot.radius, front: b.front, small: !!b.shot.small });
       const t = follow.update(dt, { ...viewInfo(cityCamera.aspect), blasts: _blasts, front: cam.front ?? 0, hold });
       cityCamera.position.copy(basePos).addScaledVector(_dir, -t);
       shakeClock += dt;
