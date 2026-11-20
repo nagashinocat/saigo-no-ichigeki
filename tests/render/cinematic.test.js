@@ -285,3 +285,11 @@ test('createCinematic: 追う一発が見つからないままでも、決まっ
   advance(cin, 2);
   expect(cin.active).toBe(false);
 });
+
+test('主人公は浮いている: 穴が深くなっても、演出の目の高さは変わらない', () => {
+  const shot = SHOTS[0];
+  const flat = chooseShot({ shot, buildings: city.buildings, enemies: ARMY, rng: createRng(3) });
+  const pit = chooseShot({ shot, buildings: city.buildings, enemies: ARMY, rng: createRng(3), crater: 300 });
+  expect(flat.path.origin[1]).toBe(CINE.eyeY);
+  expect(pit.path.origin[1]).toBe(CINE.eyeY);
+});

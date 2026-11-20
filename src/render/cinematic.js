@@ -147,7 +147,7 @@ export function chooseShot({ shot, buildings, enemies = [], rng, crater = 0 }) {
   let type = enemy ? TYPES[Math.floor(rng() * TYPES.length)] : 'glass';
   const b = pickTarget(buildings, R, enemy, rng);
   const ground = (p) => groundHeight(Math.hypot(p[0], p[2]), crater > 0 ? [crater] : []);
-  const origin = [0, ground([0, 0, 0]) + CINE.eyeY, 0];
+  const origin = [0, CINE.eyeY, 0]; // 主人公は浮いている（足元の地面が下がっても目の高さは変わらない）
   const baseAz = Math.atan2(b.z, b.x);
   const look = [Math.cos(baseAz), 0, Math.sin(baseAz)];
   const makePath = (az, rise, slope) => ({ origin, az, rise, riseLen: CINE.riseLen, slope, forward: [-Math.cos(az), 0, -Math.sin(az)], look });
