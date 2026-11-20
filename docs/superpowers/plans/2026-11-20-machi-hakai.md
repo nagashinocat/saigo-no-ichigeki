@@ -69,7 +69,7 @@ export const CONFIG = {
   bigShotRatio: 0.35,       // maxDraw に対するこの割合以上が「大きな一発」
   blast:   { speed: 160, vaporizeRatio: 0.18 },
   cinematic: { freezeSec: 1.4, eyeBeatSec: 0.6 },
-  enemy:   { spawnPerSec: 1.2, speed: 6, grabRange: 2.5, drainPerSec: 10, maxGrabbing: 6 },
+  enemy:   { spawnPerSec: 1.2, spawnDist: [60, 90], speed: 6, grabRange: 2.5, drainPerSec: 10, maxGrabbing: 6 },
   score:   { comboStep: 0.1, comboMax: 3 },
 };
 ```
@@ -91,7 +91,7 @@ export const CONFIG = {
   - `radiusFor(amount: number, cfg = CONFIG) -> number`
 
 - [ ] **Step 1: 土台を作る**
-  `/home/claude/machi-hakai` で `git init`。`npm init -y`、`npm i three@0.187.0 cannon-es@0.20.0`、`npm i -D vite@8 vitest@5 playwright @webxr-input-profiles/assets@1.0.20`。`vite.config.js` は `base: './'`（GitHub Pages用）。`package.json` の scripts: `dev`, `build`, `test: "vitest run"`。`index.html` は `<html lang="ja">`、`<canvas id="game">` を1つ置く。`.gitignore` に `node_modules`, `dist`。
+  （git リポジトリとブランチ `feature/game` は作成済み。`.gitignore` も既存なので追記する。）`npm init -y`、`npm i three@0.187.0 cannon-es@0.20.0`、`npm i -D vite@8 vitest@5 playwright @webxr-input-profiles/assets@1.0.20`。`vite.config.js` は `base: './'`（GitHub Pages用）。`package.json` の scripts: `dev`, `build`, `test: "vitest run"`。`index.html` は `<html lang="ja">`、`<canvas id="game">` を1つ置く。`.gitignore` に `node_modules`, `dist`。
 
 - [ ] **Step 2: 失敗するテストを書く**
 
@@ -115,7 +115,7 @@ test('createRng は同じシードで同じ列', () => {});
 - [ ] **Step 3: 実行して失敗を確認**　Run: `npx vitest run tests/game` → FAIL（モジュールがない）
 - [ ] **Step 4: 実装**　`radiusFor = min + (max-min) * (amount/maxDraw)^exponent`。貯めは `update` ごとに `reserve.draw(min(ratePerSec*dt, maxDraw - 現在量))`。
 - [ ] **Step 5: 実行して成功を確認**　Run: `npx vitest run tests/game` → PASS
-- [ ] **Step 6: 設計書もいっしょにコミット**　`git add -A && git commit -m "feat: 土台、力の器と貯め"`
+- [ ] **Step 6: コミット**　`git add -A && git commit -m "feat: 土台、力の器と貯め"`
 
 ---
 
@@ -203,7 +203,7 @@ test('front は speed で広がり shot.radius で止まって done', () => {});
 test('各対象は front が dist を越えた更新で一度だけ Hit になる', () => {});
 test('dist < radius*vaporizeRatio は vaporize、それ以外は push', () => {});
 test('radius より遠い対象は Hit にならない', () => {});
-test('軍勢は spawnPerSec で街の外周から湧き、speed で近づく', () => {});
+test('軍勢は spawnPerSec で spawnDist の範囲（中心から60〜90m）に湧き、speed で近づく', () => {});
 test('grabRange に入ると grab になり、update が掴んでいる数を返す（最大 maxGrabbing）', () => {});
 test('applyBlastFront: front 内の軍勢は dead、掴んでいた者も外れる', () => {});
 ```
@@ -289,7 +289,7 @@ test('一瞬落ちただけでは down を返さない', () => {});
   - `createViews(renderer) -> { cityCamera, handCamera, resize(w,h), render(cityScene, handScene) }`
   - `createStyle(tier) -> { building(kind) -> Material, ground: Material, sky: Object3D, lights: Object3D[] }`
   - `createCityView(city, style, tier) -> { group: Object3D, getBuildingMesh(id), hideBuilding(id) }`
-  - `scripts/snap.mjs <url> <out.png> [--wait ms] [--press ms]`：Playwright（ヘッドレス Chromium、`--use-gl=swiftshader`）でページを開き、指定時間長押ししてからスクリーンショットを撮る
+  - `scripts/snap.mjs <url> <out.png> [--wait ms] [--press ms]`：Playwright（`executablePath: '/usr/bin/google-chrome'`、ヘッドレス、`--use-gl=angle --use-angle=swiftshader`）でページを開き、指定時間長押ししてからスクリーンショットを撮る
 
 - [ ] **Step 1: 失敗するテストを書く**
 
