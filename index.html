@@ -3,14 +3,35 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="data:,">
   <title>街破壊ゲーム</title>
   <style>
     html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0d16; }
-    #game { display: block; width: 100%; height: 100%; touch-action: none; }
+    #game, #hud, #start, #result { touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+    #game { display: block; width: 100%; height: 100%; }
+    body { font-family: system-ui, "Hiragino Sans", "Noto Sans JP", sans-serif; color: #fff; }
+    #hud { position: fixed; inset: 0; pointer-events: none; }
+    .hud-strip { position: absolute; display: flex; justify-content: space-between; align-items: flex-start; box-sizing: border-box; padding: 0.6em 4vw 0; text-shadow: 0 1px 3px rgba(20, 10, 30, 0.85), 0 0 10px rgba(20, 10, 30, 0.5); }
+    .hud-amount { font-size: clamp(20px, 6.4vw, 34px); font-weight: 800; letter-spacing: 0.02em; font-variant-numeric: tabular-nums; }
+    .hud-time { font-size: clamp(13px, 3.8vw, 20px); font-weight: 700; opacity: 0.92; padding-top: 0.35em; }
+    .hud-reserve { position: absolute; height: 5px; background: rgba(0, 0, 0, 0.45); }
+    .hud-reserve i { display: block; height: 100%; transform-origin: left; background: linear-gradient(90deg, #ffb347, #fff3c4); box-shadow: 0 0 8px #ffc766; }
+    #start { position: fixed; left: 0; right: 0; top: 30%; text-align: center; pointer-events: none; font-size: clamp(16px, 4.6vw, 26px); font-weight: 700; text-shadow: 0 1px 4px rgba(20, 10, 30, 0.9), 0 0 14px rgba(20, 10, 30, 0.6); }
+    #start[hidden], #result[hidden] { display: none; }
+    #result { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.4em; background: rgba(12, 8, 24, 0.72); text-align: center; }
+    .result-reason { font-size: clamp(16px, 4.4vw, 24px); opacity: 0.85; }
+    .result-label { font-size: clamp(13px, 3.6vw, 18px); opacity: 0.7; margin-top: 0.8em; }
+    .result-amount { font-size: clamp(40px, 13vw, 84px); font-weight: 900; text-shadow: 0 0 24px rgba(255, 180, 90, 0.6); }
+    .result-row { display: flex; gap: 1em; margin-top: 1.6em; }
+    .result-btn { font: inherit; font-size: clamp(16px, 4.4vw, 22px); font-weight: 700; padding: 0.7em 1.6em; border-radius: 999px; border: 2px solid #fff; background: transparent; color: #fff; cursor: pointer; }
+    .result-btn.primary { background: #fff; color: #1b1030; }
   </style>
 </head>
 <body>
   <canvas id="game"></canvas>
+  <div id="hud"></div>
+  <div id="start">長押しで力を貯め、離して放て</div>
+  <div id="result" hidden></div>
   <script type="module" src="./src/main.js"></script>
 </body>
 </html>

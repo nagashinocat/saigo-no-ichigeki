@@ -14,6 +14,10 @@ import { createFrontTracker } from './render/sphereDeform.js';
 import { createEnemyView } from './render/enemyView.js';
 import { chooseShot, createCinematic } from './render/cinematic.js';
 import { createRng } from './rng.js';
+import { createPressTracker } from './input/press.js';
+import { createHud } from './ui/hud.js';
+import { createResult } from './ui/result.js';
+import { createAudio } from './audio/audio.js';
 
 const MAX_FRAME_DT = 0.1;
 
@@ -46,24 +50,46 @@ const handDetail = tier === 'high' ? 'high' : 'low';
 // 左手は右手の形を鏡に映して使い回す（組み立ては1回ぶん）
 const hand = createHandView({ right: buildHandModel({ detail: handDetail }), left: buildHandModel({ detail: handDetail, side: 'left' }) }, tier);
 
+// 入力・HUD・結果・音
+const audio = createAudio();
+const hud = createHud(document.getElementById('hud'));
+const startHint = document.getElementById('start');
+const result = createResult(document.getElementById('result'), {
+  // 壊れた街や地面のえぐれは作り直せないので、新しい種でページを読み直す
+  onRetry() {
+    const q = new URLSearchParams(location.search);
+    q.set('seed', String(Math.floor(Math.random() * 2 ** 31)));
+    location.search = q.toString();
+  },
+});
+const press = createPressTracker({
+  onStart() { startHint.hidden = true; game.pressStart(); },
+  onEnd() { game.pressEnd(); },
+});
+canvas.addEventListener('pointerdown', (e) => { canvas.setPointerCapture?.(e.pointerId); press.down(e.pointerId); });
+canvas.addEventListener('pointerup', (e) => press.up(e.pointerId));
+canvas.addEventListener('pointercancel', (e) => press.cancel(e.pointerId));
+// 指が画面の外へ出ても、キャプチャが外れたら離したことにする
+canvas.addEventListener('lostpointercapture', (e) => press.cancel(e.pointerId));
+window.addEventListener('contextmenu', (e) => e.preventDefault());
+window.addEventListener('pointerdown', () => audio.unlock(), { once: true, capture: true });
+document.addEventListener('visibilitychange', () => {
+  game.setHidden(document.hidden);
+  if (document.hidden) audio.suspend(); else audio.resume();
+});
+game.on('over', ({ reason, total }) => { audio.chargeHum(0); audio.rumble(0); result.show(total, reason); });
+
 const views = createViews(renderer, () => TIERS[tier]);
 // CSS で決まったキャンバスの実寸に合わせる（スマホのアドレスバーで 100vh がずれる問題を避ける）
 const resize = () => {
   views.resize(canvas.clientWidth || window.innerWidth, canvas.clientHeight || window.innerHeight);
   const r = views.layout.hand;
   hand.resize(r.w / Math.max(1, r.h));
+  hud.place(views.layout, views.size.h);
 };
 window.addEventListener('resize', resize);
 window.addEventListener('orientationchange', resize);
 resize();
-
-// 仮の入力（Task 12 で本物の入力に置き換える）: キャンバスの長押しで貯め、離して撃つ
-function bindTemporaryInput(target) {
-  target.addEventListener('pointerdown', (e) => { target.setPointerCapture?.(e.pointerId); game.pressStart(); });
-  target.addEventListener('pointerup', () => game.pressEnd());
-  target.addEventListener('pointercancel', () => game.pressEnd());
-}
-bindTemporaryInput(canvas);
 
 // 壊れたものは破片になる（手前の物理の焦点は Task 11 で演出カメラに合わせる。null なら全部プール）
 const destruction = createDestruction({ cityView, getTier: () => TIERS[tier], seed });
@@ -73,7 +99,11 @@ cityScene.add(debrisView.mesh);
 // 爆発の見た目（光の球・衝撃波・閃光・粉・光に溶ける建物）
 const explosionView = createExplosionView(cityScene, tier, { sunDir: style.sunDir, seed });
 explosionView.warmup(renderer, views.cityCamera);
-game.on('shot', (shot) => { explosionView.begin(shot); hand.release(shot); });
+game.on('shot', (shot) => {
+  explosionView.begin(shot); hand.release(shot);
+  // 放つ瞬間は無音。大きな一発は、白くなってから目が映る一拍まで（時間が止まっている間）ずっと無音
+  audio.releaseSilence(shot.isBig ? CONFIG.cinematic.freezeSec : 0.3);
+});
 
 // 軍勢と主人公の姿
 const enemyView = createEnemyView(cityScene, tier, { sunDir: style.sunDir });
@@ -106,7 +136,10 @@ game.on('hit', (e) => {
   if (e.hit.id[0] === 'b') standing.delete(e.target.id);
   if (e.hit.kind === 'vaporize') explosionView.vaporize(vaporTarget(e));
   destruction.onHit(e);
+  hitsThisFrame++;
 });
+let hitsThisFrame = 0;
+const burstSeen = new Set();
 
 // 画質の自動調整。ここでは画素比だけを下げる（破片数などの他の値は後の Task が TIERS[tier] から読む）
 const governor = createFpsGovernor({ target: isMobile ? 30 : 55 });
@@ -150,6 +183,24 @@ function simulate(dt) {
   if (!cinematic.frozen) views.updateCamera(dt, explosionView.cameraInfo);
   const h = handInput ?? { level: game.charge.level(), active: game.charge.active, reserve: game.reserve.value / CONFIG.reserve.max };
   hand.update(dt, h.level, h.active, h.reserve);
+  hud.update({ total: game.score.total, remaining: game.timer.remaining, reserve: game.reserve.value, max: CONFIG.reserve.max });
+  hud.setVisible(!cinematic.fullscreen);
+  updateAudio(live);
+}
+
+// 音: 貯めの唸り、じわじわ期の脈動、弾けた瞬間の爆発、崩落
+function updateAudio(live) {
+  audio.chargeHum(game.charge.active ? game.charge.level() : 0);
+  let creep = 0;
+  for (const b of live) {
+    const k = Math.sqrt(b.shot.radius / CONFIG.radius.max);
+    if (b.front >= CONFIG.blast.creepFrac * b.shot.radius) {
+      if (!burstSeen.has(b.id)) { burstSeen.add(b.id); audio.boom(k); }
+    } else creep = Math.max(creep, k);
+  }
+  audio.rumble(creep);
+  if (hitsThisFrame > 0) audio.crumble(hitsThisFrame);
+  hitsThisFrame = 0;
 }
 function draw() {
   if (cinematic.white) views.renderWhite();
