@@ -4,6 +4,8 @@ import { CONFIG } from '../config.js';
 const BLOCK = 18;            // 区画の一辺 m
 const ROAD = 8;              // 道路幅 m
 const PITCH = BLOCK + ROAD;  // 格子の間隔 m
+// 描画（道路の格子）が同じ寸法を使えるように公開する
+export const GRID = { BLOCK, ROAD, PITCH };
 
 const FOOTPRINT = [8, 17];   // 建物の幅・奥行き m（区画内に収まる）
 const CENTER_MAX_H = 150;    // 中心付近の最大の高さ m
