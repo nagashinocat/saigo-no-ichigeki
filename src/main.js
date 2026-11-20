@@ -15,7 +15,7 @@ import { createFrontTracker } from './render/sphereDeform.js';
 import { createHeroAura } from './render/heroAura.js';
 import { createEnemyView } from './render/enemyView.js';
 import { createCinematic, leadFor } from './render/cinematic.js';
-import { planFinale } from './render/finalePlan.js';
+import { planFinale, planRetreat } from './render/finalePlan.js';
 import { createRng } from './rng.js';
 import { createPressTracker } from './input/press.js';
 import { createHud } from './ui/hud.js';
@@ -153,19 +153,23 @@ cityScene.add(heroAura.group);
 
 // 最後の一発の演出（画面全体、仕様 12 章の絵コンテ 1〜5）: 白 → 軍勢の一人の体感時間（砕けた窓ガラスに映る目）→
 // 時間が戻り弾ける爆発から逃げる → 宇宙から見た光の半球と衝撃波の輪 → 横一線の光 → 無音と地鳴り（cinematic.js）
-const cinematic = createCinematic(views, enemyView, explosionView, { renderer, scene: cityScene, sunDir: style.sunDir, tier, lights: { sun: style.lights[0], fill: style.lights[2] } });
+// 画質の段は演出を始めるたびに読む（途中で段が下がっていれば、その段の重さで演じる）
+const cinematic = createCinematic(views, enemyView, explosionView, { renderer, scene: cityScene, sunDir: style.sunDir, tier, getTier: () => tier, lights: { sun: style.lights[0], fill: style.lights[2] } });
 cinematic.warmup(renderer, views.cityCamera);
 const shotRng = createRng(seed ^ 0xc1a3e);
 const standing = new Set(game.city.buildings.map((b) => b.id)); // まだ壊れていないビル
+// 撮る場所の計算を一度空回しして JIT を温めておく（放つ瞬間、両手が組み合わさる間に止まらないように）。乱数は別のものを使う
+{
+  const warm = { radius: CONFIG.radius.max };
+  planFinale({ shot: warm, rng: createRng(seed ^ 0x5eed), lead: leadFor(warm.radius), buildings: game.city.buildings, enemies: game.enemies.list });
+}
 let finalBlastSize = 0;
 game.on('cinematicStart', (shot) => {
-  const plan = planFinale({
-    shot, rng: shotRng, crater: fronts.crater, lead: leadFor(shot.radius),
-    buildings: game.city.buildings.filter((b) => standing.has(b.id)),
-    enemies: game.enemies.list,
-  });
+  // 放つ瞬間は撮る場所だけを決め、重い逃げる道の計算は演出の止まった一拍の間に回す（必要になるのは約 4 秒後）
+  const buildings = game.city.buildings.filter((b) => standing.has(b.id)), crater = fronts.crater, lead = leadFor(shot.radius);
+  const plan = planFinale({ shot, rng: shotRng, crater, lead, buildings, enemies: game.enemies.list, retreat: false });
   finalBlastSize = Math.sqrt(shot.radius / CONFIG.radius.max);
-  cinematic.play(plan, shot);
+  cinematic.play(plan, shot, { retreat: () => planRetreat(plan, { buildings, crater, radius: shot.radius, lead }) });
 });
 game.on('cinematicEnd', () => cinematic.end());
 // 演出の音の段取り
@@ -252,7 +256,8 @@ function simulate(dt) {
   const h = handInput ?? { level: game.power.level, active: game.charge.active, steady: game.grabbing > 0 ? GRABBED_STEADY : 1 };
   hand.update(dt, h.level, h.active, h.steady);
   hud.update({ remaining: game.timer.remaining, power: game.power.value, max: CONFIG.power.max, canPuff: game.canPuff });
-  hud.setVisible(!cinematic.fullscreen);
+  // 最後の一発を放ってから結果までずっと HUD は出さない（両手が組み合わさる間も）
+  hud.setVisible(!cinematic.active);
   updateAudio(live);
   updateResult(dt);
 }

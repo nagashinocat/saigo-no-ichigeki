@@ -122,17 +122,18 @@ export function createGame({ seed, cfg = CONFIG }) {
 
     update(rawDt) {
       if (hidden || phase === 'ready' || phase === 'over') return;
-      const dt = Number.isFinite(rawDt) ? Math.min(Math.max(rawDt, 0), MAX_DT) : 0;
+      let dt = Number.isFinite(rawDt) ? Math.min(Math.max(rawDt, 0), MAX_DT) : 0;
 
       if (phase === 'cinematic') {
         cinematicClock += dt;
-        if (cinematicClock >= cfg.cinematic.freezeSec) {
-          emit('cinematicEnd');
-          phase = 'finale';
-          finalBlast = startBlast(pendingShot);
-          pendingShot = null;
-        }
-        return;
+        if (cinematicClock < cfg.cinematic.freezeSec) return;
+        emit('cinematicEnd');
+        phase = 'finale';
+        finalBlast = startBlast(pendingShot);
+        pendingShot = null;
+        // 止まった間を越えた残りの時間は、そのまま爆発に渡す（捨てると前線が演出の時刻表より遅れる）
+        dt = cinematicClock - cfg.cinematic.freezeSec;
+        if (dt <= 0) return;
       }
 
       // 最後の一発の間は、爆発・命中・採点だけが進む（タイマー・軍勢・力は止まったまま）

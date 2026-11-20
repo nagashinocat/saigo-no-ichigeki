@@ -1,5 +1,5 @@
 import { test, expect } from 'vitest';
-import { planFinale, PLAN, retreatPoint, nearDist, segHitsBox, retreatMargin } from '../../src/render/finalePlan.js';
+import { planFinale, planRetreat, PLAN, RIDER_MAX_ANG, retreatPoint, nearDist, segHitsBox, retreatMargin } from '../../src/render/finalePlan.js';
 import { facadeWindows } from '../../src/render/facadeWindows.js';
 import { generateCity } from '../../src/world/cityGen.js';
 import { radiusFor } from '../../src/game/charge.js';
@@ -58,6 +58,31 @@ test('目が映る一人は、生きた軍勢の中から選ばれ、ビルは�
   const p = planFinale({ shot: SHOTS[1], buildings: city.buildings, enemies: [], rng: createRng(1) });
   expect(p.riderId).toBeNull();
   expect(p.buildingId).not.toBeNull();
+});
+
+test('目が映る一人は、ビルの向きにいる生きた軍勢のうち、カメラにいちばん近い一人', () => {
+  const pos = (e) => [Math.cos(e.angle) * e.dist, Math.sin(e.angle) * e.dist];
+  for (const { plan } of cases()) {
+    const a = Math.atan2(plan.building.z, plan.building.x);
+    const near = (e) => e.state !== 'dead' && Math.abs(Math.atan2(Math.sin(e.angle - a), Math.cos(e.angle - a))) < RIDER_MAX_ANG;
+    const d = (e) => { const p = pos(e); return Math.hypot(p[0] - plan.camPos[0], p[1] - plan.camPos[2]); };
+    const best = ARMY.filter(near).sort((x, y) => d(x) - d(y))[0];
+    if (best) expect(plan.riderId).toBe(best.id);
+  }
+});
+
+test('逃げる道を後回しにできる: retreat: false なら null で、あとの planRetreat は同じ道を返す', () => {
+  for (const seed of [3, 7]) {
+    const city = generateCity(seed);
+    for (const shot of SHOTS) {
+      const args = { shot, buildings: city.buildings, enemies: ARMY, lead: lead(shot.radius) };
+      const full = planFinale({ ...args, rng: createRng(5) });
+      const lazy = planFinale({ ...args, rng: createRng(5), retreat: false });
+      expect(lazy.retreat).toBeNull();
+      expect({ ...lazy, retreat: full.retreat }).toEqual(full);
+      expect(planRetreat(lazy, { buildings: city.buildings, radius: shot.radius, lead: lead(shot.radius) })).toEqual(full.retreat);
+    }
+  }
 });
 
 test('窓: 選んだ壁の上に並び、カメラの方を向いた壁のもの。ガラス片はカメラの前 1.5〜4 m', () => {

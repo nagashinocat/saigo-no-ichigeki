@@ -167,10 +167,32 @@ function findRetreat(origin, base, buildings, ground, radius, lead) {
   return best ? best.path : { origin, dir: [Math.cos(radial), Math.sin(radial)], rise: 260, riseLen: PLAN.riseLen, slope: PLAN.slope, flat: 0 };
 }
 
+const groundFor = (crater) => (p) => groundHeight(Math.hypot(p[0], p[2]), crater > 0 ? [crater] : []);
+
+// 逃げる道だけを探す（planFinale の retreat: false で後回しにしたとき、演出の白〜一拍の間に呼ぶ）。
+// plan: planFinale の戻り値、ほかは planFinale に渡したものと同じ（radius は shot.radius）
+export function planRetreat(plan, { buildings, crater = 0, radius, lead = 0 }) {
+  const { camPos: c, look: l } = plan;
+  return findRetreat(c, Math.atan2(c[2] - l[2], c[0] - l[0]), buildings, groundFor(crater), radius, lead);
+}
+
+// 目が映る一人: ビルの向き（angle から maxAng 以内）にいる生きた軍勢のうち、カメラにいちばん近い一人（カメラはその一人の目線）
+export const RIDER_MAX_ANG = 1.2;
+function nearestRider(enemies, pos, angle) {
+  let best = null, bd = Infinity;
+  for (const e of enemies) {
+    if (e.state === 'dead' || angDiff(e.angle, angle) >= RIDER_MAX_ANG) continue;
+    const p = enemyPos(e), d = Math.hypot(p[0] - pos[0], p[2] - pos[2]);
+    if (d < bd) { bd = d; best = e; }
+  }
+  return best;
+}
+
 // shot: 最後の一発（radius）、buildings: 残っているビル、enemies: 軍勢、crater: 地面のえぐれ
 // lead: 逃げる道を確かめる長さに足す、前線の先を行く距離（m、半径 radius のとき）
-export function planFinale({ shot, buildings, enemies = [], rng, crater = 0, lead = 0 }) {
-  const ground = (p) => groundHeight(Math.hypot(p[0], p[2]), crater > 0 ? [crater] : []);
+// retreat: false なら逃げる道は探さず null（放つ瞬間を軽くする。あとで planRetreat で求める）
+export function planFinale({ shot, buildings, enemies = [], rng, crater = 0, lead = 0, retreat = true }) {
+  const ground = groundFor(crater);
   const rider = pickRider(enemies, rng);
   const angle = rider ? rider.angle : rng() * Math.PI * 2;
   const riders = enemies.filter((e) => e.state !== 'dead').map(enemyPos);
@@ -205,9 +227,9 @@ export function planFinale({ shot, buildings, enemies = [], rng, crater = 0, lea
     cam.pos[1] + fwd[1] * PLAN.shardAhead + 0.1,
     cam.pos[2] + fwd[2] * PLAN.shardAhead + right[2] / rl * 0.08 * side,
   ];
-  const retreat = findRetreat(cam.pos, Math.atan2(cam.pos[2] - cam.look[2], cam.pos[0] - cam.look[0]), buildings, ground, shot.radius, lead);
-  return {
-    riderId: rider ? rider.id : null,
+  const eyeOf = rider ? (building ? nearestRider(enemies, cam.pos, Math.atan2(building.z, building.x)) : null) ?? rider : null;
+  const plan = {
+    riderId: eyeOf ? eyeOf.id : null,
     buildingId: building ? building.id : null,
     building: building ? { x: building.x, z: building.z, w: building.w, d: building.d, h: building.h, kind: building.kind, dist: building.dist } : null,
     normal: n,
@@ -216,6 +238,8 @@ export function planFinale({ shot, buildings, enemies = [], rng, crater = 0, lea
     look: cam.look,
     shardPos,
     windows,
-    retreat,
+    retreat: null,
   };
+  if (retreat) plan.retreat = planRetreat(plan, { buildings, crater, radius: shot.radius, lead });
+  return plan;
 }

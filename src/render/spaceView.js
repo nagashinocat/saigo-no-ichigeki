@@ -24,9 +24,11 @@ float n3(vec3 x) {
   return mix(mix(mix(h31(i), h31(i + vec3(1, 0, 0)), f.x), mix(h31(i + vec3(0, 1, 0)), h31(i + vec3(1, 1, 0)), f.x), f.y),
              mix(mix(h31(i + vec3(0, 0, 1)), h31(i + vec3(1, 0, 1)), f.x), mix(h31(i + vec3(0, 1, 1)), h31(i + vec3(1, 1, 1)), f.x), f.y), f.z);
 }
+// 段数は uOct（画質の段で変わる。MAX_OCT までで打ち切る）
+uniform int uOct;
 float fbm(vec3 p) {
   float v = 0.0, a = 0.5;
-  for (int i = 0; i < OCT; i++) { v += a * n3(p); p = p * 2.03 + 7.1; a *= 0.5; }
+  for (int i = 0; i < MAX_OCT; i++) { if (i >= uOct) break; v += a * n3(p); p = p * 2.03 + 7.1; a *= 0.5; }
   return v;
 }`;
 
@@ -215,6 +217,7 @@ const TIER = {
   low: { oct: 3, seg: 72, stars: 500 },
 };
 
+// tier: 作るときの段（球の分割と、星・雲の段数の上限）。setTier で、それより軽い段へ下げられる
 export function createSpaceView(tier = 'high') {
   const T = TIER[tier] ?? TIER.mid;
   const scene = new THREE.Scene();
@@ -228,9 +231,10 @@ export function createSpaceView(tier = 'high') {
   const earthU = {
     uSun: { value: sun }, uCity: { value: city }, uTime: { value: 0 },
     uDome: { value: 0 }, uGlowR: { value: 0.02 }, uRing: { value: 0 }, uRingI: { value: 0 }, uScar: { value: 0 },
+    uOct: { value: T.oct },
   };
   const earth = new THREE.Mesh(new THREE.SphereGeometry(RE, T.seg, T.seg / 2),
-    new THREE.ShaderMaterial({ uniforms: earthU, vertexShader: EARTH_VERT, fragmentShader: EARTH_FRAG, defines: { OCT: T.oct } }));
+    new THREE.ShaderMaterial({ uniforms: earthU, vertexShader: EARTH_VERT, fragmentShader: EARTH_FRAG, defines: { MAX_OCT: T.oct } }));
   earth.position.copy(center);
   scene.add(earth);
 
@@ -263,9 +267,9 @@ export function createSpaceView(tier = 'high') {
   sunMesh.renderOrder = 1;
   scene.add(sunMesh);
 
-  const domeU = { uI: { value: 0 }, uTime: { value: 0 }, uFlat: { value: 0 } };
+  const domeU = { uI: { value: 0 }, uTime: { value: 0 }, uFlat: { value: 0 }, uOct: { value: 3 } };
   const dome = new THREE.Mesh(new THREE.SphereGeometry(1, 48, 24, 0, Math.PI * 2, 0, Math.PI / 2),
-    additive({ uniforms: domeU, vertexShader: DOME_VERT, fragmentShader: DOME_FRAG, defines: { OCT: 3 }, side: THREE.DoubleSide }));
+    additive({ uniforms: domeU, vertexShader: DOME_VERT, fragmentShader: DOME_FRAG, defines: { MAX_OCT: 3 }, side: THREE.DoubleSide }));
   dome.renderOrder = 2;
   dome.position.set(0, -0.3, 0);
   scene.add(dome);
@@ -296,7 +300,7 @@ export function createSpaceView(tier = 'high') {
   line.frustumCulled = false;
   scene.add(line);
 
-  const _qz = new THREE.Quaternion(), _z = new THREE.Vector3(0, 0, 1);
+  const _qz = new THREE.Quaternion(), _z = new THREE.Vector3(0, 0, 1), _dir = new THREE.Vector3(), _look = new THREE.Vector3();
   let camRoll = 0;
 
   return {
@@ -307,14 +311,11 @@ export function createSpaceView(tier = 'high') {
       camera.aspect = aspect;
       const vf = aspect < 1 ? 2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(fovH) / 2) / aspect) : THREE.MathUtils.degToRad(fovV);
       camera.fov = THREE.MathUtils.radToDeg(vf);
-      // カメラは街の手前（+z）、見る先は街の向こう（-z）
-      const camPos = new THREE.Vector3(0, 0, dist);
-      // 地球の丸みに沿って高さを付ける
-      const dir = camPos.clone().sub(center).normalize();
+      // カメラは街の手前（+z）、見る先は街の向こう（-z）。地球の丸みに沿って高さを付ける
+      const dir = _dir.set(0, 0, dist).sub(center).normalize();
       camera.position.copy(center).addScaledVector(dir, RE + alt);
-      const look = new THREE.Vector3(0, lookUp, -lookAhead);
       camera.up.copy(dir);
-      camera.lookAt(look);
+      camera.lookAt(_look.set(0, lookUp, -lookAhead));
       camera.rotateZ(roll);
       camRoll = roll;
       camera.updateProjectionMatrix();
@@ -356,6 +357,13 @@ export function createSpaceView(tier = 'high') {
       shellU.uI.value = I;
     },
     setStars(f) { starU.uFade.value = f; },
+    // 画質の段を合わせる（作ったときの段より重くはしない）: 雲の fbm の段数と、描く星の数
+    setTier(t) {
+      const U = TIER[t] ?? TIER.mid;
+      earthU.uOct.value = Math.min(T.oct, U.oct);
+      starGeo.setDrawRange(0, Math.min(T.stars, U.stars));
+    },
+    get tierInfo() { return { oct: earthU.uOct.value, stars: starGeo.drawRange.count === Infinity ? T.stars : starGeo.drawRange.count }; },
     warmup(renderer) {
       dome.visible = line.visible = shell.visible = true;
       renderer.compile(scene, camera);

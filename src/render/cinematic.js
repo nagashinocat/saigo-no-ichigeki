@@ -74,12 +74,15 @@ const SPACE_FOV = { h: 54, v: 36 };
 // views: createViews の戻り値（全画面の大きさ）、enemyView: 目の色と主人公の向き、explosionView: 揺れと閃光。
 // opts.renderer: 目のレンダーターゲット、opts.scene: 小道具を置く街の場面、opts.tier: 画質の段
 // opts.lights: { sun, fill }（街の光。一拍の間は、光を背にしたビルの壁が影に沈むよう弱める）
-export function createCinematic(views, enemyView, explosionView, { renderer, scene, sunDir, tier = 'high', cfg = CONFIG, lights = null } = {}) {
+// opts.getTier: 今の画質の段（演出を始めるたびに読み、目の画像の大きさ・雲の細かさ・星やガラス片の数を合わせる。
+// 部品は始めの段の大きさで作る。段は下がるだけなので、それより重くはならない）
+export function createCinematic(views, enemyView, explosionView, { renderer, scene, sunDir, tier = 'high', getTier = () => tier, cfg = CONFIG, lights = null } = {}) {
   const listeners = {};
   const emit = (name, arg) => { for (const fn of listeners[name] ?? []) fn(arg); };
   const cam = new THREE.PerspectiveCamera(60, 1, 0.1, 9000);
   const [rw, rh] = EYE_RT[tier] ?? EYE_RT.mid;
   const rt = new THREE.WebGLRenderTarget(rw, rh, { type: THREE.HalfFloatType, depthBuffer: false });
+  let playTier = tier;
   const eye = createCineEye();
   const props = createCinematicProps(scene, rt.texture, { sunDir, tier });
   const space = createSpaceView(tier);
@@ -87,6 +90,13 @@ export function createCinematic(views, enemyView, explosionView, { renderer, sce
   // phase: 'off' | 'play'（時刻表を進める） | 'held'（終わって最後の絵のまま待つ）
   let phase = 'off', t = 0, plan = null, tl = null, stage = 'off';
   let gameDt = 0, worldDt = 0, chase = null, chaseC = 1, chaseR0 = 0, cuesDone = new Set();
+  // 逃げる道（planFinale の retreat: false で後回しにしたもの）を求める関数。一拍の間に一度だけ呼ぶ
+  let resolveRetreat = null;
+  function ensureRetreat() {
+    if (!plan.retreat && resolveRetreat) plan.retreat = resolveRetreat();
+    resolveRetreat = null;
+    return plan.retreat;
+  }
   const P = { cam: new THREE.Vector3(), look: new THREE.Vector3(), shard: new THREE.Vector3(), fwd: new THREE.Vector3(), radial: new THREE.Vector3() };
   const _pos = new THREE.Vector3(), _look = new THREE.Vector3(), _q = new THREE.Quaternion(), _e = new THREE.Euler();
   const facing = new THREE.Quaternion();
@@ -138,8 +148,9 @@ export function createCinematic(views, enemyView, explosionView, { renderer, sce
     const dolly = 0.25 * smooth((t - tl.white) / (c - tl.white)) + 0.45 * easeInOut(b);
     _pos.copy(P.cam).addScaledVector(P.fwd, dolly);
     // 光の方へ少し見上げる
-    const lookWide = _look.copy(P.look).add(new THREE.Vector3(0, 2.5 * smooth((t - tl.white) / 0.8), 0));
-    const lookAt = lookWide.clone().lerp(P.shard, toShard);
+    const lookAt = _look.copy(P.look);
+    lookAt.y += 2.5 * smooth((t - tl.white) / 0.8);
+    lookAt.lerp(P.shard, toShard);
     const shardDist = _pos.distanceTo(P.shard);
     const fill = 0.55 + 0.45 * easeInOut(b);
     const hb = pulse(t, tl.beats);
@@ -183,6 +194,8 @@ export function createCinematic(views, enemyView, explosionView, { renderer, sce
     const k = (t - tl.snap);
     const wide = smooth((k - 0.45) / 0.7);
     if (!chase) {
+      const d = ensureRetreat().dir;
+      chaseC = Math.max(0.35, (d[0] * P.radial.x + d[1] * P.radial.z));
       chase = createChase(chaseR0, {
         lead: (f) => (16 + 0.55 * f) * (1 - wideK) + (24 + 1.25 * f) * wideK,
         minLead: (f) => (8 + 0.2 * f) * (1 - wideK) + (8 + 0.35 * f) * wideK,
@@ -298,17 +311,24 @@ export function createCinematic(views, enemyView, explosionView, { renderer, sce
       r.setRenderTarget(prev);
       tmp.dispose();
     },
-    // 'cinematicStart': plan は finalePlan.planFinale の戻り値
-    play(p, s) {
-      plan = p; phase = 'play'; t = 0; stage = 'hands';
+    // 今の演出の画質: 段・目の画像の大きさ・雲の段数と星の数・ガラス片と塵の数
+    get quality() { return { tier: playTier, eye: [rt.width, rt.height], space: space.tierInfo, props: props.counts }; },
+    // 'cinematicStart': plan は finalePlan.planFinale の戻り値。
+    // opts.retreat: plan.retreat が null のとき逃げる道を返す関数（重いので、放つ瞬間ではなく止まった一拍の間に呼ぶ）
+    play(p, s, { retreat = null } = {}) {
+      plan = { ...p }; phase = 'play'; t = 0; stage = 'hands';
+      resolveRetreat = retreat;
+      if (!plan.retreat && !resolveRetreat) throw new Error('cinematic.play: plan.retreat がなく、求める関数もない');
+      playTier = getTier();
+      const [ew, eh] = EYE_RT[playTier] ?? EYE_RT.mid;
+      if (ew !== rt.width || eh !== rt.height) rt.setSize(ew, eh);
+      space.setTier(playTier);
       tl = createTimeline({ radius: s.radius, hitDist: p.hitDist }, undefined, cfg);
       chase = null; cuesDone = new Set();
       P.cam.fromArray(p.camPos); P.look.fromArray(p.look); P.shard.fromArray(p.shardPos);
       P.fwd.copy(P.shard).sub(P.cam).setY(0).normalize();
       P.radial.set(p.camPos[0], 0, p.camPos[2]).normalize();
       chaseR0 = Math.hypot(p.camPos[0], p.camPos[2]);
-      const d = p.retreat.dir;
-      chaseC = Math.max(0.35, (d[0] * P.radial.x + d[1] * P.radial.z));
       // 主人公は狙ったビルの方を向く
       enemyView.setHeroYaw(Math.atan2(P.radial.x, P.radial.z));
       // 同じ人は同じ目
@@ -322,7 +342,7 @@ export function createCinematic(views, enemyView, explosionView, { renderer, sce
       const tanV = Math.tan(THREE.MathUtils.degToRad(cam.fov) / 2);
       const pc = perceivedTime(tl.contact);
       props.setup(p, { pos: p.camPos, fwd: fwd.toArray(), right: right.toArray(), up: up.toArray(), tanV, tanH: tanV * cam.aspect },
-        { contact: pc, breakAt: [pc * 0.45, pc * 0.82] }, [tl.contact - 0.55, tl.contact + 0.12]);
+        { contact: pc, breakAt: [pc * 0.45, pc * 0.82] }, [tl.contact - 0.55, tl.contact + 0.12], playTier);
       // 宇宙での大きさ: 大きな一発ほど大きい
       // 光の半球の最大の大きさは、宇宙のカメラの画面の高さに対して決める（縦長でも横長でも同じ見え方）
       spaceDist = aspect() < 1 ? 190 : 270;
@@ -338,7 +358,8 @@ export function createCinematic(views, enemyView, explosionView, { renderer, sce
     update(dt) {
       gameDt = 0; worldDt = 0;
       if (phase === 'off') return;
-      if (phase === 'held') { updateSpace(); t += dt; return; }
+      // 最後の絵のまま待つ間: ゲームがまだ終わっていなければ（念のため）、ゲームの時間は現実の速さで進める
+      if (phase === 'held') { gameDt = dt; updateSpace(); t += dt; return; }
       const t0 = t;
       t += dt;
       gameDt = tl.gameDt(t0, t);
@@ -353,6 +374,8 @@ export function createCinematic(views, enemyView, explosionView, { renderer, sce
         props.group.visible = true;
         dimLights(smooth((t - tl.white + 0.1) / 0.2));
         updateCity();
+        // 逃げる道は、世界がほぼ止まった一拍のはじめに求める（必要になるのは時間が戻ってから）
+        if (stage === 'beat') ensureRetreat();
         return;
       }
       props.hide();

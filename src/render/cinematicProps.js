@@ -296,11 +296,17 @@ export function createCinematicProps(scene, eyeTexture, { sunDir = new THREE.Vec
   return {
     group,
     heroMesh: hero,
+    get counts() { return { shards: small.count, motes: moteGeo.drawRange.count }; },
     // 演出の始まりに: plan（finalePlan.js）から窓・ガラス片・塵を並べる。
     // view: 一拍のカメラ { pos, fwd, right, up, tanV, tanH }、P: { contact, breakAt: [早い, 遅い] }（体感時間）、
     // heroTimes: 目が映るガラス片が窓を離れる・カメラの前に着く演出の秒
-    setup(plan, view, P, heroTimes) {
+    // tier: 今の画質の段（ガラス片と塵の数。作ったときの段より多くはしない）
+    setup(plan, view, P, heroTimes, tier = null) {
       group.visible = true;
+      const want = TIER_COUNTS[tier] ?? counts;
+      const nShards = Math.min(counts.shards, want.shards), nMotes = Math.min(counts.motes, want.motes);
+      small.count = nShards;
+      moteGeo.setDrawRange(0, nMotes);
       const n = V(plan.normal);
       const wins = plan.windows.slice(0, MAX_WIN);
       nWin = wins.length;
@@ -327,7 +333,7 @@ export function createCinematicProps(scene, eyeTexture, { sunDir = new THREE.Vec
       const cam = V(view.pos);
       // ガラス片: 窓から外へ吹き出す。三分の一はカメラの前（画面の中）へ、残りは壁の近くに浮く
       shards = [];
-      for (let i = 0; i < counts.shards; i++) {
+      for (let i = 0; i < nShards; i++) {
         const w = wins.length ? wins[Math.floor(rng() * wins.length)] : { center: [n.x * 20, 8, n.z * 20], w: 2, h: 2 };
         const s = V(w.center).add(new THREE.Vector3((rng() - 0.5) * w.w, (rng() - 0.5) * w.h, (rng() - 0.5) * w.w).multiply(new THREE.Vector3(Math.abs(n.z), 1, Math.abs(n.x))));
         const tb = P.breakAt[0] + (P.breakAt[1] - P.breakAt[0]) * (wins.length ? 0.75 * order(w) + 0.25 * rng() : rng());
@@ -352,7 +358,7 @@ export function createCinematicProps(scene, eyeTexture, { sunDir = new THREE.Vec
       heroPath = { s: hs, e: V(plan.shardPos), t0: heroTimes[0], t1: heroTimes[1], axis: new THREE.Vector3(0.4, 1, 0.25).normalize() };
       // 塵: カメラの前の空間（1〜16 m）に散らす
       const pos = moteGeo.attributes.position;
-      for (let i = 0; i < counts.motes; i++) {
+      for (let i = 0; i < nMotes; i++) {
         const depth = 0.5 + 14 * rng() ** 2.2;
         const x = (rng() - 0.5) * 2.4, y = (rng() - 0.5) * 2.4;
         const p = cam.clone().addScaledVector(V(view.fwd), depth).addScaledVector(V(view.right), x * depth * view.tanH).addScaledVector(V(view.up), y * depth * view.tanV);

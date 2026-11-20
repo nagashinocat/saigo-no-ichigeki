@@ -174,6 +174,13 @@ export function createAudio() {
       src.connect(lp); lp.connect(g); g.connect(cine);
       src.start(t); src.stop(t + 6.1);
       thump({ f0: 36, f1: 24, dur: 5, gain: 0.5, dest: cine, attack: 1.0 });
+      // 地鳴りが引いたら、こもりと世界の音量を元に戻す（このあとの音がこもったまま・無音のままにならない）
+      const back = t + 6.2;
+      out.frequency.setValueAtTime(400, back);
+      out.frequency.exponentialRampToValueAtTime(20000, back + 0.3);
+      master.gain.cancelScheduledValues(back);
+      master.gain.setValueAtTime(0, back);
+      master.gain.linearRampToValueAtTime(0.8, back + 0.3);
     },
     // size 0〜1: 大きいほど長く低い
     boom(size) {

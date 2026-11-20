@@ -1,7 +1,7 @@
 import { test, expect } from 'vitest';
 import * as THREE from 'three';
 import { leadFor, minLeadFor, createChase, createCinematic, barsFor } from '../../src/render/cinematic.js';
-import { planFinale } from '../../src/render/finalePlan.js';
+import { planFinale, planRetreat } from '../../src/render/finalePlan.js';
 import { buildEyeCloseup } from '../../src/render/enemyView.js';
 import { generateCity } from '../../src/world/cityGen.js';
 import { radiusFor } from '../../src/game/charge.js';
@@ -53,13 +53,13 @@ test('追われて引くカメラ: 実際の爆発曲線（じわじわ → 弾�
 
 
 // createCinematic の進み方（描画の部品は小さな身代わり）
-function makeCinematic(size = { w: 390, h: 844 }, shot = SHOTS[2]) {
+function makeCinematic(size = { w: 390, h: 844 }, shot = SHOTS[2], opts = {}) {
   const views = { size };
   const enemyView = { setHeroYaw() {}, eyeCloseup: (id) => buildEyeCloseup(id) };
   const explosionView = { screen: { flash: 0.3, time: 0, heat: null }, cameraInfo: { front: 0, shake: 0.002 } };
   const renderer = { getRenderTarget: () => null, setRenderTarget() {}, render() {}, getPixelRatio: () => 1, compile() {} };
   const sun = new THREE.DirectionalLight(0xffffff, 4), fill = new THREE.HemisphereLight(0xffffff, 0x000000, 1.6);
-  const cin = createCinematic(views, enemyView, explosionView, { renderer, scene: new THREE.Scene(), lights: { sun, fill } });
+  const cin = createCinematic(views, enemyView, explosionView, { renderer, scene: new THREE.Scene(), lights: { sun, fill }, ...opts });
   const plan = planFinale({ shot, buildings: city.buildings, enemies: ARMY, rng: createRng(3), lead: leadFor(shot.radius) });
   const log = [];
   cin.on('cue', (c) => log.push(c.name + (c.arg ?? '')));
@@ -166,4 +166,41 @@ test('追われて引くカメラは、前線（迫る球の表面）より外�
     const p = cin.camera.position;
     expect(p.distanceTo(new THREE.Vector3(0, -1000, 0))).toBeGreaterThan(1000);
   }
+});
+
+test('画質の段は演出を始めるたびに読む: 始めは high でも、段が下がっていれば目の画像・雲の段数・星・ガラス片はその段の重さ', () => {
+  let tier = 'high';
+  const { cin, plan, shot } = makeCinematic(undefined, undefined, { tier: 'high', getTier: () => tier });
+  cin.play(plan, shot);
+  const hi = cin.quality;
+  expect(hi.tier).toBe('high');
+  tier = 'low';
+  cin.stop();
+  cin.play(plan, shot);
+  const lo = cin.quality;
+  expect(lo.tier).toBe('low');
+  expect(lo.eye[0]).toBeLessThan(hi.eye[0]);
+  expect(lo.space.oct).toBeLessThan(hi.space.oct);
+  expect(lo.space.stars).toBeLessThan(hi.space.stars);
+  expect(lo.props.shards).toBeLessThan(hi.props.shards);
+  expect(lo.props.motes).toBeLessThan(hi.props.motes);
+});
+
+test('逃げる道を後回しにした plan: 放つ瞬間には求めず、止まった一拍の間に一度だけ求め、追われて引く道に使う', () => {
+  const { cin, shot } = makeCinematic();
+  const lazy = planFinale({ shot, buildings: city.buildings, enemies: ARMY, rng: createRng(3), lead: leadFor(shot.radius), retreat: false });
+  expect(lazy.retreat).toBeNull();
+  let calls = 0;
+  const resolve = () => { calls++; return planRetreat(lazy, { buildings: city.buildings, radius: shot.radius, lead: leadFor(shot.radius) }); };
+  cin.play(lazy, shot, { retreat: resolve });
+  const tl = cin.timeline;
+  while (cin.time < tl.contact - 0.02) { cin.update(1 / 60); expect(calls).toBe(0); }
+  while (cin.time < tl.beatEnd - 0.02) cin.update(1 / 60);
+  expect(calls).toBe(1);
+  expect(lazy.retreat).toBeNull(); // 渡した plan は書き換えない
+  while (cin.time < tl.snap + 0.5) cin.update(1 / 60);
+  expect(calls).toBe(1);
+  expect(cin.stage).toBe('chase');
+  expect(cin.camera.position.toArray().every(Number.isFinite)).toBe(true);
+  expect(() => makeCinematic().cin.play(lazy, shot)).toThrow();
 });
