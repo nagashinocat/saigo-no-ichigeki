@@ -119,6 +119,15 @@ export function createDebrisPool(capacity, rng) {
     get crater() { return crater; },
     // 画質が下がったときに使う上限（確保済みの容量より大きくはできない）
     setLimit(n) { limit = Math.max(1, Math.min(capacity, Math.floor(n))); },
+    // 空にする（リプレイで最後の一発の直前へ戻す）。乱数は持ち主が巻き戻す
+    clear() {
+      count = 0; head = 0; tail = 0; fifoLen = 0; counter = 0;
+      seq.fill(0); where.fill(-1); keep.fill(0);
+      free.length = 0;
+      for (let i = capacity - 1; i >= 0; i--) free.push(i);
+      evicted = [];
+      crater = 0; craterList = [];
+    },
     // 地面のえぐれ（半径）。穴の上の破片は球の面まで落ちる
     setCrater(r) {
       const c = Math.max(0, r);

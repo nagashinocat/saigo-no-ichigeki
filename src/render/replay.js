@@ -1,0 +1,292 @@
+import * as THREE from 'three';
+import { createReplayTimeline } from './replayTimeline.js';
+import { planReplay } from './replayPlan.js';
+import { createReplayLight } from './replayLight.js';
+
+// 最後の一発のリプレイ（画面全体。仕様 12 章の絵コンテ 6〜7）。時間割は replayTimeline.js、撮る場所は replayPlan.js。
+// 放つ直前の街へ戻し（onRestore）、同じ一発を決まった刻み（REPLAY.tick）で起こし直す（onTick(爆発の秒, カメラ)）。
+// 刻みの並びはいつも同じなので、同じ写しと同じ種から同じリプレイになる（画面の速さによらない）。
+//   street → side → top → hero の4カット。黒い帯と、カットごとの時間の伸び縮み。画面をタップすると飛ばして結果へ。
+// 知らせ: 'replayStart'（始まる。BGM のリプレイ版の合図）、'cut'（{ name }）、'skip'（飛ばした）、'replayEnd'（結果を出してよい）。
+// 終わったら最後の絵のまま待つ（finished）。もう一度 play すれば何度でも見せ直せる。
+
+const MAX_TICKS = 4;          // 1フレームに進める刻みの上限（遅い機械ではリプレイがゆっくりになるが、中身は同じ）
+const SKIP_FADE = 0.22;       // 飛ばす: この秒で暗くし、暗いうちに最後まで早送りする
+const FF_TICK = 1 / 15;       // 早送りの刻み（リプレイの秒）
+const FF_TICKS = 10;          // 早送りで1フレームに進める刻みの上限
+const OUTRO_FADE = 0.5;       // 飛ばしたあと、最後の絵へ明けるまで
+const END_FADE = 0.38;        // 結果の後ろの最後の絵の暗さ
+const HELD_RATE = 0.25;       // 待つ間の世界の進み（粉や熾火がゆっくり動く）
+// 黒い帯: 縦長はこの縦横比、横長はシネマスコープ
+export const REPLAY_BARS = { portrait: 0.6, landscape: 2.39 };
+// レンズ（縦の画角、度）
+export const REPLAY_LENS = {
+  street: { portrait: 80, landscape: 52 },
+  side: { portrait: 66, landscape: 44 },
+  top: { portrait: 62, landscape: 44 },
+  hero: { portrait: 40, landscape: 27 },
+};
+
+export function replayBars(aspect) {
+  const target = aspect < 1 ? REPLAY_BARS.portrait : REPLAY_BARS.landscape;
+  return Math.max(0, (1 - aspect / target) / 2);
+}
+
+const clamp01 = (x) => Math.min(1, Math.max(0, x));
+const smooth = (x) => { const t = clamp01(x); return t * t * (3 - 2 * t); };
+const easeOut = (x) => 1 - (1 - clamp01(x)) ** 3;
+const easeInOut = (x) => { const t = clamp01(x); return t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2; };
+
+// views: createViews の戻り値（全画面の大きさ）。opts.scene: 光の殻を置く街の場面、opts.lights: { sun, fill }（影絵のために弱める）
+// opts.onRestore(): 世界を放つ直前へ戻す。opts.onTick(dt, camera): 世界を爆発の dt 秒進める（camera はそのときのカメラ）
+// opts.fog: 霞み始める距離の uniform（style.uniforms.uFogStart）。真上のカメラは遠いので、その間だけ延ばす
+// opts.blastLight: 爆心の光（explosionView.light）。最後のカットでは主人公を影絵にするため、描く前に弱める
+export function createReplay(views, { scene, lights = null, fog = null, blastLight = null, onRestore = () => {}, onTick = () => {} } = {}) {
+  const listeners = {};
+  const emit = (name, arg) => { for (const fn of listeners[name] ?? []) fn(arg); };
+  const cam = new THREE.PerspectiveCamera(60, 1, 0.3, 9000);
+  const light = createReplayLight();
+  scene.add(light.mesh);
+
+  let heroK = 0; // 最後のカットで爆心の光を弱める割合（描く前に掛ける）
+  let phase = 'off', t = 0, acc = 0, b = 0, tl = null, plan = null, cutName = '', skipK = 0, outro = 0, heldT = 0;
+  const screen = { flash: 0, time: 0, heat: null, grade: { bars: 0, ca: 0, vig: 0, sat: 1, grain: 0, streak: 0, exposure: 1, fade: 1, warm: 0, contrast: 1, bloom: 1 } };
+  const baseLight = lights ? { sun: lights.sun?.intensity ?? 0, fill: lights.fill?.intensity ?? 0 } : null;
+  function dimLights(k) {
+    if (!lights) return;
+    if (lights.sun) lights.sun.intensity = baseLight.sun * (1 - 0.85 * k);
+    if (lights.fill) lights.fill.intensity = baseLight.fill * (1 - 0.8 * k);
+  }
+
+  const aspect = () => views.size.w / Math.max(1, views.size.h);
+  const lens = (l) => (aspect() < 1 ? l.portrait : l.landscape);
+  const _pos = new THREE.Vector3(), _look = new THREE.Vector3(), _up = new THREE.Vector3();
+  function aim(pos, look, fov, roll = 0, up = null) {
+    cam.aspect = aspect();
+    cam.position.copy(pos);
+    if (up) cam.up.copy(up); else cam.up.set(0, 1, 0);
+    cam.lookAt(look);
+    if (roll) cam.rotateZ(roll);
+    cam.fov = fov;
+    cam.updateProjectionMatrix();
+    cam.updateMatrixWorld();
+  }
+  const setGrade = (o) => Object.assign(screen.grade, o);
+  const fog0 = fog?.value ?? 0;
+  const setFog = (extra) => { if (fog) fog.value = fog0 + extra; };
+
+  // ---- カットごとのカメラと画づくり（t の関数。刻みのたびと、描く前に呼ぶ） ----
+  function shotStreet(u) {
+    const s = plan.street, F = tl.frontAt(t);
+    const gap = Math.max(0, s.dist - F);
+    const prox = clamp01(1 - gap / 70);                 // 壁が近いほど 1
+    const burst = smooth((F - tl.radius * 0.07) / 25);   // 弾けた
+    // ゆっくり後ずさる（壁から逃げたいが逃げられない）
+    _pos.set(s.pos[0] - s.dir[0] * 5 * easeInOut(u), s.pos[1], s.pos[2] - s.dir[1] * 5 * easeInOut(u));
+    const sh = 0.004 * burst + 0.018 * prox * prox;
+    _pos.x += sh * 9 * Math.sin(t * 31); _pos.y += sh * 6 * Math.sin(t * 23 + 1);
+    // 通りの先の上を見上げ、壁が来るほどさらに見上げる（壁の上の縁が頭の上を越えていく）
+    const ahead = 60, lift = 14 + 16 * smooth((u - 0.2) / 0.5) + 10 * prox;
+    _look.set(s.pos[0] + s.dir[0] * ahead, lift, s.pos[2] + s.dir[1] * ahead);
+    const fov = lens(REPLAY_LENS.street) + 7 * burst * Math.exp(-Math.max(0, u - 0.3) * 6) + 6 * prox;
+    aim(_pos, _look, fov, 0.055);
+    // 壁が近づくほど暗く・硬くして、光の壁の模様を白く飛ばさない
+    setGrade({ sat: 1.1, warm: 0.45, contrast: 1.2 + 0.25 * prox, vig: 0.42 + 0.2 * prox, ca: 0.25 + 1.6 * prox * prox, grain: 0.04, exposure: 0.95 - 0.35 * prox, streak: 0, bloom: 1 - 0.4 * prox });
+    setFog(0);
+    // 呑み込まれる: 白へ
+    screen.flash = smooth((u - 0.93) / 0.07);
+    light.hide();
+    dimLights(0);
+  }
+
+  function shotSide(u) {
+    const s = plan.side, F = tl.frontAt(t);
+    const lead = 32 + 0.1 * F;
+    // 壁と並んで横へ走る（前線の円に沿って回る）。壁は外へ広がるので、カメラも同じだけ外へ逃げる
+    const az = s.az + s.look * 0.3 * u;
+    const r = F + lead;
+    _pos.set(Math.cos(az) * r, s.height, Math.sin(az) * r);
+    // 走る向きの前線の上を見る: 光の壁が画面の片側に立って奥へ曲がっていき、手前のビルが横へ流れながら呑まれていく
+    const la = az + s.look * 0.45;
+    _look.set(Math.cos(la) * F * 0.95, Math.min(40, F * 0.1) + 4, Math.sin(la) * F * 0.95);
+    aim(_pos, _look, lens(REPLAY_LENS.side), -0.05 * s.look);
+    setFog(0);
+    setGrade({ sat: 1.0, warm: 0.3, contrast: 1.15, vig: 0.38, ca: 0.3, grain: 0.035, exposure: 0.92, streak: 0, bloom: 1 });
+    screen.flash = 1 - smooth(u / 0.05);
+    light.hide();
+    dimLights(0);
+  }
+
+  function shotTop(u) {
+    const a = aspect();
+    const fov = lens(REPLAY_LENS.top);
+    const tanV = Math.tan(THREE.MathUtils.degToRad(fov) / 2);
+    const tanShort = a < 1 ? tanV * a : tanV;
+    // 半径が画面の短い辺の端に届く高さ（光の円が広がりきると画面からあふれ、衝撃波の輪は外へ抜けていく）
+    const H = (tl.radius * 1.02) / tanShort * (1.08 - 0.12 * easeInOut(u));
+    setFog(H);
+    const ang = plan.top.az + 0.3 * u;
+    _pos.set(0, H, 0);
+    _look.set(0, 0, 0);
+    _up.set(Math.cos(ang), 0, Math.sin(ang));
+    aim(_pos, _look, fov, 0, _up);
+    setGrade({ sat: 0.95, warm: 0.15, contrast: 1.15, vig: 0.5, ca: 0.2, grain: 0.03, exposure: 0.95, streak: 0, bloom: 1 });
+    screen.flash = 0;
+    light.hide();
+    dimLights(0);
+  }
+
+  function shotHero(u) {
+    const h = plan.hero;
+    const az = h.az + 0.24 * easeInOut(u);
+    const d = 5.4 - 0.9 * easeOut(u);
+    _pos.set(Math.sin(az) * d, -1.5 + 0.35 * u, Math.cos(az) * d);
+    _look.set(0, 1.0, 0);
+    aim(_pos, _look, lens(REPLAY_LENS.hero), 0.03);
+    // 光の中: はじめは真っ白な光の中に影だけ。光は主人公の向こうの芯へ引いていき、穴と空が現れる
+    // はじめは真っ白（光の中）→ 影が浮かび上がる → 光は主人公の向こうの芯へ引いていく
+    const I = 2.2 * (1 - smooth(u / 0.14)) + 0.8 * (1 - smooth((u - 0.2) / 0.7)) + 0.25;
+    light.update({ camera: cam, intensity: I, coreK: 1 + 0.6 * smooth(u / 0.7), time: t, radius: 160, center: [0, 1.05, 0] });
+    setFog(0);
+    dimLights(1);
+    heroK = 0.9;
+    setGrade({ sat: 1.0, warm: 0.6, contrast: 1.3, vig: 0.55 + 0.15 * u, ca: 0.25, grain: 0.05, exposure: 0.85, streak: 0, bloom: 0.3 * smooth((u - 0.65) / 0.35) });
+    screen.flash = 1 - smooth(u / 0.04);
+  }
+
+  function shot(tt) {
+    const { name, u } = tl.cutAt(tt);
+    heroK = 0;
+    screen.time = tt;
+    screen.grade.bars = replayBars(aspect()) * smooth(tt / 0.35);
+    if (name === 'intro') {
+      // 暗転の間はカメラを street の始まりに置いておく（物理の焦点と、最初の絵の準備）
+      shotStreet(0);
+      screen.flash = 0;
+      return name;
+    }
+    if (name === 'street') shotStreet(u);
+    else if (name === 'side') shotSide(u);
+    else if (name === 'top') shotTop(u);
+    else shotHero(Math.min(1, u));
+    return name;
+  }
+
+  // リプレイの時計を h 進め、世界を爆発の差の分だけ進める
+  function tickOnce(h) {
+    t += h;
+    const name = shot(t);
+    if (name !== cutName && name !== 'done') { cutName = name; if (name !== 'intro') emit('cut', { name }); }
+    const nb = tl.blastAt(t);
+    onTick(Math.max(0, nb - b), cam);
+    b = nb;
+  }
+
+  function finish() {
+    phase = 'held'; heldT = 0;
+    emit('replayEnd');
+  }
+
+  // リプレイの時計を進める（刻みごとに世界を進める）。飛ばす・待つの段取りもここ
+  function advance(dt) {
+    if (phase === 'play' || (phase === 'skip' && skipK < 1)) {
+      acc += dt;
+      let n = 0;
+      while (acc >= tl.tick - 1e-9 && n < MAX_TICKS && t < tl.end) { tickOnce(tl.tick); acc -= tl.tick; n++; }
+      if (n >= MAX_TICKS) acc = 0;
+    }
+    const g = screen.grade;
+    if (phase === 'play') {
+      g.fade = 1 - smooth((t - tl.intro) / 0.25);
+      // 最後: 結果の後ろへ少し暗くなる
+      g.fade = Math.max(g.fade, END_FADE * smooth((t - (tl.end - 0.6)) / 0.6));
+      if (t >= tl.end - 1e-9) { finish(); g.fade = END_FADE; }
+      return;
+    }
+    if (phase === 'skip') {
+      if (skipK < 1) {
+        skipK = Math.min(1, skipK + dt / SKIP_FADE);
+        shot(t);
+        g.fade = Math.max(g.fade, smooth(skipK));
+        return;
+      }
+      // 暗いうちに最後まで早送り
+      for (let n = 0; n < FF_TICKS && t < tl.end - 1e-9; n++) tickOnce(Math.min(FF_TICK, tl.end - t));
+      g.fade = 1;
+      if (t >= tl.end - 1e-9) { outro = OUTRO_FADE; finish(); }
+      return;
+    }
+    // held: 最後の絵のまま。世界はゆっくり進む（粉・熾火・主人公のまわりのゆらぎ）
+    heldT += dt;
+    shot(tl.end);
+    onTick(dt * HELD_RATE, cam);
+    if (outro > 0) outro = Math.max(0, outro - dt);
+    g.fade = END_FADE + (1 - END_FADE) * smooth(outro / OUTRO_FADE);
+  }
+
+  const self = {
+    get active() { return phase !== 'off'; },
+    // 最後まで見せ終わった（飛ばした場合も）。最後の絵のまま待つ
+    get finished() { return phase === 'held'; },
+    get fullscreen() { return phase !== 'off'; },
+    get camera() { return cam; },
+    get screen() { return phase === 'off' ? null : screen; },
+    get phase() { return phase; },
+    get time() { return t; },
+    get cut() { return cutName; },
+    get timeline() { return tl; },
+    get plan() { return plan; },
+    // 最後のカットで主人公を影絵にする強さ（0〜1）。爆発の光で白く光らせない
+    get silhouette() { return heroK; },
+    get light() { return light; },
+    on(name, fn) { (listeners[name] ??= []).push(fn); },
+    // 初めて使う材質を先に作っておく（リプレイの最後のカットで止まらないように）
+    // 画面へ直接描く段（low）と、画面効果のレンダーターゲットへ描く段（high/mid）では、同じ材質でも別のシェーダーになる
+    // （トーンマップの有無）。両方を作っておく
+    warmup(r, camera) {
+      light.mesh.visible = true;
+      const prev = r.getRenderTarget();
+      const tmp = new THREE.WebGLRenderTarget(4, 4, { type: THREE.HalfFloatType });
+      r.setRenderTarget(null);
+      r.compile(scene, camera);
+      r.setRenderTarget(tmp);
+      r.compile(scene, camera);
+      r.setRenderTarget(prev);
+      tmp.dispose();
+      light.mesh.visible = false;
+    },
+    // shot: 最後の一発、buildings: 放つ直前の（壊れていない）ビル、heroYaw: 主人公の向き
+    play({ shot: s, buildings, heroYaw = 0 }) {
+      plan = planReplay({ radius: s.radius, buildings, heroYaw });
+      tl = createReplayTimeline({ radius: s.radius, streetDist: plan.street.dist });
+      phase = 'play'; t = 0; acc = 0; cutName = 'intro'; skipK = 0; outro = 0;
+      onRestore();
+      // 暗転の間に、爆発の時計を street の始まりまで決まった刻みで進めておく
+      b = 0;
+      shot(0);
+      const h = tl.tick;
+      while (b + h < tl.bStart - 1e-9) { onTick(h, cam); b += h; }
+      onTick(tl.bStart - b, cam);
+      b = tl.bStart;
+      screen.grade.fade = 1;
+      emit('replayStart');
+    },
+    // 画面をタップ: 暗くして最後まで早送りし、結果へ
+    skip() {
+      if (phase === 'play') { phase = 'skip'; skipK = 0; emit('skip'); }
+    },
+    update(dt) {
+      if (phase === 'off') return;
+      advance(dt);
+      if (blastLight && heroK > 0) blastLight.intensity *= 1 - heroK;
+    },
+    // やめる（何も描かない）
+    stop() {
+      phase = 'off'; cutName = '';
+      light.hide();
+      dimLights(0);
+      setFog(0);
+    },
+  };
+  return self;
+}

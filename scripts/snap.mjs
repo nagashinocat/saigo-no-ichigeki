@@ -9,6 +9,7 @@
 // --cpu R: CDP の Emulation.setCPUThrottlingRate で CPU を R 倍遅くする。
 // --hand L[,S]: 手の画面の入力を、貯めた力 L・光の安定 S に固定する（--step と使う）。
 // --hand-release A: 手の画面だけに、量 A の一発を放つ瞬間を起こす（A が小爆発の量以下なら小爆発）。--at はその時点からの秒。
+// --skip S: リプレイを、--at の時刻 S で飛ばす（画面のタップと同じ）。
 // --keep-holding: --press の後も離さない（最後の一発を放たない）。--puff N: そのあと小爆発を N 回（0.25 秒おき）押す。--at はその時点からの秒。
 // 力は長押しの間だけ貯まる（CONFIG.power.chargePerSec）。--press が短すぎると離しても放たれない。
 import { chromium } from 'playwright';
@@ -30,6 +31,7 @@ function parseArgs(argv) {
   }
   const at = String(opt.at).split(',').filter(Boolean).map(Number);
   return { url: pos[0], out: pos[1], wait: Number(opt.wait), press: Number(opt.press), width: w, height: h,
+    skip: opt.skip !== undefined ? Number(opt.skip) : null,
     step: !!opt.step, fire: Number(opt.fire ?? 0), keepHolding: !!opt.keepHolding, puff: Number(opt.puff ?? 0), idle: Number(opt.idle), at, from: opt.from, perf: Number(opt.perf), cpu: Number(opt.cpu),
     hand: opt.hand ? String(opt.hand).split(',').map(Number) : null, handRelease: opt['hand-release'] !== undefined ? Number(opt['hand-release']) : null };
 }
@@ -101,13 +103,23 @@ async function stepped(page) {
     console.log('  slowest frames [index, ms]', JSON.stringify(slow));
     return;
   }
-  let t = 0;
+  let t = 0, skipped = false;
   for (const target of args.at.length ? args.at : [0]) {
+    if (args.skip !== null && !skipped && target > args.skip) {
+      await step(Math.max(1 / 60, args.skip - t));
+      t = args.skip;
+      await page.evaluate(() => window.__replay.skip());
+      skipped = true;
+    }
     const r = await step(Math.max(1 / 60, target - t));
     t = target;
     const file = out.replace('{t}', String(target));
     await page.screenshot({ path: file });
-    const st = await page.evaluate(() => ({ blasts: window.__game.blasts.map((b) => +b.front.toFixed(1)), pull: +window.__views.pullback.toFixed(1), busy: window.__explosionView.busy }));
+    const st = await page.evaluate(() => {
+      const rp = window.__replay;
+      const replay = rp?.active ? { phase: rp.phase, cut: rp.cut, t: +rp.time.toFixed(2), front: +rp.timeline.frontAt(rp.time).toFixed(1), result: !document.getElementById('result').hidden } : null;
+      return { blasts: window.__game.blasts.map((b) => +b.front.toFixed(1)), pull: +window.__views.pullback.toFixed(1), busy: window.__explosionView.busy, replay };
+    });
     console.log('saved', file, 't=' + target, JSON.stringify(st), 'sim ms/frame', r.simMs.toFixed(2), 'draw ms', r.drawMs.toFixed(1));
   }
 }

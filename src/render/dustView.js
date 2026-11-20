@@ -142,6 +142,13 @@ export function createDustView(capacity) {
     mesh, uniforms, capacity,
     // 生きている粒があるか（最後の粒の寿命まで）
     alive(time) { return time < lastDeath; },
+    // 全部の粒を消す（リプレイで最後の一発の直前へ戻す）
+    clear() {
+      for (let i = 0; i < capacity; i++) aLife.array[i * 4] = -1e6;
+      next = 0; used = 0; lastDeath = -Infinity; lo = Infinity; hi = -1;
+      geo.instanceCount = 0;
+      for (const a of [aPos, aVel, aLife, aTint]) { a.clearUpdateRanges(); a.needsUpdate = true; }
+    },
     spawn(time, p) {
       const i = next;
       next = (next + 1) % capacity;

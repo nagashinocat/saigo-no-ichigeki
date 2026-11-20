@@ -57,6 +57,14 @@ export function createDestruction({ cityView, getTier, seed = 1 }) {
 
   return {
     pool, near, rubble,
+    // 最後の一発の直前（まだ何も壊れていない）へ戻す: 破片・手前の物理・瓦礫・つぶれ待ちを消し、乱数を巻き戻す。
+    // 戻したあと同じ命中と同じ進め方を与えると、同じ破片と瓦礫になる（リプレイ）
+    reset() {
+      rng.reseed();
+      pool.clear(); near.clear(); rubble.clear();
+      crushing.length = 0; settled.length = 0; pendingDust = [];
+      hole = 0; time = 0;
+    },
     setPhysicsFocus(pos) { focus = pos ? [pos[0], pos[1], pos[2]] : null; },
     // game の 'hit' を受ける
     onHit({ hit, target }) {

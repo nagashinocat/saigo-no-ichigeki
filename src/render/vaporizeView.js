@@ -147,6 +147,15 @@ export function createVaporizeView({ boxes = 96, sparks = 1600, sparksPer = 40, 
   return {
     group, uniforms,
     busy(time) { return time < lastEnd; },
+    // 全部消す（リプレイで最後の一発の直前へ戻す）
+    clear() {
+      for (let i = 0; i < boxes; i++) info.array[i * 4] = -1e6;
+      for (let i = 0; i < sparks; i++) sVel.array[i * 4 + 3] = -1e6;
+      boxMesh.count = 0;
+      nextBox = 0; nextSpark = 0; sparkUsed = 0; lastEnd = -Infinity;
+      sGeo.setDrawRange(0, 0);
+      dirty = true;
+    },
     // target: { x, z, w, d, h, color:[r,g,b] }
     add(time, target) {
       const i = nextBox;

@@ -16,6 +16,8 @@ import { createHeroAura } from './render/heroAura.js';
 import { createEnemyView } from './render/enemyView.js';
 import { createCinematic, leadFor } from './render/cinematic.js';
 import { planFinale, planRetreat } from './render/finalePlan.js';
+import { createReplay } from './render/replay.js';
+import { createReplaySim, replayTargets } from './game/replaySim.js';
 import { createRng } from './rng.js';
 import { createPressTracker } from './input/press.js';
 import { createHud } from './ui/hud.js';
@@ -68,14 +70,22 @@ const result = createResult(document.getElementById('result'), {
     q.set('seed', String(Math.floor(Math.random() * 2 ** 31)));
     location.search = q.toString();
   },
+  // 最後の一発をもう一度見る（放つ直前の街へ戻して起こし直す。何度でも同じリプレイ）
+  onReplay() { startReplay(); },
 });
+const replayTag = document.getElementById('replay');
 const press = createPressTracker({
   onStart() { startHint.hidden = true; game.pressStart(); },
   onEnd() { game.pressEnd(); },
   // 離していないのに押下が途切れた（pointercancel・キャプチャが外れた・タブを隠した・blur）: 放たずに打ち切る
   onCancel() { game.pressCancel(); },
 });
-canvas.addEventListener('pointerdown', (e) => { if (e.pointerType === 'mouse' && e.button !== 0) return; canvas.setPointerCapture?.(e.pointerId); press.down(e.pointerId); });
+canvas.addEventListener('pointerdown', (e) => {
+  if (e.pointerType === 'mouse' && e.button !== 0) return;
+  // リプレイの間は、画面のタップで飛ばして結果へ
+  if (replay.active && !replay.finished) { skipReplay(); return; }
+  canvas.setPointerCapture?.(e.pointerId); press.down(e.pointerId);
+});
 canvas.addEventListener('pointerup', (e) => press.up(e.pointerId));
 canvas.addEventListener('pointercancel', (e) => press.cancel(e.pointerId));
 // キャプチャが外れたら押下を打ち切る（離した後に来る分は何もしない。放つのは pointerup だけ）
@@ -83,6 +93,8 @@ canvas.addEventListener('lostpointercapture', (e) => press.cancel(e.pointerId));
 window.addEventListener('blur', () => press.reset());
 // PC はマウスで長押ししながら、もう片方の手の Space キーで小爆発
 window.addEventListener('keydown', (e) => {
+  // リプレイの間は Space / Enter / Esc で飛ばす
+  if (replay.active && !replay.finished && ['Space', 'Enter', 'Escape'].includes(e.code)) { e.preventDefault(); skipReplay(); return; }
   // 結果画面では奪わない（ボタンを Space で押せる）
   if (e.code !== 'Space' || game.phase === 'over') return;
   e.preventDefault();
@@ -97,9 +109,11 @@ document.addEventListener('visibilitychange', () => {
   game.setHidden(document.hidden);
   if (document.hidden) audio.suspend(); else audio.resume();
 });
-// 終わり: 最後の一発は、演出が最後まで終わって（cinematic の 'end'）から結果。ブラックホールは（演出は G5）すぐ結果
+// 終わり: 最後の一発は、演出（cinematic）とリプレイが最後まで終わって（replay の 'replayEnd'）から結果。
+// ブラックホールは（演出は G5）すぐ結果
 const RESULT_DELAY = 0.15;
 let pendingResult = null;
+let lastResult = null;
 let finaleDone = false;
 game.on('over', ({ reason, total }) => {
   audio.chargeHum(0); audio.rumble(0);
@@ -107,10 +121,11 @@ game.on('over', ({ reason, total }) => {
   else result.show(total, reason);
 });
 function updateResult(dt) {
-  if (!pendingResult || (cinematic.active && !finaleDone)) return;
+  if (!pendingResult || (!finaleDone && (cinematic.active || replay.active))) return;
   pendingResult.wait -= dt;
   if (pendingResult.wait > 0) return;
-  result.show(pendingResult.total, pendingResult.reason);
+  result.show(pendingResult.total, pendingResult.reason, { replay: !!replaySnap });
+  lastResult = pendingResult;
   pendingResult = null;
 }
 
@@ -136,7 +151,17 @@ cityScene.add(rubbleView.mesh);
 
 // 爆発の見た目（光の球・衝撃波・閃光・粉・光に溶ける建物）
 const explosionView = createExplosionView(cityScene, tier, { sunDir: style.sunDir, seed });
-explosionView.warmup(renderer, views.cityCamera);
+// 画面へ直接描く段（low）と、画面効果のレンダーターゲットへ描く段（high/mid）では、同じ材質でも別のシェーダーになる
+// （トーンマップの有無）。前もって作るときは両方を作る（演出やリプレイで初めて出る材質が、その瞬間に止まらないように）
+const warmTarget = new THREE.WebGLRenderTarget(4, 4, { type: THREE.HalfFloatType });
+function warmBoth(fn) {
+  renderer.setRenderTarget(null);
+  fn();
+  renderer.setRenderTarget(warmTarget);
+  fn();
+  renderer.setRenderTarget(null);
+}
+warmBoth(() => explosionView.warmup(renderer, views.cityCamera));
 // 最後の一発: 放つ瞬間から、時間が戻るまで世界の音は消える（鳴るのは心臓の鼓動だけ。音の段取りは演出が cue で知らせる）
 game.on('shot', (shot) => {
   explosionView.begin(shot); hand.release(shot);
@@ -155,7 +180,8 @@ cityScene.add(heroAura.group);
 // 時間が戻り弾ける爆発から逃げる → 宇宙から見た光の半球と衝撃波の輪 → 横一線の光 → 無音と地鳴り（cinematic.js）
 // 画質の段は演出を始めるたびに読む（途中で段が下がっていれば、その段の重さで演じる）
 const cinematic = createCinematic(views, enemyView, explosionView, { renderer, scene: cityScene, sunDir: style.sunDir, tier, getTier: () => tier, lights: { sun: style.lights[0], fill: style.lights[2] } });
-cinematic.warmup(renderer, views.cityCamera);
+warmBoth(() => cinematic.warmup(renderer, views.cityCamera));
+warmTarget.dispose();
 const shotRng = createRng(seed ^ 0xc1a3e);
 const standing = new Set(game.city.buildings.map((b) => b.id)); // まだ壊れていないビル
 // 撮る場所の計算を一度空回しして JIT を温めておく（放つ瞬間、両手が組み合わさる間に止まらないように）。乱数は別のものを使う
@@ -165,6 +191,7 @@ const standing = new Set(game.city.buildings.map((b) => b.id)); // まだ壊れ�
 }
 let finalBlastSize = 0;
 game.on('cinematicStart', (shot) => {
+  takeReplaySnapshot(shot);
   // 放つ瞬間は撮る場所だけを決め、重い逃げる道の計算は演出の止まった一拍の間に回す（必要になるのは約 4 秒後）
   const buildings = game.city.buildings.filter((b) => standing.has(b.id)), crater = fronts.crater, lead = leadFor(shot.radius);
   const plan = planFinale({ shot, rng: shotRng, crater, lead, buildings, enemies: game.enemies.list, retreat: false });
@@ -180,8 +207,8 @@ cinematic.on('cue', ({ name, arg }) => {
   else if (name === 'space') audio.muffle(1.4);
   else if (name === 'rumble') audio.deepRumble();
 });
-// 演出が最後まで終わった（G4 のリプレイはここに入る）。最後の絵のまま、結果を重ねる
-cinematic.on('end', () => { finaleDone = true; });
+// 演出が最後まで終わった: そのままリプレイへ（写しがなければ、最後の絵のまま結果を重ねる）
+cinematic.on('end', () => { if (replaySnap) startReplay(); else finaleDone = true; });
 
 // 光に溶ける対象の見た目の箱（隠す前に色と位置を読む）
 function vaporTarget({ hit, target }) {
@@ -190,14 +217,70 @@ function vaporTarget({ hit, target }) {
   const vis = cityView.getPropVisual(id);
   return { x: vis?.x ?? target.x, z: vis?.z ?? target.z, w: 2.6, d: 2.6, h: 2.2, color: vis?.color };
 }
-game.on('hit', (e) => {
-  if (e.hit.id[0] === 'b') standing.delete(e.target.id);
+// 命中を描く側へ（光に溶ける・つぶれて破片になる）。ゲームの一発とリプレイの一発の両方が使う
+function showHit(e) {
   if (e.hit.kind === 'vaporize') explosionView.vaporize(vaporTarget(e));
   destruction.onHit(e);
+}
+game.on('hit', (e) => {
+  if (e.hit.id[0] === 'b') standing.delete(e.target.id);
+  showHit(e);
   hitsThisFrame++;
 });
 let hitsThisFrame = 0;
 const burstSeen = new Set();
+
+// ---- リプレイ（仕様 12 章の絵コンテ 6〜7）----
+// 最後の一発の直前の街を覚えておき、同じ一発を決まった刻みで起こし直す（同じ種なら同じリプレイ。何度でも見せ直せる）。
+// 街の姿（ビルと props の置き場所・つぶれ）は、最後の一発より前には変わらない（小爆発は軍勢だけを払う）ので、
+// 起動したときに写しておく（放つ瞬間に写すと、両手が組み合わさる間に止まる）。念のため、変わっていたら放つ瞬間に写し直す。
+let citySnap = cityView.snapshot();
+let replaySnap = null; // { shot, targets, enemies, buildings }
+let replaySim = null;
+function takeReplaySnapshot(shot) {
+  if (standing.size !== game.city.buildings.length) citySnap = cityView.snapshot();
+  replaySnap = {
+    shot,
+    targets: replayTargets(game.city),
+    enemies: game.enemies.list.map((e) => ({ ...e })),
+    buildings: game.city.buildings.filter((b) => standing.has(b.id)),
+  };
+}
+const replay = createReplay(views, {
+  scene: cityScene,
+  lights: { sun: style.lights[0], fill: style.lights[2] },
+  fog: style.uniforms.uFogStart,
+  blastLight: explosionView.light,
+  // 放つ直前へ戻す: 街の姿・破片と瓦礫・爆発の見た目・地面のえぐれ。爆発と軍勢は写しから起こし直す
+  onRestore() {
+    cityView.restore(citySnap);
+    destruction.reset();
+    explosionView.reset();
+    fronts.reset();
+    replaySim = createReplaySim({ shot: replaySnap.shot, targets: replaySnap.targets, enemies: replaySnap.enemies });
+    debrisView.update();
+    rubbleView.update();
+  },
+  // 爆発を dt 秒進め、命中を描く側へ渡し、世界をそのカメラで進める
+  onTick(dt, cam) {
+    for (const e of replaySim.step(dt)) showHit(e);
+    stepWorld(dt, replaySim.blasts, replaySim.enemies, cam, cam.position.toArray(), 1 - replay.silhouette);
+  },
+});
+replay.warmup(renderer, views.cityCamera);
+// 音: リプレイの間は世界の音を鳴らさない（BGM のリプレイ版は 'replayStart' / 'replayEnd' に合わせて別の Task が鳴らす）
+replay.on('replayStart', () => { replayTag.hidden = false; });
+replay.on('replayEnd', () => { replayTag.hidden = true; finaleDone = true; });
+replay.on('skip', () => { replayTag.hidden = true; });
+function startReplay() {
+  if (!replaySnap) return;
+  cinematic.stop();
+  result.hide();
+  if (lastResult) pendingResult = { ...lastResult, wait: RESULT_DELAY };
+  finaleDone = false;
+  replay.play({ shot: replaySnap.shot, buildings: replaySnap.buildings, heroYaw: enemyView.heroYaw });
+}
+function skipReplay() { replay.skip(); }
 
 // 画質の自動調整。ここでは画素比だけを下げる（破片数などの他の値は後の Task が TIERS[tier] から読む）
 const governor = createFpsGovernor({ target: isMobile ? 30 : 55 });
@@ -218,8 +301,9 @@ const fronts = createFrontTracker();
 let handInput = null;
 
 // 今描いている街のカメラ（演出の間は画面全体の演出のカメラ）と、1m を光の粒の画素の大きさへ直す係数
-const cityCam = () => (cinematic.fullscreen ? cinematic.camera : views.cityCamera);
-const pointScaleFor = (cam) => (cinematic.fullscreen ? views.size.h : views.layout.city.h) * renderer.getPixelRatio() / (2 * Math.tan(THREE.MathUtils.degToRad(cam.fov) / 2));
+const cityCam = () => (replay.active ? replay.camera : cinematic.fullscreen ? cinematic.camera : views.cityCamera);
+const fullscreen = () => replay.active || cinematic.fullscreen;
+const pointScaleFor = (cam) => (fullscreen() ? views.size.h : views.layout.city.h) * renderer.getPixelRatio() / (2 * Math.tan(THREE.MathUtils.degToRad(cam.fov) / 2));
 
 // ゲームを gdt 秒進める（一度に進めるのは最大 0.1 秒ずつ。演出は時間を一気に進めることがある）
 function stepGame(gdt) {
@@ -227,17 +311,12 @@ function stepGame(gdt) {
   do { const d = Math.min(left, 0.1); game.update(d); left -= d; } while (left > 1e-9);
 }
 
-function simulate(dt) {
-  // 最後の一発の演出の間は、ゲームの時計（爆発の前線の進み）も、描画側の世界（破片・粉・ビルのつぶれ・爆発の見た目）の時間も、
-  // 演出の時刻表が決める（白の間に進め、体感時間の一拍の間はほとんど止め、時間が戻ると一気に弾ける）。
-  cinematic.update(dt);
-  const cdt = cinematic.gameDt;
-  if (cdt === null) game.update(dt); else stepGame(cdt);
-  const wdt = cinematic.active ? cinematic.worldDt : dt;
-  const cam = cityCam(), ps = pointScaleFor(cam);
-  // 手前の物理は、演出の間は演出のカメラの近くの破片だけ（ふだんは null で全部プール）
-  destruction.setPhysicsFocus(cinematic.active ? cam.position.toArray() : null);
-  const live = game.blasts;
+// 世界（破片・粉・ビルのつぶれ・爆発の見た目・軍勢・主人公のまわり）を wdt 秒進める。
+// live: game.blasts と同じ形の一発の一覧、enemies: 軍勢の一覧、cam: 今描いているカメラ、focus: 手前の物理の焦点（null なら全部プール）
+// glowScale: 軍勢と主人公が爆発の光で白く光る強さの倍率（リプレイの最後のカットは影絵にするので 0 へ）
+function stepWorld(wdt, live, enemies, cam, focus, glowScale = 1) {
+  const ps = pointScaleFor(cam);
+  destruction.setPhysicsFocus(focus);
   // 小爆発は光の球と軍勢を払うだけで、地面をえぐらず、ビルをゆがめず、破片も押さない（広場が穴に沈まない）
   const shaping = live.some((b) => b.shot.small) ? live.filter((b) => !b.shot.small) : live;
   const list = fronts.update(shaping);
@@ -247,17 +326,42 @@ function simulate(dt) {
   rubbleView.update();
   explosionView.update(wdt, live, cam, ps, fronts.crater);
   cityView.update(wdt, { fronts: list, heat: explosionView.ground.heat, ember: explosionView.ground.ember });
-  enemyView.sync(game.enemies.list, { fronts: list, pointScale: ps, glow: explosionView.ground.heat, dt: wdt, pixelRatio: renderer.getPixelRatio() });
+  enemyView.sync(enemies, { fronts: list, pointScale: ps, glow: explosionView.ground.heat * glowScale, dt: wdt, pixelRatio: renderer.getPixelRatio() });
   heroAura.update(wdt, ps);
+}
+
+function simulate(dt) {
+  if (replay.active) {
+    // リプレイの間: 世界はリプレイの刻みで進む（onTick）。ゲームは終わっている
+    replay.update(dt);
+    finishFrame(dt, []);
+    return;
+  }
+  // 最後の一発の演出の間は、ゲームの時計（爆発の前線の進み）も、描画側の世界（破片・粉・ビルのつぶれ・爆発の見た目）の時間も、
+  // 演出の時刻表が決める（白の間に進め、体感時間の一拍の間はほとんど止め、時間が戻ると一気に弾ける）。
+  cinematic.update(dt);
+  if (replay.active) { finishFrame(dt, []); return; } // 演出が終わってリプレイが始まった（そのフレームは描くだけ）
+  const cdt = cinematic.gameDt;
+  if (cdt === null) game.update(dt); else stepGame(cdt);
+  const wdt = cinematic.active ? cinematic.worldDt : dt;
+  const cam = cityCam();
+  const live = game.blasts;
+  // 手前の物理は、演出の間は演出のカメラの近くの破片だけ（ふだんは null で全部プール）
+  stepWorld(wdt, live, game.enemies.list, cam, cinematic.active ? cam.position.toArray() : null);
   // 上空カメラは、ゲームが動いている間はいつも進める（演出の終わりにこの姿勢へなじむ）
   // 大きな一発の演出の間は、終わった一発の「保つ」時間を進めない（演出が全体の構図で止まったあと、2画面でも保ってから戻る）
   if (!cinematic.frozen) views.updateCamera(dt, explosionView.cameraInfo, live, cinematic.active);
+  finishFrame(dt, live);
+}
+
+// 手の画面・HUD・音・結果（毎フレーム）
+function finishFrame(dt, live) {
   // 手の中の球の大きさは貯めた力。掴まれている間は、光が弱く不安定に瞬く
   const h = handInput ?? { level: game.power.level, active: game.charge.active, steady: game.grabbing > 0 ? GRABBED_STEADY : 1 };
   hand.update(dt, h.level, h.active, h.steady);
   hud.update({ remaining: game.timer.remaining, power: game.power.value, max: CONFIG.power.max, canPuff: game.canPuff });
-  // 最後の一発を放ってから結果までずっと HUD は出さない（両手が組み合わさる間も）
-  hud.setVisible(!cinematic.active);
+  // 最後の一発を放ってから結果までずっと HUD は出さない（両手が組み合わさる間も、リプレイの間も）
+  hud.setVisible(!cinematic.active && !replay.active);
   updateAudio(live);
   updateResult(dt);
 }
@@ -265,6 +369,12 @@ function simulate(dt) {
 // 音: 貯めの唸り、じわじわ期の脈動、弾けた瞬間の爆発、崩落
 function updateAudio(live) {
   audio.chargeHum(game.charge.active ? game.power.level : 0);
+  // リプレイの間は世界の音を鳴らさない
+  if (replay.active) {
+    audio.rumble(0); audio.crumble(0);
+    hitsThisFrame = 0;
+    return;
+  }
   // 最後の一発の音は演出が段取りする（cue）。崩落の音だけは時間が戻ったあと鳴る
   if (cinematic.active) {
     audio.rumble(0);
@@ -285,7 +395,8 @@ function updateAudio(live) {
   hitsThisFrame = 0;
 }
 function draw() {
-  if (cinematic.white) views.renderWhite();
+  if (replay.active) views.renderFull(cityScene, replay.camera, replay.screen);
+  else if (cinematic.white) views.renderWhite();
   else if (cinematic.fullscreen) views.renderFull(cinematic.renderScene ?? cityScene, cinematic.camera, cinematic.screen);
   else views.render(cityScene, hand.scene, cinematic.screen ?? explosionView.screen, hand.camera);
 }
@@ -356,4 +467,5 @@ if (debugMode) {
   window.__hand = hand;
   window.__enemyView = enemyView;
   window.__cinematic = cinematic;
+  window.__replay = replay;
 }

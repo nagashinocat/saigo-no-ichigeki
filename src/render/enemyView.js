@@ -458,6 +458,7 @@ export function createEnemyView(scene, tier, { sunDir = new THREE.Vector3(0.8, 0
     },
     // 主人公の向き（y 軸まわり。0 で +z を向く）
     setHeroYaw(yaw) { heroYaw = yaw; },
+    get heroYaw() { return heroYaw; },
     // 目のアップ（演出がレンダーターゲットに描く）。同じ人は同じ顔
     eyeCloseup(enemyId) {
       const key = enemyId ?? 'none';

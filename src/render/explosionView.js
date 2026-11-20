@@ -357,6 +357,19 @@ export function createExplosionView(scene, tierName, { sunDir = null, seed = 7 }
         });
       }
     },
+    // 最後の一発の直前へ戻す（リプレイ）: 球・閃光・揺れ・地面の熱・粉・溶ける箱を消し、乱数を巻き戻す。時間は進んだまま
+    reset() {
+      rng.reseed();
+      for (const s of spheres) { s.active = false; s.id = null; s.mesh.visible = s.ring.visible = false; }
+      live.clear(); evicted.clear(); seen.clear();
+      flash = 0; shake = 0;
+      ground.heat = 0; ground.ember = 0;
+      light.intensity = 0;
+      dust.clear();
+      vapor.clear();
+      cameraInfo.front = 0; cameraInfo.shake = 0;
+      screen.flash = 0; screen.heat = null;
+    },
     // 爆心近くで光に溶ける対象: { x, z, w, d, h, color }
     vaporize(target) { vapor.add(time, target); },
     get busy() { return flash > 0 || spheres.some((s) => s.active) || vapor.busy(time); },

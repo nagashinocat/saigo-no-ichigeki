@@ -60,6 +60,11 @@ export function createRubble(capacity) {
       limit = lim;
       return out;
     },
+    // 全部消す（土煙にはしない。リプレイで最後の一発の直前へ戻す）。消えた slot は takeChanges で一度知らせる
+    clear() {
+      for (let s = 0; s < highWater; s++) if (seq[s]) { seq[s] = 0; dirty.add(s); }
+      count = 0; next = 0; swept = 0;
+    },
     add(p, dustOut) {
       if (next >= limit) next = 0;
       const s = next;

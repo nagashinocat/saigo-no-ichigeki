@@ -281,5 +281,25 @@ export function createCityView(city, style, tier) {
     hideProp(id) {
       for (const part of propParts.get('p' + id) ?? []) hide(part);
     },
+    // 今の姿（置き場所の行列と、つぶれの始まりなど一つずつの値）を写して返す。restore で戻す（リプレイ）
+    snapshot() {
+      const mats = [], attrs = [];
+      group.traverse((o) => {
+        if (!o.isInstancedMesh) return;
+        mats.push({ attr: o.instanceMatrix, array: o.instanceMatrix.array.slice() });
+        for (const a of Object.values(o.geometry.attributes)) {
+          if (a.isInstancedBufferAttribute && !attrs.some((x) => x.attr === a)) attrs.push({ attr: a, array: a.array.slice() });
+        }
+      });
+      return { mats, attrs };
+    },
+    // snapshot の姿へ戻す。一部の範囲だけ送る印は消して、全部を GPU へ送り直す
+    restore(snap) {
+      for (const { attr, array } of [...snap.mats, ...snap.attrs]) {
+        attr.array.set(array);
+        attr.clearUpdateRanges();
+        attr.needsUpdate = true;
+      }
+    },
   };
 }

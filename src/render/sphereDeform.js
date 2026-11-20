@@ -66,6 +66,8 @@ export function createFrontTracker() {
   const out = [];
   return {
     get crater() { return crater; },
+    // 穴の記憶を消す（リプレイで最後の一発の直前へ戻す）
+    reset() { crater = 0; live.clear(); out.length = 0; },
     update(blasts) {
       seen.clear();
       out.length = 0;

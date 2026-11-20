@@ -4,15 +4,20 @@ import { DEBRIS } from './debris.js';
 // 手前（焦点の近く）の破片だけを cannon-es で動かす。数は budget まで。
 // chunkWorldBox: { min:[x,y,z], max:[x,y,z] }（ワールド座標）
 export function createNearPhysics(budget, rng = Math.random) {
-  const world = new CANNON.World({ gravity: new CANNON.Vec3(0, -DEBRIS.gravity, 0) });
-  world.allowSleep = false;
-  world.solver.iterations = 6;
   const matGround = new CANNON.Material('ground'), matChunk = new CANNON.Material('chunk');
-  world.addContactMaterial(new CANNON.ContactMaterial(matGround, matChunk, { restitution: DEBRIS.restitution, friction: 0.6 }));
-  world.addContactMaterial(new CANNON.ContactMaterial(matChunk, matChunk, { restitution: 0.15, friction: 0.5 }));
-  const ground = new CANNON.Body({ mass: 0, shape: new CANNON.Plane(), material: matGround });
-  ground.quaternion.setFromEuler(-Math.PI / 2, 0, 0);
-  world.addBody(ground);
+  // 世界は clear で作り直す（中の時間の端数も消え、同じ入力で同じ動きになる）
+  function makeWorld() {
+    const w = new CANNON.World({ gravity: new CANNON.Vec3(0, -DEBRIS.gravity, 0) });
+    w.allowSleep = false;
+    w.solver.iterations = 6;
+    w.addContactMaterial(new CANNON.ContactMaterial(matGround, matChunk, { restitution: DEBRIS.restitution, friction: 0.6 }));
+    w.addContactMaterial(new CANNON.ContactMaterial(matChunk, matChunk, { restitution: 0.15, friction: 0.5 }));
+    const ground = new CANNON.Body({ mass: 0, shape: new CANNON.Plane(), material: matGround });
+    ground.quaternion.setFromEuler(-Math.PI / 2, 0, 0);
+    w.addBody(ground);
+    return w;
+  }
+  let world = makeWorld();
 
   const bodies = [];
   let limit = budget;
@@ -20,6 +25,11 @@ export function createNearPhysics(budget, rng = Math.random) {
   return {
     bodies,
     setBudget(n) { limit = n; },
+    // 全部外して、まっさらな世界にする（リプレイで最後の一発の直前へ戻す）
+    clear() {
+      bodies.length = 0;
+      world = makeWorld();
+    },
     add(box, vel) {
       if (bodies.length >= limit) return false;
       const size = [0, 1, 2].map((a) => box.max[a] - box.min[a]);

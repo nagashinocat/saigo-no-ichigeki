@@ -17,6 +17,7 @@ const FOG_START = 320;
 // sRGB で決めた色をシェーダーの線形値へ（見た目の色で調整しやすくするため）
 const GLSL_COMMON = /* glsl */`
 uniform vec3 uSunDir;
+uniform float uFogStart; // 霞み始める距離（ふだんは FOG_START。リプレイの真上のカメラは遠いので延ばす）
 varying vec3 vFogW;
 vec3 srgb(vec3 c) { return pow(c, vec3(2.2)); }
 float hash12(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
@@ -45,7 +46,7 @@ vec3 applyFog(vec3 col, vec3 worldPos) {
   vec3 v = worldPos - cameraPosition;
   float dist = length(v);
   // 上空カメラから街までの約400mは澄ませ、その先から霞ませる
-  float f = 1.0 - exp(-pow(max(dist - ${FOG_START.toFixed(1)}, 0.0) * ${FOG_DENSITY.toFixed(5)}, 1.6));
+  float f = 1.0 - exp(-pow(max(dist - uFogStart, 0.0) * ${FOG_DENSITY.toFixed(5)}, 1.6));
   vec2 hz = v.xz + uSunDir.xz * 1e-3;
   vec3 fc = skyColor(normalize(vec3(hz.x, 0.015 * length(hz), hz.y)));
   return mix(col, fc, clamp(f, 0.0, 1.0));
@@ -76,6 +77,7 @@ export const TOON_LIGHTS = THREE.ShaderChunk.lights_physical_pars_fragment.repla
 
 function patchCommon(shader, uniforms) {
   shader.uniforms.uSunDir = uniforms.uSunDir;
+  shader.uniforms.uFogStart = uniforms.uFogStart;
   shader.vertexShader = shader.vertexShader
     .replace('#include <fog_pars_vertex>', 'varying vec3 vFogW;')
     .replace('#include <fog_vertex>', FOG_VERTEX);
@@ -447,7 +449,7 @@ function makeGlowMaterial(name, uniforms, params) {
 function makeOutlineMaterial(uniforms) {
   return new THREE.ShaderMaterial({
     side: THREE.BackSide,
-    uniforms: { uSunDir: uniforms.uSunDir, uWidth: { value: 0.0016 }, uFronts: uniforms.uFronts, uFrontCount: uniforms.uFrontCount, uTime: uniforms.uTime },
+    uniforms: { uSunDir: uniforms.uSunDir, uFogStart: uniforms.uFogStart, uWidth: { value: 0.0016 }, uFronts: uniforms.uFronts, uFrontCount: uniforms.uFrontCount, uTime: uniforms.uTime },
     vertexShader: /* glsl */`
       uniform float uWidth;
       varying vec3 vFogW;
@@ -512,7 +514,7 @@ function makePlanarShadowMaterial(uniforms) {
 function makeSky(uniforms) {
   const mat = new THREE.ShaderMaterial({
     side: THREE.BackSide, depthWrite: false, fog: false,
-    uniforms: { uSunDir: uniforms.uSunDir },
+    uniforms: { uSunDir: uniforms.uSunDir, uFogStart: uniforms.uFogStart },
     vertexShader: /* glsl */`
       varying vec3 vDir;
       void main() { vDir = position; gl_Position = (projectionMatrix * modelViewMatrix * vec4(position, 1.0)).xyww; }`,
@@ -561,6 +563,7 @@ export function createStyle(tierName) {
   const tier = TIERS[tierName] ?? TIERS.mid;
   const uniforms = {
     uSunDir: { value: SUN_DIR.clone() },
+    uFogStart: { value: FOG_START },
     // 爆発の球（cityView.update が毎フレーム書く）
     uFronts: { value: new Float32Array(MAX_FRONTS) }, uFrontCount: { value: 0 }, uTime: { value: 0 },
     uHeat: { value: 0 }, uEmber: { value: 0 }, uCrater: { value: 0 }, uRingStep: { value: 1 },
@@ -585,6 +588,7 @@ export function createStyle(tierName) {
   return {
     tier: tierName,
     sunDir: SUN_DIR.clone(),
+    fogStart: FOG_START,
     uniforms,
     building,
     kindColors: KIND_COLORS,
