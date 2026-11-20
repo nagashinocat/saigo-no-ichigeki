@@ -125,10 +125,13 @@ window.__debug = {
   },
   draw,
   // 実際のフレームと同じく毎フレーム進めて描いたときの時間 (ms)。
-  // js: simulate+draw の JS の時間（GPU の完了は待たない）, sim: そのうち simulate の時間
+  // js: simulate+draw の JS の時間, sim: そのうち simulate の時間。
+  // ソフトウェア描画では GPU の遅れが JS 側の待ちとして混ざるので、各フレームの前に GPU の完了を待ってから測る。
   timeFrames(count, dt = 1 / 60) {
     const js = [], sim = [];
+    const gl = renderer.getContext();
     for (let i = 0; i < count; i++) {
+      gl.finish();
       const t0 = performance.now();
       simulate(dt);
       const t1 = performance.now();
@@ -136,7 +139,6 @@ window.__debug = {
       const t2 = performance.now();
       js.push(t2 - t0);
       sim.push(t1 - t0);
-      renderer.getContext().finish(); // 次のフレームの計測に前の描画が混ざらないように
     }
     return { js, sim };
   },
@@ -149,4 +151,3 @@ window.__cityView = cityView;
 window.__destruction = destruction;
 window.__explosionView = explosionView;
 window.__views = views;
-window.__renderer = renderer;
