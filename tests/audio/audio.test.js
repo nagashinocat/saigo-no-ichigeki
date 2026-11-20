@@ -75,3 +75,24 @@ test('最後の一発の音: 地鳴りが終わると、こもり（low-pass）�
     delete globalThis.window;
   }
 });
+
+test('BGM の出口: unlock の前は無く、あとはスピーカーへ直接つながり、演出の無音（master）では黙らない', async () => {
+  const { createAudio } = await import('../../src/audio/audio.js');
+  const ctx = fakeCtx();
+  const links = [];
+  const make = ctx.createGain;
+  ctx.createGain = () => { const g = make(); g.connect = (to) => links.push([g, to]); return g; };
+  globalThis.window = { AudioContext: function AC() { return ctx; } };
+  try {
+    const audio = createAudio();
+    expect(audio.bgmOutput).toBe(null);
+    audio.unlock();
+    const o = audio.bgmOutput;
+    expect(o.ctx).toBe(ctx);
+    expect(links.some(([g, to]) => g === o.dest && to === ctx.destination)).toBe(true);
+    audio.silence();
+    expect(o.dest.gain.final()).toBe(1);
+  } finally {
+    delete globalThis.window;
+  }
+});

@@ -23,6 +23,7 @@ import { createPressTracker } from './input/press.js';
 import { createHud } from './ui/hud.js';
 import { createResult } from './ui/result.js';
 import { createAudio } from './audio/audio.js';
+import { createBgm } from './audio/bgm.js';
 
 const MAX_FRAME_DT = 0.1;
 const GRABBED_STEADY = 0.15; // 掴まれている間の手の画面の光の安定（弱く瞬く）
@@ -60,6 +61,11 @@ const hand = createHandView({ right: buildHandModel({ detail: handDetail }), lef
 
 // 入力・HUD・結果・音
 const audio = createAudio();
+// BGM（打楽器とマリンバの民族音楽風）: 遊びが始まると鳴り、時間と貯めた力で層が増え、放った瞬間に止まる。
+// リプレイと結果画面では同じ旋律をゆっくり静かに。時間切れ（ブラックホール）では引き伸ばされて消える
+const bgm = createBgm(() => audio.bgmOutput);
+const BLACKHOLE_STRETCH_SEC = 3.5; // G5 の演出が stretchOut を呼ぶまでは、時間切れの瞬間に引き伸ばす
+const BLACKHOLE_QUIET_DELAY = BLACKHOLE_STRETCH_SEC + 1.5;
 // 小爆発のボタン（長押しの指とは別の指で押す）。ボタンの上の押下はボタンだけが受け、キャンバスの長押しにはならない
 const hud = createHud(document.getElementById('hud'), { onPuff() { game.puff(); } });
 const startHint = document.getElementById('start');
@@ -107,7 +113,7 @@ document.addEventListener('visibilitychange', () => {
   // 隠れる前に押下を打ち切る（放たず、貯めた力は残る。戻ってきたとき指が引っかかったままにならない）
   if (document.hidden) press.reset();
   game.setHidden(document.hidden);
-  if (document.hidden) audio.suspend(); else audio.resume();
+  if (document.hidden) { bgm.pause(); audio.suspend(); } else { audio.resume(); bgm.resume(); }
 });
 // 終わり: 最後の一発は、演出（cinematic）とリプレイが最後まで終わって（replay の 'replayEnd'）から結果。
 // ブラックホールは（演出は G5）すぐ結果
@@ -118,7 +124,12 @@ let finaleDone = false;
 game.on('over', ({ reason, total }) => {
   audio.chargeHum(0); audio.rumble(0);
   if (reason === 'released') pendingResult = { reason, total, wait: RESULT_DELAY };
-  else result.show(total, reason);
+  else {
+    // 時間切れ: BGM は渦に吸い込まれるように消え、少しの無音のあと結果画面の静かな変奏
+    bgm.stretchOut(BLACKHOLE_STRETCH_SEC);
+    bgm.quiet({ delay: BLACKHOLE_QUIET_DELAY });
+    result.show(total, reason);
+  }
 });
 function updateResult(dt) {
   if (!pendingResult || (!finaleDone && (cinematic.active || replay.active))) return;
@@ -164,6 +175,7 @@ function warmBoth(fn) {
 warmBoth(() => explosionView.warmup(renderer, views.cityCamera));
 // 最後の一発: 放つ瞬間から、時間が戻るまで世界の音は消える（鳴るのは心臓の鼓動だけ。音の段取りは演出が cue で知らせる）
 game.on('shot', (shot) => {
+  bgm.stop(); // 放った瞬間にぴたりと止める（演出の無音・鼓動・爆音のため）
   explosionView.begin(shot); hand.release(shot);
 });
 // 小爆発: 両手が素早く組み合わさって弾け、主人公のまわりに小さな光の球（貯めの唸りは止めない）
@@ -208,7 +220,10 @@ cinematic.on('cue', ({ name, arg }) => {
   else if (name === 'rumble') audio.deepRumble();
 });
 // 演出が最後まで終わった: そのままリプレイへ（写しがなければ、最後の絵のまま結果を重ねる）
-cinematic.on('end', () => { if (replaySnap) startReplay(); else finaleDone = true; });
+cinematic.on('end', () => {
+  bgm.quiet(); // リプレイと結果画面: 同じ旋律をゆっくり静かに（地鳴りの尾の下からふくらむ）
+  if (replaySnap) startReplay(); else finaleDone = true;
+});
 
 // 光に溶ける対象の見た目の箱（隠す前に色と位置を読む）
 function vaporTarget({ hit, target }) {
@@ -268,8 +283,8 @@ const replay = createReplay(views, {
   },
 });
 replay.warmup(renderer, views.cityCamera);
-// 音: リプレイの間は世界の音を鳴らさない（BGM のリプレイ版は 'replayStart' / 'replayEnd' に合わせて別の Task が鳴らす）
-replay.on('replayStart', () => { replayTag.hidden = false; });
+// 音: リプレイの間は世界の音を鳴らさない（BGM は 'replayStart' で静かな変奏になり、結果画面でもそのまま続く）
+replay.on('replayStart', () => { replayTag.hidden = false; bgm.quiet(); });
 replay.on('replayEnd', () => { replayTag.hidden = true; finaleDone = true; });
 replay.on('skip', () => { replayTag.hidden = true; });
 function startReplay() {
@@ -369,6 +384,10 @@ function finishFrame(dt, live) {
 // 音: 貯めの唸り、じわじわ期の脈動、弾けた瞬間の爆発、崩落
 function updateAudio(live) {
   audio.chargeHum(game.charge.active ? game.power.level : 0);
+  // BGM: 最初のタップで鳴らせるようになり、遊びが始まったら鳴らしはじめる（一度だけ）。その前のフレームで楽器の音を作っておく
+  if (bgm.state === 'off') bgm.prepare();
+  if (game.phase === 'playing' && audio.running) bgm.start();
+  bgm.update({ elapsed: CONFIG.roundSeconds - game.timer.remaining, power: game.power.level, holding: game.charge.active });
   // リプレイの間は世界の音を鳴らさない
   if (replay.active) {
     audio.rumble(0); audio.crumble(0);
@@ -468,4 +487,5 @@ if (debugMode) {
   window.__enemyView = enemyView;
   window.__cinematic = cinematic;
   window.__replay = replay;
+  window.__bgm = bgm;
 }

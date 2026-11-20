@@ -29,6 +29,10 @@ export function createAudio() {
   let ctx = null, master = null, hum = null, rumbleNode = null, noiseBuf = null;
   // 最後の一発の演出: 世界の音（master）と演出の音（cine: 心臓の鼓動・地鳴り）は、どちらも out のこもりを通る
   let cine = null, out = null;
+  // BGM の出口（bgm.js が鳴らす）。最後の一発の演出の無音・こもり・地鳴り（master と out を動かす）とは別の道で、
+  // スピーカーへ直接つなぐ: 地鳴りが master を 0 に保つ間にも、リプレイの静かな変奏を鳴らせるように。
+  // BGM は放った瞬間に自分で止まるので、演出の無音を邪魔しない
+  let bgmBus = null;
 
   function build() {
     const AC = window.AudioContext || window.webkitAudioContext;
@@ -63,6 +67,9 @@ export function createAudio() {
     src.connect(lp); lp.connect(rg); rg.connect(master);
     src.start(); lfo.start();
     rumbleNode = { gain: rg, lfoGain };
+    bgmBus = ctx.createGain();
+    bgmBus.gain.value = 1;
+    bgmBus.connect(ctx.destination);
   }
 
   const ready = () => ctx && ctx.state === 'running';
@@ -100,6 +107,8 @@ export function createAudio() {
       if (ctx && ctx.state !== 'running') ctx.resume();
     },
     get running() { return !!ctx && ctx.state === 'running'; },
+    // BGM の出口（unlock の前は null）
+    get bgmOutput() { return ctx && bgmBus ? { ctx, dest: bgmBus } : null; },
     suspend() { if (ctx && ctx.state === 'running') ctx.suspend(); },
     resume() { if (ctx && ctx.state === 'suspended') ctx.resume(); },
     // level 0〜1。0 で止まる
