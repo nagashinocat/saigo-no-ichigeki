@@ -48,6 +48,7 @@ export function createDebrisPool(capacity, rng) {
   const fifo = new Int32Array(capacity * 2 + 2); // 古い順の slot 番号（リング）
   const fifoSeq = new Uint32Array(capacity * 2 + 2);
   let head = 0, tail = 0, fifoLen = 0, counter = 0, count = 0, limit = capacity;
+  let evicted = []; // 上限で置き換えた破片。途中で消えたように見えないよう、次の update で粉にする
 
   const release = (s) => {
     const i = where[s];
@@ -78,6 +79,7 @@ export function createDebrisPool(capacity, rng) {
       if (count >= limit) {
         s = oldest();
         if (s < 0) return;
+        evicted.push({ pos: [data.px[s], data.py[s], data.pz[s]], size: data.size[s] });
         release(s);
       }
       s = free.pop();
@@ -100,7 +102,8 @@ export function createDebrisPool(capacity, rng) {
     },
     // 進める。粉に変わった破片の DustEvent を返す。
     update(dt) {
-      const dust = [];
+      const dust = evicted;
+      evicted = [];
       const d = data;
       const g = DEBRIS.gravity * dt;
       for (let i = count - 1; i >= 0; i--) {

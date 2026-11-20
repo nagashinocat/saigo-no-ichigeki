@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { createScreenFx } from './screenFx.js';
 
 // 1つの WebGLRenderer で「街（上空）」と「手」の2画面を描く。HUD の区画は DOM を重ねる場所で、WebGL では塗りつぶすだけ。
 
@@ -34,8 +35,6 @@ export const CITY_CAMERA = { height: 280, distance: 260, azimuthDeg: 0, minHFovD
 
 export function createCityCamera(opts = CITY_CAMERA) {
   const cam = new THREE.PerspectiveCamera(opts.vFovDeg, 1, 1, 6000);
-  const az = THREE.MathUtils.degToRad(opts.azimuthDeg);
-  cam.position.set(Math.sin(az) * opts.distance, opts.height, Math.cos(az) * opts.distance);
   cam.userData.cityOpts = opts;
   fitCityCamera(cam, 1);
   return cam;
@@ -52,15 +51,56 @@ export function fitCityCamera(cam, aspect) {
   cam.updateProjectionMatrix();
   const pitch = Math.atan(opts.horizonNdc * Math.tan(THREE.MathUtils.degToRad(cam.fov) / 2));
   const az = THREE.MathUtils.degToRad(opts.azimuthDeg);
+  cam.position.set(Math.sin(az) * opts.distance, opts.height, Math.cos(az) * opts.distance);
   const p = cam.position;
   cam.lookAt(p.x - Math.sin(az) * Math.cos(pitch), p.y - Math.sin(pitch), p.z - Math.cos(az) * Math.cos(pitch));
   cam.updateMatrixWorld();
+  // 爆発に合わせて下がる・揺れるときの基準の姿勢
+  cam.userData.basePos = cam.position.clone();
+  cam.userData.baseQuat = cam.quaternion.clone();
+}
+
+// 視線 dir（単位ベクトル）と逆向きに t 下がると、原点からの距離が minDist 以上になる最小の t（0 以上）。
+export function pullbackDistance(pos, dir, minDist) {
+  const pp = pos[0] * pos[0] + pos[1] * pos[1] + pos[2] * pos[2];
+  if (pp >= minDist * minDist) return 0;
+  const pd = pos[0] * dir[0] + pos[1] * dir[1] + pos[2] * dir[2];
+  // |pos - t dir|² = minDist² を t について解く（大きい方の根）
+  return pd + Math.sqrt(pd * pd - pp + minDist * minDist);
+}
+
+// 爆発の球がカメラを飲み込まないよう、上空カメラを視線に沿って後ろ（上）へ引く量。
+// goal（その一発が最後に届く半径）× goalRatio まで先回りしてなめらかに下がり（ばねで、動き出しの速さは0）、
+// front（今の球の半径）× ratio より近づくことは決してない。終われば goal=0 でゆっくり戻る。
+// goalRatio は球の全体が画面に収まりやすい距離（球の見かけの半角が画角の半分ほど）。
+export function createCameraFollow({ ratio = 1.3, goalRatio = 1.7, outRate = 4, backRate = 1.6 } = {}) {
+  let t = 0, v = 0;
+  return {
+    get t() { return t; },
+    update(dt, pos, dir, front, goal) {
+      const need = pullbackDistance(pos, dir, front * ratio);
+      const want = Math.max(need, pullbackDistance(pos, dir, goal * goalRatio));
+      if (dt > 0) {
+        const w = want > t ? outRate : backRate;
+        // 臨界減衰のばね（半陰的に積分して、大きな dt でも振動しない）
+        v = (v + w * w * (want - t) * dt) / (1 + 2 * w * dt + w * w * dt * dt);
+        t += v * dt;
+      }
+      if (t < need) { t = need; v = Math.max(v, 0); }
+      if (t < 0) { t = 0; v = 0; }
+      return t;
+    },
+  };
 }
 
 const HUD_CLEAR = new THREE.Color(0x0b0d16);
 
-export function createViews(renderer) {
+export function createViews(renderer, getTier = () => ({ bloom: false, heatHaze: false })) {
   const cityCamera = createCityCamera();
+  const follow = createCameraFollow();
+  const screenFx = createScreenFx(renderer);
+  const _dir = new THREE.Vector3(), _q = new THREE.Quaternion(), _e = new THREE.Euler();
+  let shakeClock = 0;
 
   const handCamera = new THREE.PerspectiveCamera(40, 1, 0.05, 100);
   handCamera.position.set(0, 0.2, 3);
@@ -70,16 +110,15 @@ export function createViews(renderer) {
 
   const aspectOf = (rect) => rect.w / Math.max(1, rect.h);
 
-  function drawRect(rect, scene, camera) {
-    if (rect.w <= 0 || rect.h <= 0) return;
+  function setRect(rect) {
     renderer.setViewport(rect.x, rect.y, rect.w, rect.h);
     renderer.setScissor(rect.x, rect.y, rect.w, rect.h);
-    renderer.render(scene, camera);
   }
 
   return {
     cityCamera, handCamera,
     get layout() { return layout; },
+    get pullback() { return follow.t; },
     resize(w, h) {
       renderer.setSize(w, h, false);
       layout = layoutViews(w, h);
@@ -87,16 +126,37 @@ export function createViews(renderer) {
       handCamera.aspect = aspectOf(layout.hand);
       handCamera.updateProjectionMatrix();
     },
-    render(cityScene, handScene) {
+    // 上空カメラの姿勢: 爆発の球に合わせて視線に沿って下がり、shake（ラジアン）だけ揺れる。
+    // cam = { front, goal, shake }（front/goal は球の今の半径と、最後に届く半径）
+    updateCamera(dt, cam = {}) {
+      const { basePos, baseQuat } = cityCamera.userData;
+      _dir.set(0, 0, -1).applyQuaternion(baseQuat);
+      const t = follow.update(dt, basePos.toArray(), _dir.toArray(), cam.front ?? 0, cam.goal ?? 0);
+      cityCamera.position.copy(basePos).addScaledVector(_dir, -t);
+      shakeClock += dt;
+      const a = cam.shake ?? 0;
+      const k = shakeClock * 31;
+      _e.set(a * (Math.sin(k) * 0.6 + Math.sin(k * 2.3 + 1.7) * 0.4), a * (Math.sin(k * 1.7 + 0.5) * 0.6 + Math.sin(k * 3.1) * 0.4), a * 0.5 * Math.sin(k * 1.3 + 2.1));
+      cityCamera.quaternion.copy(baseQuat).multiply(_q.setFromEuler(_e));
+      cityCamera.updateMatrixWorld();
+    },
+    // fx は screenFx の効果（閃光・熱のゆがみ）。街の画面だけに掛ける。
+    render(cityScene, handScene, fx) {
       renderer.setScissorTest(true);
-      const { hud } = layout;
+      const { hud, city, hand } = layout;
       if (hud.w > 0 && hud.h > 0) {
         renderer.setScissor(hud.x, hud.y, hud.w, hud.h);
         renderer.setClearColor(HUD_CLEAR, 1);
         renderer.clear(true, true, false);
       }
-      drawRect(layout.city, cityScene, cityCamera);
-      drawRect(layout.hand, handScene, handCamera);
+      if (city.w > 0 && city.h > 0) {
+        setRect(city);
+        screenFx.render(cityScene, cityCamera, city, getTier(), fx);
+      }
+      if (hand.w > 0 && hand.h > 0) {
+        setRect(hand);
+        renderer.render(handScene, handCamera);
+      }
       renderer.setScissorTest(false);
     },
   };

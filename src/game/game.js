@@ -32,12 +32,13 @@ export function createGame({ seed, cfg = CONFIG }) {
   let hidden = false;
   let cinematicClock = 0;
   let pendingShot = null;
-  let blasts = []; // { blast, values }
+  let blasts = []; // { id, shot, blast, values }
+  let nextBlastId = 1;
 
   function startBlast(shot) {
     const targets = [];
     for (const [id, t] of byKey) if (!destroyed.has(id)) targets.push({ id, dist: t.dist });
-    blasts.push({ blast: createBlast(shot, targets, cfg), values: [] });
+    blasts.push({ id: nextBlastId++, shot, blast: createBlast(shot, targets, cfg), values: [] });
   }
 
   function scoreBlast(b) {
@@ -73,6 +74,10 @@ export function createGame({ seed, cfg = CONFIG }) {
   return {
     city, enemies, reserve, charge, timer, score,
     get phase() { return phase; },
+    // 進行中の一発の読み取り専用の写し（描画が一発ごとに球を描くため）
+    get blasts() {
+      return Object.freeze(blasts.map((b) => Object.freeze({ id: b.id, shot: b.shot, front: b.blast.front })));
+    },
     on(event, fn) { (listeners[event] ??= []).push(fn); },
     setHidden(h) { hidden = h; },
 

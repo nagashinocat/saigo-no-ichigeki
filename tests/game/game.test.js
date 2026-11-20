@@ -209,3 +209,23 @@ test('dt は負・NaN・Infinity でも安全に扱われる', () => {
   g.update(Infinity - Infinity);
   expect(g.timer.remaining).toBe(t);
 });
+
+test('blasts は進行中の一発ごとに id・shot・front を読み取り専用で返す', () => {
+  const g = createGame({ seed: 1, cfg: quiet });
+  expect(g.blasts).toEqual([]);
+  small(g);
+  step(g, 1);
+  small(g);
+  const list = g.blasts;
+  expect(list).toHaveLength(2);
+  expect(list[0].id).not.toBe(list[1].id);
+  expect(list[0].shot.radius).toBeGreaterThan(0);
+  expect(list[0].front).toBeGreaterThan(list[1].front);
+  const before = list[0].front;
+  expect(() => { list[0].front = 999; }).toThrow();
+  expect(() => { list.push({}); }).toThrow();
+  expect(g.blasts[0].front).toBe(before);
+  // 終わった一発は外れる
+  step(g, 40);
+  expect(g.blasts).toEqual([]);
+});

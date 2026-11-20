@@ -1,31 +1,92 @@
 // 使い方: node scripts/snap.mjs <url> <out.png> [--wait ms] [--press ms] [--size WxH]
+//   [--step] [--idle s] [--at s,s,...] [--from release|blast] [--perf frames] [--cpu rate]
 // ヘッドレスの Chrome（ソフトウェア WebGL）でページを開き、待ってから（必要なら長押しして）撮影する。
+// --step: 実時間ではなく window.__debug.step で決まった dt ずつ進める（ヘッドレスは遅いので、爆発の瞬間を正確に撮る）。
+//   --idle 秒だけ待って器を満たし、--press ミリ秒貯めて離し、--at の各時刻（--from の時点からの秒）で撮る。
+//   out の {t} は時刻に置き換わる（例 shots/t9-max-{t}.png）。
+// --perf N: 離した後の N フレームを毎フレーム進めて描き、1フレームの JS の時間（ms）の平均と最大を出す。
+// --cpu R: CDP の Emulation.setCPUThrottlingRate で CPU を R 倍遅くする。
 import { chromium } from 'playwright';
 
 function parseArgs(argv) {
-  const pos = [], opt = { wait: 1500, press: 0, size: '1280x720' };
+  const pos = [], opt = { wait: 1500, press: 0, size: '1280x720', idle: 0, at: '', from: 'release', perf: 0, cpu: 1 };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a.startsWith('--')) opt[a.slice(2)] = argv[++i];
+    if (a === '--step') opt.step = true;
+    else if (a.startsWith('--')) opt[a.slice(2)] = argv[++i];
     else pos.push(a);
   }
   const [w, h] = String(opt.size).split('x').map(Number);
   if (pos.length < 2 || !(w > 0) || !(h > 0)) {
-    console.error('usage: node scripts/snap.mjs <url> <out.png> [--wait ms] [--press ms] [--size WxH]');
+    console.error('usage: node scripts/snap.mjs <url> <out.png> [--wait ms] [--press ms] [--size WxH] [--step] [--idle s] [--at s,s] [--from release|blast] [--perf frames] [--cpu rate]');
     process.exit(2);
   }
-  return { url: pos[0], out: pos[1], wait: Number(opt.wait), press: Number(opt.press), width: w, height: h };
+  const at = String(opt.at).split(',').filter(Boolean).map(Number);
+  return { url: pos[0], out: pos[1], wait: Number(opt.wait), press: Number(opt.press), width: w, height: h,
+    step: !!opt.step, idle: Number(opt.idle), at, from: opt.from, perf: Number(opt.perf), cpu: Number(opt.cpu) };
 }
 
-const { url, out, wait, press, width, height } = parseArgs(process.argv.slice(2));
+const args = parseArgs(process.argv.slice(2));
+const { url, out, wait, press, width, height } = args;
 const browser = await chromium.launch({
   executablePath: '/usr/bin/google-chrome',
   headless: true,
   args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'],
 });
 let failed = false;
+
+const stats = (xs) => {
+  const s = [...xs].sort((a, b) => a - b);
+  const avg = xs.reduce((a, b) => a + b, 0) / Math.max(1, xs.length);
+  return { avg: +avg.toFixed(2), p50: +s[Math.floor(s.length / 2)]?.toFixed(2), max: +s[s.length - 1]?.toFixed(2), n: xs.length };
+};
+
+async function stepped(page) {
+  const step = (sec) => page.evaluate((s) => window.__debug.step(s), sec);
+  await page.evaluate(() => window.__debug.pause());
+  if (args.idle > 0) {
+    await page.evaluate(() => { window.__game.pressStart(); window.__game.pressEnd(); }); // 始めるだけ（貯めずに離すと撃たない）
+    await step(args.idle);
+  }
+  if (press > 0) {
+    await page.evaluate(() => window.__game.pressStart());
+    await step(press / 1000);
+    await page.evaluate(() => window.__game.pressEnd());
+  }
+  if (args.from === 'blast') {
+    // 大きな一発は演出の時間が終わって球が生まれるまで進める
+    for (let i = 0; i < 400; i++) {
+      if (await page.evaluate(() => window.__game.blasts.length > 0)) break;
+      await step(1 / 60);
+    }
+  }
+  const info = await page.evaluate(() => ({ phase: window.__game.phase, blasts: window.__game.blasts.map((b) => ({ r: +b.shot.radius.toFixed(1), front: +b.front.toFixed(1) })), tier: window.__tier }));
+  console.log('released', JSON.stringify(info));
+  if (args.perf > 0) {
+    const t = await page.evaluate((n) => window.__debug.timeFrames(n), args.perf);
+    console.log('frame JS ms (simulate+draw)', JSON.stringify(stats(t.js)));
+    console.log('  of which simulate ms', JSON.stringify(stats(t.sim)));
+    const slow = t.js.map((ms, i) => [i, +ms.toFixed(1)]).sort((a, b) => b[1] - a[1]).slice(0, 5);
+    console.log('  slowest frames [index, ms]', JSON.stringify(slow));
+    return;
+  }
+  let t = 0;
+  for (const target of args.at.length ? args.at : [0]) {
+    const r = await step(Math.max(1 / 60, target - t));
+    t = target;
+    const file = out.replace('{t}', String(target));
+    await page.screenshot({ path: file });
+    const st = await page.evaluate(() => ({ blasts: window.__game.blasts.map((b) => +b.front.toFixed(1)), pull: +window.__views.pullback.toFixed(1), busy: window.__explosionView.busy }));
+    console.log('saved', file, 't=' + target, JSON.stringify(st), 'sim ms/frame', r.simMs.toFixed(2), 'draw ms', r.drawMs.toFixed(1));
+  }
+}
+
 try {
   const page = await browser.newPage({ viewport: { width, height } });
+  if (args.cpu > 1) {
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send('Emulation.setCPUThrottlingRate', { rate: args.cpu });
+  }
   // シェーダーや WebGL のエラーは console.error にしか出ないので、それも失敗として扱う
   const FATAL = /Shader Error|WebGL|THREE/;
   page.on('console', (m) => {
@@ -36,17 +97,21 @@ try {
   page.on('pageerror', (e) => { failed = true; console.error('[pageerror]', e.message); });
   await page.goto(url, { waitUntil: 'load' });
   await page.waitForTimeout(wait);
-  if (press > 0) {
-    const box = await page.locator('canvas').first().boundingBox();
-    const x = box ? box.x + box.width / 2 : width / 2, y = box ? box.y + box.height / 2 : height / 2;
-    await page.mouse.move(x, y);
-    await page.mouse.down();
-    await page.waitForTimeout(press);
-    await page.mouse.up();
-    await page.waitForTimeout(wait);
+  if (args.step) {
+    await stepped(page);
+  } else {
+    if (press > 0) {
+      const box = await page.locator('canvas').first().boundingBox();
+      const x = box ? box.x + box.width / 2 : width / 2, y = box ? box.y + box.height / 2 : height / 2;
+      await page.mouse.move(x, y);
+      await page.mouse.down();
+      await page.waitForTimeout(press);
+      await page.mouse.up();
+      await page.waitForTimeout(wait);
+    }
+    await page.screenshot({ path: out });
+    console.log('saved', out);
   }
-  await page.screenshot({ path: out });
-  console.log('saved', out);
 } finally {
   await browser.close();
 }

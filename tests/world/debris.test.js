@@ -65,3 +65,13 @@ test('pushVelocity は中心から外向き、上向き成分を持つ', () => {
     expect(h).toBeLessThanOrEqual(60 + 1e-9);
   }
 });
+
+test('上限で古い破片を置き換えるときも、消える破片は次の update で DustEvent になる', () => {
+  const pool = createDebrisPool(3, createRng(1));
+  for (let i = 0; i < 5; i++) pool.spawn(chunk({ pos: [i, 50, 0], size: 1 + i }));
+  const dust = pool.update(1 / 60);
+  expect(dust).toHaveLength(2);
+  expect(dust.map((e) => e.pos[0]).sort()).toEqual([0, 1]);
+  expect(dust.map((e) => e.size).sort()).toEqual([1, 2]);
+  expect(pool.update(1 / 60)).toHaveLength(0);
+});

@@ -6,6 +6,7 @@ import { createStyle } from './render/style.js';
 import { createCityView } from './render/cityView.js';
 import { createDestruction } from './world/destruction.js';
 import { createDebrisView } from './render/debrisView.js';
+import { createExplosionView } from './render/explosionView.js';
 
 const MAX_FRAME_DT = 0.1;
 
@@ -35,7 +36,7 @@ const cityScene = new THREE.Scene();
 cityScene.add(style.sky, ...style.lights, cityView.group);
 const hand = createHandScene();
 
-const views = createViews(renderer);
+const views = createViews(renderer, () => TIERS[tier]);
 // CSS で決まったキャンバスの実寸に合わせる（スマホのアドレスバーで 100vh がずれる問題を避ける）
 const resize = () => views.resize(canvas.clientWidth || window.innerWidth, canvas.clientHeight || window.innerHeight);
 window.addEventListener('resize', resize);
@@ -54,7 +55,23 @@ bindTemporaryInput(canvas);
 const destruction = createDestruction({ cityView, getTier: () => TIERS[tier], seed });
 const debrisView = createDebrisView(style, destruction.pool, destruction.near, TIERS.high.debrisMax + TIERS.high.nearPhysicsMax);
 cityScene.add(debrisView.mesh);
-game.on('hit', (e) => destruction.onHit(e));
+
+// 爆発の見た目（光の球・衝撃波・閃光・粉・光に溶ける建物）
+const explosionView = createExplosionView(cityScene, tier, { sunDir: style.sunDir, seed });
+explosionView.warmup(renderer, views.cityCamera);
+game.on('shot', (shot) => explosionView.begin(shot));
+
+// 光に溶ける対象の見た目の箱（隠す前に色と位置を読む）
+function vaporTarget({ hit, target }) {
+  const id = Number(hit.id.slice(1));
+  if (hit.id[0] === 'b') return { x: target.x, z: target.z, w: target.w, d: target.d, h: target.h, color: cityView.getBuildingColor(id) };
+  const vis = cityView.getPropVisual(id);
+  return { x: vis?.x ?? target.x, z: vis?.z ?? target.z, w: 2.6, d: 2.6, h: 2.2, color: vis?.color };
+}
+game.on('hit', (e) => {
+  if (e.hit.kind === 'vaporize') explosionView.vaporize(vaporTarget(e));
+  destruction.onHit(e);
+});
 
 // 画質の自動調整。ここでは画素比だけを下げる（破片数などの他の値は後の Task が TIERS[tier] から読む）
 const governor = createFpsGovernor({ target: isMobile ? 30 : 55 });
@@ -67,21 +84,69 @@ function lowerTier() {
   resize();
 }
 
+// 1m を光の粒の画素の大きさへ直す係数
+const pointScale = () => views.layout.city.h * renderer.getPixelRatio() / (2 * Math.tan(THREE.MathUtils.degToRad(views.cityCamera.fov) / 2));
+
+function simulate(dt) {
+  game.update(dt);
+  explosionView.dust(destruction.update(dt));
+  debrisView.update();
+  explosionView.update(dt, game.blasts, views.cityCamera, pointScale());
+  views.updateCamera(dt, explosionView.cameraInfo);
+}
+const draw = () => views.render(cityScene, hand.scene, explosionView.screen);
+
 let last = performance.now();
+let paused = false;
 function frame(now) {
   const dt = Math.min(Math.max((now - last) / 1000, 0), MAX_FRAME_DT);
   last = now;
-  if (governor.sample(dt) === 'down') lowerTier();
-  game.update(dt);
-  destruction.update(dt);
-  debrisView.update();
-  views.render(cityScene, hand.scene);
+  if (!paused) {
+    if (governor.sample(dt) === 'down') lowerTier();
+    simulate(dt);
+    draw();
+  }
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
+
+// 撮影スクリプト用: 実時間を止め、決まった dt で進めてから描く（ヘッドレスは実時間より遅いため）
+window.__debug = {
+  pause() { paused = true; },
+  resume() { paused = false; last = performance.now(); },
+  // sec 秒ぶん dt 刻みで進め、最後に1回描く。1フレームあたりの JS の時間（ms、描画は最後の1回）を返す
+  step(sec, dt = 1 / 60) {
+    const n = Math.max(1, Math.round(sec / dt));
+    const t0 = performance.now();
+    for (let i = 0; i < n; i++) simulate(dt);
+    const t1 = performance.now();
+    draw();
+    return { simMs: (t1 - t0) / n, drawMs: performance.now() - t1 };
+  },
+  draw,
+  // 実際のフレームと同じく毎フレーム進めて描いたときの時間 (ms)。
+  // js: simulate+draw の JS の時間（GPU の完了は待たない）, sim: そのうち simulate の時間
+  timeFrames(count, dt = 1 / 60) {
+    const js = [], sim = [];
+    for (let i = 0; i < count; i++) {
+      const t0 = performance.now();
+      simulate(dt);
+      const t1 = performance.now();
+      draw();
+      const t2 = performance.now();
+      js.push(t2 - t0);
+      sim.push(t1 - t0);
+      renderer.getContext().finish(); // 次のフレームの計測に前の描画が混ざらないように
+    }
+    return { js, sim };
+  },
+};
 
 // 撮影スクリプトや調査用
 window.__game = game;
 window.__tier = tier;
 window.__cityView = cityView;
 window.__destruction = destruction;
+window.__explosionView = explosionView;
+window.__views = views;
+window.__renderer = renderer;

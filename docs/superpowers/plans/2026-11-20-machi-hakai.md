@@ -368,6 +368,36 @@ test('nearPhysics.add は budget を超えると false', () => {});
 
 ---
 
+### Task 9b: 球に沿って潰れる壊れ方と地面のえぐれ（持ち主の追加要望）
+
+**Files:**
+- Create: `src/render/sphereDeform.js`
+- Modify: `src/render/cityView.js`, `src/render/style.js`（地面とビルの頂点シェーダー）, `src/world/destruction.js`, `src/world/debris.js`, `src/main.js`
+- Test: `tests/render/sphereDeform.test.js`
+
+**Interfaces:**
+- Consumes: 進行中の爆発の一覧（中心は原点、`front`）、`cityView`、`destruction`
+- Produces:
+  - `deformPoint(p:[x,y,z], fronts:number[]) -> [x,y,z]`：いずれかの球の内側にある点を、その球の表面へ中心から放射方向に押し出す（JSの基準実装。シェーダーと同じ式）
+  - `craterDepth(r:number, fronts:number[]) -> number`：地面の水平距離 r の点が、球の形にえぐれる深さ（`front > r` のとき `sqrt(front² - r²)`、最大の球で決める）
+  - シェーダー用の uniform: `uFronts`（最大4つ）, `uFrontCount`
+
+- [ ] **Step 1: 失敗するテストを書く**
+
+```js
+test('球の外の点は動かない', () => {});
+test('球の内側の点は中心からの向きを保ったまま表面（距離 = front）へ押し出される', () => {});
+test('craterDepth: r < front で sqrt(front²-r²)、r ≥ front で 0、複数の球は深いほう', () => {});
+```
+
+- [ ] **Step 2〜4: 失敗確認 → 実装 → 成功確認**
+- [ ] **Step 5: 地面のえぐれ**　地面を中心が細かい放射状のメッシュにし、頂点シェーダーで `craterDepth` だけ下げる。えぐれた面は焼けた岩肌の色にし、縁に盛り上がりと明るい筋を入れて、上から見て丸い穴だとはっきりわかるようにする。えぐれは爆発が終わっても残る。
+- [ ] **Step 6: ビルが球に沿ってつぶれる**　ビルの頂点シェーダーで `deformPoint` と同じ式を使い、球の内側に入った頂点を球面へ押し出す。これで、ビルは球の壁に押し付けられるように曲がり、ひしゃげる。表面が通過してから約0.3〜0.6秒（ばらつきあり）はつぶれた形のまま見せ、そのあとで破片に変える。破片は表面に沿って外へ流れるように、速さを抑える（外向き 8〜25 m/s、上向き 2〜10 m/s）。小さい破片を増やし、土煙を多めに出して、「ブロックが飛んでいくだけ」に見えないようにする。
+- [ ] **Step 7: 目で確認**　最大の一発の 0.3 / 1.0 / 2.5 秒を 1280×720 と 390×844 で撮る。次の3点を確かめる: 地面が丸くえぐれて球に見えること、ビルが球の線に沿ってゆがんでいること、破片が飛び散るだけでなく押しつぶされて崩れていること。
+- [ ] **Step 8: コミット**
+
+---
+
 ### Task 10: 手と、手の中の力
 
 **Files:**
