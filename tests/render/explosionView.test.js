@@ -161,3 +161,37 @@ test('ground: heat は球の不透明さ、ember は球の間は満ちて、球�
   expect(view.ground.ember).toBeLessThan(e1 * 0.5);
   expect(view.ground.ember).toBeGreaterThan(0);
 });
+
+test('大きな一発は放つ瞬間に光らず（演出が白くする）、球が生まれても光らず、弾けた瞬間に強く光る', () => {
+  const { view } = make();
+  const bigShot = { amount: CONFIG.charge.maxDraw, radius: CONFIG.radius.max, isBig: true };
+  view.begin(bigShot);
+  for (let i = 0; i < 80; i++) view.update(0, [], camera, 500); // 演出で時間が止まっている間
+  expect(view.screen.flash).toBe(0);
+  const b = { id: 9, shot: bigShot, front: 0, t: 0 };
+  run(view, [b], 1 / 60); // 球が生まれる（じわじわの始まり）
+  expect(view.screen.flash).toBe(0);
+  let peak = 0;
+  for (let i = 0; i < 90; i++) { run(view, [b], 1 / 60); peak = Math.max(peak, view.screen.flash); }
+  expect(peak).toBeGreaterThan(0.75); // 1 フレームぶん収まった後の値
+});
+
+test('弾けた瞬間の閃光が主役: 放つ瞬間の閃光より強く、大きな一発ほど強い', () => {
+  const peakOf = (radius) => {
+    const { view } = make();
+    const s = shot(radius);
+    view.begin(s);
+    view.update(1 / 60, [], camera, 500);
+    const begin = view.screen.flash;
+    view.update(0.5, [], camera, 500);
+    const b = { id: 1, shot: s, front: 0, t: 0 };
+    let peak = 0;
+    for (let i = 0; i < 120; i++) { run(view, [b], 1 / 60); peak = Math.max(peak, view.screen.flash); }
+    return { begin, peak };
+  };
+  const tiny = peakOf(CONFIG.radius.min), mid = peakOf(200), max = peakOf(CONFIG.radius.max);
+  for (const p of [tiny, mid, max]) expect(p.peak).toBeGreaterThanOrEqual(p.begin * 0.98);
+  expect(tiny.peak).toBeLessThan(mid.peak);
+  expect(mid.peak).toBeLessThan(max.peak);
+  expect(tiny.peak).toBeGreaterThan(0.4);
+});

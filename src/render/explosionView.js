@@ -197,7 +197,7 @@ export function createExplosionView(scene, tierName, { sunDir = null, seed = 7 }
   const spheres = Array.from({ length: MAX_SPHERES }, makeSphere);
   for (const s of spheres) { s.mesh.visible = s.ring.visible = false; group.add(s.mesh, s.ring); }
 
-  let time = 0, flash = 0, shake = 0, lastBegin = -Infinity;
+  let time = 0, flash = 0, shake = 0;
   // 毎フレーム作り直さず、中身だけ書き換えて返す
   const cameraInfo = { front: 0, goal: 0, shake: 0 };
   const heat = { center: [0, 0, 0], radius: 0, strength: 0 };
@@ -216,8 +216,6 @@ export function createExplosionView(scene, tierName, { sunDir = null, seed = 7 }
     s.uniforms.uSeed.value = rng() * 100;
     s.mesh.visible = s.ring.visible = true;
     live.set(b.id, s);
-    // 大きな一発は、演出の後に球が生まれる瞬間にもう一度光る
-    if (time - lastBegin > 0.3) flash = Math.max(flash, 0.5 + 0.5 * b.shot.radius / CONFIG.radius.max);
     return s;
   }
 
@@ -253,9 +251,10 @@ export function createExplosionView(scene, tierName, { sunDir = null, seed = 7 }
       renderer.compile(scene, camera);
       for (const o of hidden) o.visible = false;
     },
-    // 放つ瞬間（'shot'）: 白い閃光
+    // 放つ瞬間（'shot'）: 小さな一発は白い閃光。大きな一発は演出が画面を白くするので、ここでは光らない
+    // （じわじわ始まって、弾けた瞬間の閃光が主役になる）
     begin(shot) {
-      lastBegin = time;
+      if (shot.isBig) return;
       flash = Math.max(flash, 0.55 + 0.45 * shot.radius / CONFIG.radius.max);
     },
     // blasts: game.blasts（[{ id, shot, front }]）。一発ごとに球を描く。
@@ -275,7 +274,7 @@ export function createExplosionView(scene, tierName, { sunDir = null, seed = 7 }
           // 突然弾ける: 光が跳ね上がり、画面が一撃揺れ、輪の土煙が一気に増える
           s.burst = true; s.burstAge = 0;
           const big = Math.sqrt(s.radius / CONFIG.radius.max);
-          flash = Math.max(flash, 0.1 + 0.15 * big);
+          flash = Math.max(flash, 0.55 + 0.45 * big); // 一番強い閃光（放つ瞬間より強く、大きな一発ほど強い）
           shake = Math.max(shake, BURST_SHAKE * (0.35 + 0.65 * big));
         }
         if (dt > 0 && s.burst) shakeWant += ((s.front - s.prev) / dt) * SHAKE_K * (0.35 + 0.65 * Math.sqrt(s.radius / CONFIG.radius.max));
