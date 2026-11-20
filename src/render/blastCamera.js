@@ -2,17 +2,20 @@ import { CONFIG } from '../config.js';
 import { frontAt, timeAtFront, phaseTimes } from '../game/blast.js';
 
 // 爆発に合わせた上空カメラの「いいとこ取り」: 弾けた直後は近いまま、速く広がる前線を見せ、
-// wideDelay 秒たったら球の全体（最後の半径）が画面に収まる遠めの位置へなめらかに引く。
-// 爆発が終わったら holdSec 秒保ってから、近い上空カメラへ戻る。小さな一発（smallRadius 以下）は引かない。
+// 前線が半径の wideFrontFrac に届くか wideDelay 秒たったら（早い方）、球の全体（最後の半径）が画面に収まる
+// 遠めの位置へなめらかに引く（球が消える前に着くように）。爆発が終わったら、球が消えきるまで holdSec 秒保ってから、
+// 近い上空カメラへ戻る。小さな一発（smallRadius 以下）は引かない。
 // カメラは視線に沿って後ろ（上）へ t だけ下がるだけ（向きは変えない）。
 export const BLAST_CAM = {
   ratio: 1.3,         // 球の今の半径 × ratio より中心に近づくことは決してない（球に飲み込まれない）
   lookahead: 0.25,    // 近いままの間も、この秒数のうちに前線が届く大きさへは先に動き出す（押されて急に跳ばない）
   smallRadius: 60,    // この半径以下の一発では引かない
-  wideDelay: 0.6,     // 弾けてから、全体が見える位置へ引き始めるまでの秒
-  holdSec: 1.0,       // 爆発が終わってから、遠めの位置で保つ秒
+  wideDelay: 0.6,     // 弾けてから、全体が見える位置へ引き始めるまでの秒（の上限）
+  wideFrontFrac: 0.55, // 前線が半径のこの割合に届いたら、wideDelay を待たずに引き始める
+  holdSec: CONFIG.blast.fadeSec, // 爆発が終わってから、遠めの位置で保つ秒（球が消えきるまで）
   margin: 0.9,        // 全体が収まる: 球の見かけの端が、画面の端までの割合のこの内側
   outRate: 6,         // 引くばねの速さ（1/秒）
+  targetRate: 12,     // 目標そのものも、この速さ（1/秒）でなめらかに動かす（引き始めの加速を 0 から立ち上げる）
   backRate: 1.6,      // 戻るばねの速さ（1/秒）
 };
 
@@ -59,16 +62,21 @@ export function sinceBurstOf(front, radius, cfg = CONFIG) {
   return timeAtFront(front, radius, cfg) - phaseTimes(radius, cfg).creep;
 }
 
+// 弾けてから何秒で全体の位置へ引き始めるか（前線が wideFrontFrac に届く時刻と wideDelay の早い方）
+export function wideStartOf(radius, c = BLAST_CAM, cfg = CONFIG) {
+  return Math.min(c.wideDelay, sinceBurstOf(c.wideFrontFrac * radius, radius, cfg));
+}
+
 // 一発ごとの記録 { radius, sinceBurst } から、カメラがどうしたいか。
 //   'wide': 全体が見える位置へ（radius はその中で一番大きい一発）
 //   'stay': 引く一発が弾けたばかり（またはじわじわ期）。今の位置のまま（戻る途中なら、その場で止まる）
 //   'near': 近い上空カメラへ
 // waiting: 弾けたばかりの一発がある（'wide' のときも、その一発のために今より戻らない）
-export function cameraIntent(records, c = BLAST_CAM) {
+export function cameraIntent(records, c = BLAST_CAM, cfg = CONFIG) {
   let wide = 0, waiting = false;
   for (const r of records) {
     if (r.radius <= c.smallRadius) continue;
-    if (r.sinceBurst >= c.wideDelay) wide = Math.max(wide, r.radius);
+    if (r.sinceBurst >= wideStartOf(r.radius, c, cfg)) wide = Math.max(wide, r.radius);
     else waiting = true;
   }
   if (wide > 0) return { mode: 'wide', radius: wide, waiting };
@@ -80,12 +88,12 @@ export function cameraIntent(records, c = BLAST_CAM) {
 //   blasts: 今の一発 [{ id, radius, front }]（終わった一発は来なくなる）、front: 見えている球の一番大きい半径、
 //   hold: true の間は、終わった一発の「保つ」時間を進めない（大きな一発の演出が遠めの構図で止まっている間）
 export function createCameraFollow(c = BLAST_CAM, cfg = CONFIG) {
-  let t = 0, v = 0;
+  let t = 0, v = 0, goal = 0;
   const records = new Map(); // id -> { radius, sinceBurst, endedAgo }（endedAgo は終わってからの秒、続いている間は -1）
   let fitKey = '', fitT = 0;
   return {
     get t() { return t; },
-    get mode() { return cameraIntent(records.values(), c).mode; },
+    get mode() { return cameraIntent(records.values(), c, cfg).mode; },
     update(dt, { pos, dir, tanV, tanH, blasts = [], front = 0, hold = false }) {
       let soon = front;
       const seen = new Set();
@@ -100,10 +108,10 @@ export function createCameraFollow(c = BLAST_CAM, cfg = CONFIG) {
         if (seen.has(id)) continue;
         r.sinceBurst += dt;
         if (r.endedAgo < 0) r.endedAgo = 0; else if (!hold) r.endedAgo += dt;
-        if (r.endedAgo >= c.holdSec && r.sinceBurst >= c.wideDelay) records.delete(id);
+        if (r.endedAgo >= c.holdSec && r.sinceBurst >= wideStartOf(r.radius, c, cfg)) records.delete(id);
       }
       const need = pullbackDistance(pos, dir, front * c.ratio);
-      const intent = cameraIntent(records.values(), c);
+      const intent = cameraIntent(records.values(), c, cfg);
       let want = pullbackDistance(pos, dir, soon * c.ratio);
       if (intent.mode === 'wide') {
         const key = `${intent.radius}|${tanV}|${tanH}|${pos}|${dir}`;
@@ -112,12 +120,15 @@ export function createCameraFollow(c = BLAST_CAM, cfg = CONFIG) {
       }
       if (intent.waiting) want = Math.max(want, t);
       if (dt > 0) {
-        const w = want >= t ? c.outRate : c.backRate;
-        v = (v + w * w * (want - t) * dt) / (1 + 2 * w * dt + w * w * dt * dt);
+        goal += (want - goal) * (1 - Math.exp(-c.targetRate * dt));
+        if (intent.waiting) goal = Math.max(goal, t);
+        const w = goal >= t ? c.outRate : c.backRate;
+        v = (v + w * w * (goal - t) * dt) / (1 + 2 * w * dt + w * w * dt * dt);
         t += v * dt;
       }
       if (t < need) { t = need; v = Math.max(v, 0); }
       if (t < 0) { t = 0; v = 0; }
+      if (goal < t && intent.waiting) goal = t;
       return t;
     },
   };

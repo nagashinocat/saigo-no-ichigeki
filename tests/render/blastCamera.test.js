@@ -1,8 +1,10 @@
 import { test, expect } from 'vitest';
 import * as THREE from 'three';
-import { pullbackDistance, wholeFitPullback, cameraIntent, createCameraFollow, sinceBurstOf, BLAST_CAM } from '../../src/render/blastCamera.js';
+import { pullbackDistance, wholeFitPullback, wideStartOf, cameraIntent, createCameraFollow, sinceBurstOf, BLAST_CAM } from '../../src/render/blastCamera.js';
 import { createCityCamera, fitCityCamera, layoutViews } from '../../src/render/views.js';
 import { frontAt, blastDuration, phaseTimes } from '../../src/game/blast.js';
+import { sphereFade } from '../../src/render/explosionView.js';
+import { CONFIG } from '../../src/config.js';
 
 // 390×844 の上空カメラ（近い位置）
 function cityCam(w = 390, h = 844) {
@@ -81,12 +83,22 @@ test('wholeFitPullback: 今の位置で収まる小さな球は 0、大きな球
   expect(b).toBeGreaterThan(a);
 });
 
-test('cameraIntent: 小さな一発は数えない。弾けて 0.6 秒までは留まり、そのあと全体へ', () => {
+test('wideStartOf: 前線が半径の 55% に届く時刻（0.6 秒を超えない）。弾けた直後の近い一瞬は残る', () => {
+  for (const R of [80, 150, 202, 440]) {
+    const w = wideStartOf(R), { creep } = phaseTimes(R);
+    expect(w).toBeGreaterThan(0.1);
+    expect(w).toBeLessThanOrEqual(BLAST_CAM.wideDelay);
+    expect(frontAt(creep + w, R)).toBeCloseTo(Math.min(R * BLAST_CAM.wideFrontFrac, frontAt(creep + BLAST_CAM.wideDelay, R)), 4);
+  }
+});
+
+test('cameraIntent: 小さな一発は数えない。前線が 55% に届くまでは留まり、そのあと全体へ', () => {
+  const w = wideStartOf(150);
   expect(cameraIntent([]).mode).toBe('near');
   expect(cameraIntent([{ radius: 60, sinceBurst: 2 }]).mode).toBe('near');
   expect(cameraIntent([{ radius: 150, sinceBurst: -0.2 }]).mode).toBe('stay');
-  expect(cameraIntent([{ radius: 150, sinceBurst: 0.59 }]).mode).toBe('stay');
-  expect(cameraIntent([{ radius: 150, sinceBurst: 0.6 }])).toEqual({ mode: 'wide', radius: 150, waiting: false });
+  expect(cameraIntent([{ radius: 150, sinceBurst: w - 0.01 }]).mode).toBe('stay');
+  expect(cameraIntent([{ radius: 150, sinceBurst: w }])).toEqual({ mode: 'wide', radius: 150, waiting: false });
   expect(cameraIntent([{ radius: 150, sinceBurst: 1 }, { radius: 200, sinceBurst: 0.1 }, { radius: 40, sinceBurst: 3 }])).toEqual({ mode: 'wide', radius: 150, waiting: true });
 });
 
@@ -96,23 +108,38 @@ test('sinceBurstOf: 弾けた瞬間 0、じわじわ期は負', () => {
   expect(sinceBurstOf(frontAt(creep + 0.3, R), R)).toBeCloseTo(0.3, 6);
 });
 
-test('引く時刻: 弾けて 0.6 秒までは近いまま（前線に押される分だけ）、そのあと全体が見える位置へ引く', () => {
+test('引く時刻: 前線が 55% に届くまでは近いまま（前線に押される分だけ）、そのあと全体が見える位置へ引く', () => {
   const R = 200, { creep } = phaseTimes(R), end = blastDuration(R);
   const fit = wholeFitPullback(R, view.pos, view.dir, view.tanV, view.tanH);
   const run = simulate([{ radius: R, at: 0 }], end + 4);
   const at = (time) => run.reduce((a, b) => (Math.abs(b.time - time) < Math.abs(a.time - time) ? b : a));
-  // 弾けた直後〜0.6 秒: 球に飲み込まれない最小限（前線 × 1.3、先読みの分）しか下がらない
-  for (const r of run.filter((x) => x.time > creep && x.time < creep + BLAST_CAM.wideDelay)) {
+  // 弾けた直後〜引き始め: 球に飲み込まれない最小限（前線 × 1.3、先読みの分）しか下がらない
+  for (const r of run.filter((x) => x.time > creep && x.time < creep + wideStartOf(R))) {
     const soon = frontAt(r.time + BLAST_CAM.lookahead, R);
     expect(distAt(r.t)).toBeLessThanOrEqual(Math.max(distAt(0), soon * BLAST_CAM.ratio) + 1);
   }
-  expect(at(creep + 0.55).t).toBeLessThan(fit * 0.5);
-  // 終わってから保つ間に、全体が見える位置（の 95%）に着いている
-  expect(at(end + 0.9).t).toBeGreaterThan(fit * 0.95);
-  // 保つ間はほとんど戻らない
-  expect(at(end + 0.95).t).toBeGreaterThan(at(end + 0.3).t - 5);
+  expect(at(creep + wideStartOf(R)).t).toBeLessThan(fit * 0.3);
+  // 終わってすぐ、全体が見える位置（の 95%）に着いている
+  expect(at(end + 0.3).t).toBeGreaterThan(fit * 0.95);
+  // 球が消えきるまで保ち、ほとんど戻らない
+  expect(at(end + CONFIG.blast.fadeSec - 0.05).t).toBeGreaterThan(at(end + 0.3).t - 5);
   // そのあと近い上空カメラへ戻る
   expect(run.at(-1).t).toBeLessThan(fit * 0.15);
+});
+
+test('全体の位置（の 95%）に着くのは、球がまだ濃く見えている間（濃さ 0.6 以上）。球が消えるまで遠めのまま', () => {
+  for (const R of [100, 150, 202]) {
+    const end = blastDuration(R), fade = CONFIG.blast.fadeSec;
+    const fit = wholeFitPullback(R, view.pos, view.dir, view.tanV, view.tanH);
+    const run = simulate([{ radius: R, at: 0 }], end + fade + 3);
+    const arrive = run.find((r) => r.t >= fit * 0.95);
+    expect(arrive, `R=${R}`).toBeTruthy();
+    expect(arrive.time < end || sphereFade(arrive.time - end) >= 0.6, `R=${R} arrive ${arrive.time.toFixed(2)} end ${end.toFixed(2)}`).toBe(true);
+    // 球が薄く消えていく間（濃さ 0.1 まで）は全体の位置にいる
+    for (const r of run.filter((x) => x.time >= arrive.time && x.time >= end && sphereFade(x.time - end) >= 0.1)) {
+      expect(r.t).toBeGreaterThan(fit * 0.9);
+    }
+  }
 });
 
 test('球が広がる間ずっと、カメラと中心の距離は front × 1.3 以上（大きな一発でも）', () => {
@@ -124,7 +151,7 @@ test('球が広がる間ずっと、カメラと中心の距離は front × 1.3 
 
 test('動き出しはなめらか: 引き始める最初のフレームはほとんど動かず、どのフレームも跳ばない', () => {
   const R = 205;
-  const run = simulate([{ radius: R, at: 0 }], blastDuration(R) + 8);
+  const run = simulate([{ radius: R, at: 0 }], blastDuration(R) + 10);
   const steps = run.slice(1).map((r, i) => r.t - run[i].t);
   const first = steps.findIndex((s) => s > 1e-9);
   const maxOut = Math.max(...steps);
@@ -165,9 +192,9 @@ test('連打で跳ばない: 戻る途中に次の一発が来たら、その場
   const run = simulate([{ radius: R, at: 0 }, { radius: R, at: second }], second + end + 6);
   const before = run.find((r) => r.time >= second).t;
   expect(before).toBeGreaterThan(20); // まだ戻りきっていない
-  // 二発目が弾けてから 0.6 秒の間、カメラはその場から大きく戻らない
+  // 二発目が引き始めるまでの間、カメラはその場から大きく戻らない
   const { creep } = phaseTimes(R);
-  const during = run.filter((r) => r.time >= second && r.time < second + creep + BLAST_CAM.wideDelay);
+  const during = run.filter((r) => r.time >= second && r.time < second + creep + wideStartOf(R));
   expect(Math.min(...during.map((r) => r.t))).toBeGreaterThan(before * 0.6);
   // 行って・戻って・行って・戻る より多く向きが変わらない
   expect(reversals(run)).toBeLessThanOrEqual(3);

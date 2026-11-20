@@ -31,7 +31,7 @@ test('同時に生きている一発ごとに球を描き、終わった球は�
   view.update(1 / 60, list, camera, 500);
   expect(spheresVisible(scene)).toBe(2);
   expect(view.busy).toBe(true);
-  run(view, list, 2.5);
+  run(view, list, 1.7 + CONFIG.blast.fadeSec + 0.3); // 半径 200 の一発（約 1.6 秒）が終わって、消えきるまで
   expect(spheresVisible(scene)).toBe(0);
   expect(view.busy).toBe(false);
 });
@@ -147,7 +147,7 @@ test('ground: heat は球の不透明さ、ember は球の間は満ちて、球�
   run(view, list, 0.3);
   expect(view.ground.heat).toBeCloseTo(1, 5);
   expect(view.ground.ember).toBeCloseTo(1, 5);
-  run(view, list, 2.0); // 前線が届き、球が消える
+  run(view, list, 1.2 + CONFIG.blast.fadeSec); // 前線が届き、球が消える
   expect(view.ground.heat).toBe(0);
   const e1 = view.ground.ember;
   expect(e1).toBeGreaterThan(0.2);

@@ -10,7 +10,6 @@ import { createVaporizeView } from './vaporizeView.js';
 // 粉（DustEvent）と土煙の輪、光に溶ける建物。
 // 色: 白い芯 → 淡い金の内側 → 明るい表面の帯 → 縁だけ冷たい青紫。夕暮れの暖色の街に対して、縁の冷たい色で球を立たせる。
 
-const FADE_SEC = 0.9;        // 前線が届いてから球が消えるまで
 const AFTER_GROW = 0.07;     // 消えながら、さらに広がる割合
 const RING_AHEAD = 1.03;     // 衝撃波の輪は球の少し先を走る
 const FLASH_SEC = 0.07;
@@ -135,6 +134,12 @@ void main() {
 }`;
 
 const linear = (r, g, b, k = 1) => new THREE.Color().setRGB(r, g, b, THREE.SRGBColorSpace).multiplyScalar(k);
+
+// 前線が届いてから age 秒の球の濃さ（1 → 0、CONFIG.blast.fadeSec で消える）
+export function sphereFade(age, cfg = CONFIG) {
+  const k = Math.min(1, Math.max(0, age / cfg.blast.fadeSec));
+  return 1 - k * k * (3 - 2 * k);
+}
 
 export function createExplosionView(scene, tierName, { sunDir = null, seed = 7 } = {}) {
   const tier = TIERS[tierName] ?? TIERS.mid;
@@ -286,8 +291,8 @@ export function createExplosionView(scene, tierName, { sunDir = null, seed = 7 }
         const pulse = 1 + hum * 0.07 * Math.sin(time * Math.PI * 2 * HUM_HZ + s.id);
         if (s.done) {
           s.fadeAge += dt;
-          const k = Math.min(1, s.fadeAge / FADE_SEC);
-          fade = 1 - k * k * (3 - 2 * k);
+          const k = Math.min(1, s.fadeAge / CONFIG.blast.fadeSec);
+          fade = sphereFade(s.fadeAge);
           r = s.radius * (1 + AFTER_GROW * Math.sqrt(k));
           if (k >= 1) { s.active = false; s.mesh.visible = s.ring.visible = false; continue; }
         }
@@ -305,7 +310,7 @@ export function createExplosionView(scene, tierName, { sunDir = null, seed = 7 }
         s.ring.scale.setScalar(ringR);
         s.ringU.uRing.value = s.ringFront;
         s.ringU.uTime.value = time;
-        s.ringU.uFade.value = s.done ? Math.max(0, 1 - s.fadeAge / (FADE_SEC * 1.2)) : 1;
+        s.ringU.uFade.value = s.done ? Math.max(0, 1 - s.fadeAge / (CONFIG.blast.fadeSec * 1.2)) : 1;
         maxFront = Math.max(maxFront, r);
         cover = Math.max(cover, fade);
         lightI = Math.max(lightI, fade * (1 + 2 * u.uBirth.value) * r);
