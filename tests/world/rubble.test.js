@@ -11,11 +11,14 @@ test('置いた瓦礫は、変わった slot だけを一度知らせ、その�
   expect([...ch.slots].sort()).toEqual([0, 1]);
   expect(ch.highWater).toBe(2);
   expect(r.count).toBe(2);
-  const s = ch.slots[0];
+  const s = Math.min(...ch.slots);
   expect(r.isLive(s)).toBe(true);
   expect([r.data.px[s], r.data.py[s], r.data.pz[s]]).toEqual([20, -10, 0]);
-  // 止まった瓦礫は動かない: 次に聞いても変更はない
-  expect(r.takeChanges().slots.length).toBe(0);
+  // 止まった瓦礫は動かない: 次に聞いても変更はない（毎回同じ物を使い回し、新しい配列を作らない）
+  const a = r.takeChanges(), b = r.takeChanges();
+  expect(a.slots.length).toBe(0);
+  expect(b).toBe(a);
+  expect(b.slots).toBe(a.slots);
   expect(r.takeChanges().slots.length).toBe(0);
   expect(r.data.px[s]).toBe(20);
 });

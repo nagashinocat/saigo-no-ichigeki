@@ -1,6 +1,7 @@
 import { test, expect } from 'vitest';
 import { createDebrisPool, pushVelocity, crushVelocity, slumpVelocity, DEBRIS } from '../../src/world/debris.js';
 import { createRng } from '../../src/rng.js';
+import { groundHeight } from '../../src/render/sphereDeform.js';
 
 const chunk = (over = {}) => ({ pos: [0, 50, 0], vel: [0, 0, 0], size: 2, ...over });
 const run = (pool, sec, step = 1 / 60) => {
@@ -174,7 +175,10 @@ test('深い穴へ落ちていく破片は、時間や距離の上限で途中�
   const { dust, settled } = settle(pool, 14);
   expect(dust).toHaveLength(0);
   expect(settled).toHaveLength(1);
-  expect(settled[0].pos[1]).toBeLessThan(-400);
+  // r=100 は主人公の塔の斜面（深さ 3.5·96 = 336m）。塔の面に厚みの半分だけ浮いて止まる
+  const [x, y, z] = settled[0].pos;
+  expect(y).toBeLessThan(-300);
+  expect(y).toBeCloseTo(groundHeight(Math.hypot(x, z), [440]) + 1, 0);
 });
 
 test('slumpVelocity は中心向き 3〜18 m/s、上向き 0〜4 m/s（穴の縁から中へ崩れ落ちる）', () => {

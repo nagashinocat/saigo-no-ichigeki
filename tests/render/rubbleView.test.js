@@ -3,7 +3,8 @@ import * as THREE from 'three';
 import { createRubble } from '../../src/world/rubble.js';
 import { createRubbleView } from '../../src/render/rubbleView.js';
 
-const piece = (x) => ({ pos: [x, -20, 0], rot: [0, 0.5, 0], dims: [2, 1, 1], size: 2, color: [0.4, 0.3, 0.2] });
+// 穴の底（塔の外）に置く。sweep で穴が広がると地面がなくなる
+const piece = (x) => ({ pos: [x + 100, -20, 0], rot: [0, 0.5, 0], dims: [2, 1, 1], size: 2, color: [0.4, 0.3, 0.2] });
 
 test('瓦礫の見た目: 置いた slot だけを書いて送り、止まったままのフレームは GPU へ何も送らない', () => {
   const rubble = createRubble(50);
@@ -15,7 +16,7 @@ test('瓦礫の見た目: 置いた slot だけを書いて送り、止まった
   expect(attr.updateRanges).toEqual([{ start: 0, count: 3 * 16 }]);
   const mat = new THREE.Matrix4(), pos = new THREE.Vector3();
   view.mesh.getMatrixAt(1, mat);
-  expect(pos.setFromMatrixPosition(mat).x).toBeCloseTo(20, 5);
+  expect(pos.setFromMatrixPosition(mat).x).toBeCloseTo(120, 5);
   attr.clearUpdateRanges(); // 描いて GPU へ送ると three が範囲を空にする
   const v = attr.version;
   // 何も変わらないフレーム

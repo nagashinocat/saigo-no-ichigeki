@@ -2,9 +2,8 @@ import { test, expect } from 'vitest';
 import { radialGround, PILLAR_RINGS } from '../../src/render/cityView.js';
 import { PILLAR } from '../../src/render/sphereDeform.js';
 
-test('地面のメッシュには、主人公の柱の角になる輪（上の縁・側面・穴の底）がどの画質にもある', () => {
+test('地面のメッシュには、主人公の柱の上の縁の角になる輪がどの画質にもある', () => {
   expect(PILLAR_RINGS[0]).toBe(PILLAR.radius);
-  expect(PILLAR_RINGS[PILLAR_RINGS.length - 1]).toBe(PILLAR.radius + PILLAR.wall);
   for (const tier of ['high', 'mid', 'low']) {
     const { geo } = radialGround(tier);
     const pos = geo.getAttribute('position');

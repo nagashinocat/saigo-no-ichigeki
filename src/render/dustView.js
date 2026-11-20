@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { NOISE_GLSL } from './glslNoise.js';
+import { CRATER_FLOOR_GLSL } from './sphereDeform.js';
 
 // 土煙・粉の粒。ふくらんで薄れる、輪郭がやわらかく不揃いな「塊」の板を、固定の数（dustMax）だけ持つ。
 // 動きは生まれたときの値と時刻だけで決まり、シェーダーが毎フレームの位置と大きさを計算する（CPU は生まれるときだけ）。
@@ -11,7 +12,8 @@ attribute vec4 aVel;   // xyz: 初速, w: 抵抗
 attribute vec4 aLife;  // x: 生まれた時刻, y: 寿命, z: 大きさ, w: ふくらみ
 attribute vec4 aTint;  // rgb: 色, a: 上昇の速さ
 uniform float uTime;
-uniform float uCrater; // えぐれた地面の半径。穴の上の粒は球の面まで下りられる
+uniform float uCrater; // えぐれた地面の半径。穴の上の粒は穴の面（主人公の塔を含む）まで下りられる
+${CRATER_FLOOR_GLSL}
 varying vec2 vUv;
 varying float vAge;
 varying vec3 vTint;
@@ -28,7 +30,7 @@ void main() {
   float k = max(aVel.w, 1e-3);
   vec3 c = aPos + aVel.xyz * (1.0 - exp(-k * t)) / k + vec3(0.0, aTint.a * t, 0.0);
   float rr = dot(c.xz, c.xz);
-  c.y = max(c.y, rr < uCrater * uCrater ? -sqrt(uCrater * uCrater - rr) : 0.0);
+  c.y = max(c.y, craterFloor(sqrt(rr), uCrater));
   float size = aLife.z * (1.0 + aLife.w * (1.0 - pow(1.0 - age, 2.2)));
   vWorld = c;
   vec4 mv = viewMatrix * vec4(c, 1.0);

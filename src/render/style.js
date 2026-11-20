@@ -273,22 +273,21 @@ function makeBuildingDepthMaterial(uniforms) {
 
 // 地面のえぐれ: 最大の球（uFronts[0]）の下半分の形に掘り下げ、縁の外に盛り上がりを作る。主人公の足元は柱として残る。
 // 縁にいちばん近い輪の頂点を縁の上へ寄せて、縁がきれいな円になるようにする（uRingStep: 輪の間隔）。
-// 柱の上・側面・穴の底は、cityView の地面に足した柱の輪（PILLAR_RINGS）で角を作る。側面の法線は外向き。
-const PILLAR_FOOT = PILLAR.radius + PILLAR.wall;
+// 柱の上の縁は、cityView の地面に足した輪（PILLAR_RINGS）で角を作る。塔の斜面の法線は斜面の傾きから（外向き・上向き）。
 const GROUND_VERTEX = /* glsl */`
 vec3 gPos = position;
 vec3 objectNormal = vec3(0.0, 1.0, 0.0);
 if (uFrontCount > 0) {
   float F = uFronts[0];
   float r = length(gPos.xz);
-  if (abs(r - F) < uRingStep * 0.5 && r > ${f(PILLAR_FOOT)} + uRingStep) { gPos.xz *= F / r; r = F; }
+  if (abs(r - F) < uRingStep * 0.5 && r > ${f(PILLAR.radius)} + uRingStep) { gPos.xz *= F / r; r = F; }
   float d = craterDepth(r);
   gPos.y = groundHeight(r); // 敵や主人公が立つ高さ（sphereDeform.js の groundHeight）と同じ式
   vec2 rad = r > 1e-3 ? gPos.xz / r : vec2(0.0);
   if (r < F && r <= ${f(PILLAR.radius + 1e-3)}) {
     objectNormal = vec3(0.0, 1.0, 0.0); // 柱の上（元の広場の床）
-  } else if (r < F && r < ${f(PILLAR_FOOT - 1e-3)}) {
-    objectNormal = normalize(vec3(rad.x, 0.12, rad.y)); // 柱の側面（外向きの岩肌）
+  } else if (r < F && d >= ${f(PILLAR.slope)} * (r - ${f(PILLAR.radius)}) - 1e-3) {
+    objectNormal = normalize(vec3(rad.x * ${f(PILLAR.slope)}, 1.0, rad.y * ${f(PILLAR.slope)})); // 塔の斜面（深さ = slope·(r-4) の勾配の向き）
   } else if (d > 0.0) {
     objectNormal = normalize(-gPos); // 穴の面は球の中心を向く
   } else {
@@ -370,7 +369,7 @@ float groundFogK = 1.0; // 穴の中は霞を薄くして、深さと岩肌を�
     float rw = max(0.7, F * 0.005) + px * 1.5;
     float inLo = F - 0.3 - px;
     float inC = 1.0 - smoothstep(inLo, F - 0.05, r);
-    // 主人公の柱の上は広場の床のまま。側面から岩肌
+    // 主人公の柱の上は広場の床のまま。塔の斜面から岩肌
     float pillarTop = 1.0 - smoothstep(${f(PILLAR.radius)} - aa, ${f(PILLAR.radius)} + 0.03 + aa, r);
     inC *= 1.0 - pillarTop;
     float bandOut = F * 1.35 + W * 1.5; // 焦げ跡（最大 0.34F）と土の盛り上がり（1.3W）の外
@@ -427,7 +426,7 @@ float groundFogK = 1.0; // 穴の中は霞を薄くして、深さと岩肌を�
     c = mix(c, srgb(vec3(1.0, 0.88, 0.74)), rim * 0.9);
     groundEmis += srgb(vec3(1.0, 0.72, 0.48)) * rim * (0.3 + 1.4 * uHeat);
     // 柱の上の縁: 割れた石畳の明るい縁取りで、段差を読みやすくする
-    if (F > ${f(PILLAR_FOOT)}) {
+    if (F > ${f(PILLAR.radius + 1)}) {
       float edge = (1.0 - smoothstep(0.0, 0.18 + px, abs(r - ${f(PILLAR.radius - 0.15)}))) * pillarTop;
       c = mix(c, srgb(vec3(0.95, 0.90, 0.82)), edge * 0.7);
     }

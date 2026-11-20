@@ -65,7 +65,7 @@ export function slumpVelocity(chunkCenter, rng) {
 // 固定容量の破片プール。active[0..count) が生きている破片の slot。
 // spawn: { pos, vel, size, dims?: [w,h,d], color?: [r,g,b], keep? }
 // 止まった破片は、穴の中（えぐれた半径の内側）なら瓦礫として update の settled へ渡す（土煙にしない）。
-// keep（建物の大きな塊）は穴の外でも瓦礫として残す。主人公の柱の上・側面で止まったものは足元を空けるため土煙にする。
+// keep（建物の大きな塊）は穴の外でも瓦礫として残す。主人公の柱の上（r < 4m）で止まったものは足元を空けるため土煙にする。塔の斜面には瓦礫が残る。
 export function createDebrisPool(capacity, rng) {
   const F = (n = capacity) => new Float32Array(n);
   const data = {
@@ -158,7 +158,7 @@ export function createDebrisPool(capacity, rng) {
       evicted = [];
       const d = data;
       const g = DEBRIS.gravity * dt;
-      const foot = PILLAR.radius + PILLAR.wall;
+      const top = PILLAR.radius; // 主人公の柱の上（ここで止まった破片は瓦礫にしない）
       for (let i = count - 1; i >= 0; i--) {
         const s = active[i];
         d.age[s] += dt;
@@ -181,7 +181,7 @@ export function createDebrisPool(capacity, rng) {
               d.vx[s] -= j * nx; d.vy[s] -= j * ny; d.vz[s] -= j * nz;
             }
             const rr = Math.hypot(d.px[s], d.pz[s]);
-            steep = rr > foot && rr / Math.max(1e-6, -d.py[s]) > DEBRIS.reposeTan;
+            steep = rr > top && rr / Math.max(1e-6, -d.py[s]) > DEBRIS.reposeTan;
             const fr = steep ? DEBRIS.slideFriction : DEBRIS.groundFriction;
             // 面に沿った速さに摩擦を掛ける
             const vt = d.vx[s] * nx + d.vy[s] * ny + d.vz[s] * nz;
@@ -211,10 +211,11 @@ export function createDebrisPool(capacity, rng) {
         const tx = d.px[s] - d.ox[s], ty = d.py[s] - d.oy[s], tz = d.pz[s] - d.oz[s];
         const far = !overHole && tx * tx + ty * ty + tz * tz > DEBRIS.maxTravel ** 2;
         const maxAge = overHole || keep[s] ? DEBRIS.maxAgeFalling : DEBRIS.maxAge;
-        if (d.rest[s] > DEBRIS.maxRest && settled && (overHole || keep[s]) && r >= foot) {
+        if (d.rest[s] > DEBRIS.maxRest && settled && (overHole || keep[s]) && r >= top) {
           settled.push({
             pos: [d.px[s], d.py[s], d.pz[s]], rot: [d.rx[s], d.ry[s], d.rz[s]],
             dims: [d.sx[s], d.sy[s], d.sz[s]], size: d.size[s], color: [d.cr[s], d.cg[s], d.cb[s]],
+            floor: Math.min(d.py[s] - half, groundHeight(r, craterList)),
           });
           release(s);
         } else if (d.age[s] > maxAge || d.rest[s] > DEBRIS.maxRest || far) {

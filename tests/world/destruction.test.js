@@ -1,6 +1,7 @@
 import { test, expect } from 'vitest';
 import { createDestruction } from '../../src/world/destruction.js';
 import { TIERS } from '../../src/render/quality.js';
+import { groundHeight } from '../../src/render/sphereDeform.js';
 
 function fakeCity() {
   const log = { hidden: [], crushed: [], propsHidden: [] };
@@ -117,7 +118,7 @@ test('瓦礫の数は画質の上限（rubbleMax）を超えない。超えた�
   const d = createDestruction({ cityView, getTier: () => tier, seed: 5 });
   // 何回かに分けて壊す（破片のプールがあふれないように）
   let dust = [];
-  for (let k = 0; k < 4; k++) {
+  for (let k = 0; k < 6; k++) {
     d.pool.setCrater(130);
     for (let i = 0; i < 60; i++) {
       const id = k * 100 + i, a = (i / 60) * Math.PI * 2, r = 40 + (i % 7) * 12;
@@ -149,13 +150,19 @@ test('止まった瓦礫は毎フレーム動かさない（位置も変更の�
   expect(Array.from(d.rubble.data.px)).toEqual(Array.from(snapX));
 });
 
-test('大きな一発で穴が広がると、宙に浮く瓦礫は消える（土煙）', () => {
+test('大きな一発で穴が広がると、下の地面がなくなった瓦礫は消える（土煙）。主人公の塔の斜面の瓦礫は残る', () => {
   const { d } = make();
   settleIn(d, 4);
   const n = d.rubble.count;
   expect(n).toBeGreaterThan(0);
   d.pool.setCrater(300);
   const dust = d.update(1 / 60, [300]);
-  expect(d.rubble.count).toBe(0);
-  expect(dust.length).toBeGreaterThanOrEqual(n);
+  expect(dust.length).toBeGreaterThan(0);
+  expect(d.rubble.count).toBeLessThan(n);
+  // 残った瓦礫は、どれも下の地面が残っている（塔の斜面の上）
+  const { data } = d.rubble;
+  for (let s = 0; s < d.rubble.capacity; s++) {
+    if (!d.rubble.isLive(s)) continue;
+    expect(groundHeight(data.r[s], [300])).toBeGreaterThanOrEqual(data.floor[s] - 0.5);
+  }
 });

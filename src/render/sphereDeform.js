@@ -1,6 +1,6 @@
 // 爆発の球（中心は原点）に沿って街をゆがめる式。JS の基準実装と、同じ式のシェーダー（GLSL）。
 // - deformPoint: 球の内側に入った点を、中心からの向きを保ったまま球の表面へ押し出す（ビルが球の壁に押し付けられて曲がる）
-// - craterDepth: 地面の水平距離 r の点が、球の形にえぐれる深さ（主人公の足元 PILLAR.radius の内側は柱として元の高さに残る）
+// - craterDepth: 地面の水平距離 r の点が、球の形にえぐれる深さ（主人公の足元 PILLAR.radius の内側は元の高さに残り、その下は裾の広がる岩の塔になる）
 // - crushPoint: つぶれていく途中（k: 0→1）。高さを押しつぶしてから deformPoint をかける
 // fronts は球の半径の一覧。球はどれも原点が中心なので、点を含む球のうち一番大きなものが効く。
 
@@ -22,8 +22,9 @@ export function deformPoint(p, fronts) {
   return [p[0] * k, p[1] * k, p[2] * k];
 }
 
-// 主人公の足元の柱: 半径 radius の内側は元の地面の高さ（y=0）のまま残る。側面は水平に wall m で穴の深さまで下がる
-export const PILLAR = { radius: 4, wall: 1 };
+// 主人公の足元の柱: 半径 radius の内側は元の地面の高さ（y=0）のまま残る。その外の深さは slope·(r - radius) を超えないので、
+// 下へ行くほど広がる岩の塔になる（傾き tan = slope、裾の半径はおよそ radius + 穴の深さ / slope）
+export const PILLAR = { radius: 4, slope: 3.5 };
 
 export function craterDepth(r, fronts) {
   const a = Math.abs(r);
@@ -31,8 +32,7 @@ export function craterDepth(r, fronts) {
   const rr = r * r;
   let best = 0;
   for (const f of fronts) if (a < f) best = Math.max(best, Math.sqrt(f * f - rr));
-  if (a < PILLAR.radius + PILLAR.wall) best *= (a - PILLAR.radius) / PILLAR.wall;
-  return best;
+  return Math.min(best, PILLAR.slope * (a - PILLAR.radius));
 }
 
 // 地面の高さ（地面のシェーダーと同じ式）。最大の球の内側は穴で craterDepth だけ下がり（柱の上は 0）、縁の外は少し盛り上がる。
@@ -89,7 +89,7 @@ export function createFrontTracker() {
 }
 
 const CRATER_LIP_GLSL = { h: CRATER_LIP.height.toFixed(4), w: CRATER_LIP.width.toFixed(4) };
-const PILLAR_GLSL = { r: PILLAR.radius.toFixed(4), foot: (PILLAR.radius + PILLAR.wall).toFixed(4), wall: PILLAR.wall.toFixed(4) };
+const PILLAR_GLSL = { r: PILLAR.radius.toFixed(4), s: PILLAR.slope.toFixed(4) };
 
 // 上と同じ式の GLSL。uniform: uFronts[4], uFrontCount
 export const SPHERE_DEFORM_GLSL = /* glsl */`
@@ -119,7 +119,7 @@ float craterDepth(float r) {
     float f = uFronts[i];
     if (abs(r) < f) best = max(best, sqrt(f * f - r * r));
   }
-  if (a < ${PILLAR_GLSL.foot}) best *= (a - ${PILLAR_GLSL.r}) / ${PILLAR_GLSL.wall};
+  best = min(best, ${PILLAR_GLSL.s} * (a - ${PILLAR_GLSL.r}));
   return best;
 }
 // uFronts[0] は最大の球（packFronts が大きい順に詰める）
@@ -137,4 +137,13 @@ vec3 crushSquash(vec3 p, float k) {
   return p;
 }
 vec3 crushPoint(vec3 p, float k) { return deformPoint(crushSquash(p, k)); }
+`;
+
+// 半径 F の穴が1つだけのときの地面の高さ（穴の外は 0。縁の盛り上がりは入れない）。uniform を持たないシェーダー（土煙の粒）用
+export const CRATER_FLOOR_GLSL = /* glsl */`
+float craterFloor(float r, float F) {
+  float a = abs(r);
+  if (a < ${PILLAR_GLSL.r} || a >= F) return 0.0;
+  return -min(sqrt(F * F - r * r), ${PILLAR_GLSL.s} * (a - ${PILLAR_GLSL.r}));
+}
 `;

@@ -20,9 +20,9 @@ const BUILDING_SEGMENTS = { high: [4, 14, 4], mid: [3, 10, 3], low: [2, 6, 2] };
 const GROUND_RINGS = { high: [190, 320], mid: [140, 240], low: [90, 160] };
 const GROUND_FINE_R = CONFIG.cityRadius + 150;
 const GROUND_FAR_R = 8000, GROUND_FAR_RINGS = 30;
-// 主人公の柱の角を作る輪: 柱の上の縁・側面の上端・側面の下端・穴の底（側面の法線を上と底から分ける）
+// 主人公の柱の上の縁の角を作る輪: 縁（法線は上）とそのすぐ外（塔の斜面の法線）
 const EDGE = 0.02;
-export const PILLAR_RINGS = [PILLAR.radius, PILLAR.radius + EDGE, PILLAR.radius + PILLAR.wall - EDGE, PILLAR.radius + PILLAR.wall];
+export const PILLAR_RINGS = [PILLAR.radius, PILLAR.radius + EDGE];
 
 function radialGround(tier) {
   const [rings, seg] = GROUND_RINGS[tier] ?? GROUND_RINGS.mid;
