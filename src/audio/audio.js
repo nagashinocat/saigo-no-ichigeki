@@ -152,8 +152,49 @@ function env(param, t, attack, peak, dur) {
   param.exponentialRampToValueAtTime(0.0001, t + dur);
 }
 
-export function createAudio() {
+// 無音の WAV（8 bit・モノラル・8 kHz、samples 個）の data URI。iOS の消音スイッチ対策で <audio> に鳴らす
+export function silentWavDataUri(samples = 400) {
+  const rate = 8000, n = 44 + samples, b = new Uint8Array(n), v = new DataView(b.buffer);
+  const str = (o, x) => { for (let i = 0; i < x.length; i++) b[o + i] = x.charCodeAt(i); };
+  str(0, 'RIFF'); v.setUint32(4, n - 8, true); str(8, 'WAVE'); str(12, 'fmt '); v.setUint32(16, 16, true);
+  v.setUint16(20, 1, true); v.setUint16(22, 1, true); v.setUint32(24, rate, true); v.setUint32(28, rate, true);
+  v.setUint16(32, 1, true); v.setUint16(34, 8, true); str(36, 'data'); v.setUint32(40, samples, true);
+  b.fill(128, 44);
+  let bin = '';
+  for (const x of b) bin += String.fromCharCode(x);
+  return 'data:audio/wav;base64,' + btoa(bin);
+}
+
+// iPhone・iPad（iPadOS はデスクトップの UA で、タッチの点が複数）
+export function isIOSLike(nav) {
+  if (!nav) return false;
+  return /iPad|iPhone|iPod/.test(nav.userAgent ?? '') || (nav.platform === 'MacIntel' && (nav.maxTouchPoints ?? 0) > 1);
+}
+
+// nav・makeMedia: テストで差し替える（ふだんは navigator と new Audio）
+export function createAudio({ nav = globalThis.navigator, makeMedia = (src) => new Audio(src) } = {}) {
   let silenceEnd = 0;
+  // iOS の消音スイッチ（ベルの切り替え）: Web Audio だけでは「周囲の音」のセッションで、消音にすると鳴らない。
+  // 最初の操作で、音のセッションを「再生」にする（Safari 17 以降は audioSession、それより前は無音の <audio> を鳴らし続ける）
+  let sessionPrimed = false, silentEl = null;
+  function primeSession() {
+    if (sessionPrimed) return;
+    try {
+      if (nav?.audioSession) { nav.audioSession.type = 'playback'; sessionPrimed = true; return; }
+    } catch { /* 続けて <audio> を試す */ }
+    if (!isIOSLike(nav)) { sessionPrimed = true; return; }
+    try {
+      const el = silentEl ?? makeMedia(silentWavDataUri());
+      if (!silentEl) {
+        silentEl = el;
+        el.loop = true;
+        el.setAttribute?.('playsinline', '');
+        el.setAttribute?.('aria-hidden', 'true');
+      }
+      sessionPrimed = true; // 断られたら次の操作でもう一度
+      Promise.resolve(el.play?.()).catch(() => { sessionPrimed = false; });
+    } catch { sessionPrimed = true; /* <audio> が使えない: あきらめる */ }
+  }
   let ctx = null, master = null, hum = null, rumbleNode = null, noiseBuf = null, brownBuf = null;
   // 最後の一発の演出: 世界の音（master）と演出の音（cine: 心臓の鼓動・地鳴り）は、どちらも out のこもりを通る
   let cine = null, out = null;
@@ -161,6 +202,7 @@ export function createAudio() {
   // master・out を通さずリミッターへ直接つなぐ: 地鳴りが master を 0 に保つ間にも、リプレイの静かな変奏を鳴らせるように。
   // BGM は放った瞬間に自分で止まるので、演出の無音を邪魔しない
   let bgmBus = null;
+  let introAn = null; // 調べる用の analyser（introAnalyser）
   let introBus = null; // S6: 導入の音の出口（master・out を通さずリミッターへ。導入の音は introSfx.js が組む）
   let boomBus = null; // 爆発の音のまとめ（天井の曲線を通って master へ）
   let drone = null; // 時間切れの結末の低い唸り（鳴っている間だけ）
@@ -294,25 +336,40 @@ export function createAudio() {
 
   return {
     // 最初のユーザー操作で呼ぶ（ブラウザの自動再生の制限）
+    // 操作と見なされない入力（タッチの pointerdown）で呼んでも害はない（resume は待ったままか断られる）。鳴らせるまで操作のたびに呼ぶ。
+    // 戻り値: running になったら true の約束（断られたら false。reject は残さない）
     unlock() {
+      primeSession();
       if (!ctx) build();
-      if (ctx && ctx.state !== 'running') ctx.resume();
+      if (!ctx) return Promise.resolve(false);
+      if (ctx.state === 'running' || ctx.state === 'closed') return Promise.resolve(ctx.state === 'running');
+      let p;
+      try { p = ctx.resume(); } catch { return Promise.resolve(false); }
+      return Promise.resolve(p).then(() => ctx.state === 'running', () => false);
     },
     get running() { return !!ctx && ctx.state === 'running'; },
     // BGM の出口（unlock の前は null）
     get bgmOutput() { return ctx && bgmBus ? { ctx, dest: bgmBus } : null; },
     // 導入の音の出口（unlock の前は null）
     get introOutput() { return ctx && introBus ? { ctx, dest: introBus } : null; },
+    // 調べる用（?debug の __debug.introPeak）: 導入の音の出口を聞く analyser（はじめて呼んだときにつなぐ。unlock の前は null）
+    introAnalyser() {
+      if (!ctx || !introBus) return null;
+      if (!introAn) { introAn = ctx.createAnalyser(); introAn.fftSize = 2048; introBus.connect(introAn); }
+      return introAn;
+    },
     // タブが隠れた / 戻った。止める処理（suspend）は少しあとで終わるので、終わったときにもう戻っていたら鳴らし直す
     // （すぐ戻ると、戻した時点ではまだ running のままで、そのあと止まりっぱなしになる）。
     // 戻ったら suspended でなくても（iOS の interrupted など）鳴らし直す
     suspend() {
       hidden = true;
+      try { silentEl?.pause?.(); } catch { /* 済み */ }
       if (!ctx || ctx.state !== 'running') return;
       Promise.resolve(ctx.suspend()).then(() => { if (!hidden && ctx.state !== 'running') ctx.resume(); }, () => {});
     },
     resume() {
       hidden = false;
+      if (silentEl && sessionPrimed) Promise.resolve(silentEl.play?.()).catch(() => { sessionPrimed = false; });
       if (ctx && ctx.state !== 'running' && ctx.state !== 'closed') Promise.resolve(ctx.resume()).catch(() => {});
     },
     // level 0〜1。0 で止まる

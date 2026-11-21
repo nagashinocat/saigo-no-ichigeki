@@ -18,16 +18,20 @@ function rig(mode = 'full') {
     onStart: () => { events.start++; game.begin(); },
   });
   const down = (id = 1) => { if (flow.consumePointer()) return; press.down(id); };
-  const up = (id = 1) => press.up(id);
+  // 離す: TAP の画面では、離した操作（pointerup。タッチで音を鳴らせるようになる操作）で導入が始まる
+  const up = (id = 1) => { flow.release(); press.up(id); };
   const tick = (sec, dt = 1 / 60) => { for (let t = 0; t < sec - 1e-9; t += dt) { flow.update(dt); game.update(dt); } };
   return { game, flow, press, events, down, up, tick };
 }
 
-test('最初の読み込み: 小さな TAP の画面 → タップで導入が始まる（音を鳴らせるようになる操作）', () => {
+test('最初の読み込み: 小さな TAP の画面 → タップで導入が始まる（音を鳴らせるようになる操作）。押しただけでは始めず、離したときに始める', () => {
   const { flow, events, down, up } = rig();
   expect(flow.state).toBe('gate');
   expect(flow.blocksInput).toBe(true);
-  down(); up();
+  down();
+  expect(flow.state).toBe('gate');
+  expect(events.begin).toBe(0);
+  up();
   expect(flow.state).toBe('intro');
   expect(flow.time).toBe(0);
   expect(events.begin).toBe(1);
@@ -123,7 +127,9 @@ test('撮影用の seek: 時刻をそのまま置ける（題字の終わりを�
 test('TAP の直後の準備の間にたまったタップ（timeStamp が readyAt より前）は導入を飛ばさない。準備のあとのタップは今までどおり飛ばす', () => {
   let skips = 0;
   const flow = createIntroFlow({ mode: 'full', onSkip: () => skips++ });
-  expect(flow.consumePointer(100)).toBe(true); // TAP: 導入へ（onBegin の準備がここで走る）
+  expect(flow.consumePointer(100)).toBe(true); // TAP を押した: 受け取るだけ（まだ始めない）
+  expect(flow.state).toBe('gate');
+  expect(flow.release(120)).toBe(true); // 離した: 導入へ（onBegin の準備がここで走る）
   expect(flow.state).toBe('intro');
   flow.markReady(1300); // onBegin の終わり
   expect(flow.consumePointer(900)).toBe(true); // 準備の間に押した 2 回目（あとから届く）: 受け取るが何もしない
@@ -135,6 +141,7 @@ test('TAP の直後の準備の間にたまったタップ（timeStamp が ready
   // timeStamp を渡さない呼び方は今までどおり
   const f2 = createIntroFlow({ mode: 'full' });
   f2.consumePointer();
+  f2.release();
   f2.markReady(5000);
   f2.consumePointer();
   expect(f2.state).toBe('title');

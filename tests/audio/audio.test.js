@@ -161,3 +161,68 @@ test('最後の天井（リミッター）: 効果音・演出の音・BGM は�
     delete globalThis.window;
   }
 });
+
+// ---- 音を鳴らせるようにする（持ち主 22:15「初めのムービー音出てない」）----
+test('unlock: resume の約束を待てる（running になったら true）。resume が断られても例外にならない（未処理の reject を残さない）', async () => {
+  const { createAudio } = await import('../../src/audio/audio.js');
+  const ctx = fakeCtx();
+  ctx.state = 'suspended';
+  ctx.resume = () => { ctx.state = 'running'; return Promise.resolve(); };
+  globalThis.window = { AudioContext: function AC() { return ctx; } };
+  try {
+    const audio = createAudio({ nav: {} });
+    await expect(audio.unlock()).resolves.toBe(true);
+    expect(audio.running).toBe(true);
+    // 断られる（操作と見なされなかった）
+    const ctx2 = fakeCtx();
+    ctx2.state = 'suspended';
+    ctx2.resume = () => Promise.reject(new DOMException('not allowed', 'NotAllowedError'));
+    globalThis.window = { AudioContext: function AC() { return ctx2; } };
+    const a2 = createAudio({ nav: {} });
+    await expect(a2.unlock()).resolves.toBe(false);
+    expect(a2.running).toBe(false);
+  } finally {
+    delete globalThis.window;
+  }
+});
+
+test('iOS の消音スイッチ: 最初の操作で音のセッションを playback に（audioSession があればそれ、なければ無音の <audio> を鳴らす）。iOS 以外は何もしない', async () => {
+  const { createAudio, silentWavDataUri } = await import('../../src/audio/audio.js');
+  // 無音の WAV: RIFF/WAVE の見出しで、中身はすべて無音（8 bit の 128）
+  const uri = silentWavDataUri();
+  expect(uri.startsWith('data:audio/wav;base64,')).toBe(true);
+  const bin = atob(uri.split(',')[1]);
+  expect(bin.slice(0, 4)).toBe('RIFF');
+  expect(bin.slice(8, 12)).toBe('WAVE');
+  expect(bin.length).toBeLessThan(2000);
+  for (let i = 44; i < bin.length; i++) expect(bin.charCodeAt(i)).toBe(128);
+  globalThis.window = { AudioContext: function AC() { return fakeCtx(); } };
+  try {
+    // Safari 17 以降: audioSession.type
+    const nav1 = { userAgent: 'iPhone', audioSession: { type: 'auto' } };
+    createAudio({ nav: nav1, makeMedia: () => { throw new Error('使わない'); } }).unlock();
+    expect(nav1.audioSession.type).toBe('playback');
+    // それより前の iOS: 無音の <audio> を鳴らす（一度だけ）
+    const made = [];
+    const makeMedia = (src) => { const m = { src, loop: false, played: 0, setAttribute() {}, play() { m.played++; return Promise.resolve(); }, pause() {} }; made.push(m); return m; };
+    const a = createAudio({ nav: { userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_7 like Mac OS X)', maxTouchPoints: 5 }, makeMedia });
+    a.unlock();
+    await Promise.resolve();
+    a.unlock();
+    expect(made).toHaveLength(1);
+    expect(made[0].src).toBe(uri);
+    expect(made[0].loop).toBe(true);
+    expect(made[0].played).toBe(1);
+    // iPad（デスクトップの UA）も iOS
+    const made2 = [];
+    createAudio({ nav: { userAgent: 'Macintosh', platform: 'MacIntel', maxTouchPoints: 5 }, makeMedia: (s) => { made2.push(s); return { setAttribute() {}, play: () => Promise.resolve() }; } }).unlock();
+    expect(made2).toHaveLength(1);
+    // Android・PC は何もしない
+    const made3 = [];
+    createAudio({ nav: { userAgent: 'Android', maxTouchPoints: 5 }, makeMedia: (s) => { made3.push(s); return {}; } }).unlock();
+    createAudio({ nav: { userAgent: 'Windows', platform: 'Win32', maxTouchPoints: 0 }, makeMedia: (s) => { made3.push(s); return {}; } }).unlock();
+    expect(made3).toHaveLength(0);
+  } finally {
+    delete globalThis.window;
+  }
+});

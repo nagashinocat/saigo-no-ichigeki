@@ -2,7 +2,7 @@ import { createIntroTimeline } from '../render/introTimeline.js';
 
 // 導入の流れ（S6）: 'gate'（最初の読み込み。小さな「TAP」。この操作で音を鳴らせるようになる）→ 'intro'（導入のアニメーション）→
 // 'title'（「最後の一撃」と TAP START）→ 'game'。
-// 画面のタップは、ゲームが始まるまで導入が受け取る（consumePointer）: gate では導入を始め、導入の途中では題字の終わりへ飛ばす。
+// 画面のタップは、ゲームが始まるまで導入が受け取る（consumePointer）: gate では離したとき（release）に導入を始め、導入の途中では題字の終わりへ飛ばす。
 // 長押しの押下にはならないので、貯めることも放つこともない。ゲームを始めるのは TAP START（start）だけで、一度きり。
 // mode: 'full'（最初の読み込み）・'short'（リトライ。TAP の画面も導入もなく、短い題字から）・'bypass'（撮影の ?debug。今までどおりすぐ遊べる）
 export const RETRY_KEY = 'saigo-no-ichigeki:retry';
@@ -44,14 +44,23 @@ export function createIntroFlow({ mode = 'full', onBegin = () => {}, onSkip = ()
     // onBegin の終わりに呼ぶ（performance.now()）
     markReady(t) { readyAt = t; },
     // 画面のタップ（pointerdown）。導入が受け取ったら true（長押しへ渡さない）。
-    // timeStamp: 入力の時刻（event.timeStamp）。導入の間に readyAt より前のものは受け取るだけで何もしない
+    // timeStamp: 入力の時刻（event.timeStamp）。導入の間に readyAt より前のものは受け取るだけで何もしない。
+    // TAP の画面では受け取るだけで、始めるのは離したとき（release）: タッチの pointerdown（touchstart）は、
+    // iOS も Android の Chrome も音を鳴らせるようにする操作と見なさない（離した pointerup・touchend・click は見なす）
     consumePointer(timeStamp = Infinity) {
       if (state === 'game') return false;
+      if (state === 'gate') return true;
       if (state === 'intro' && timeStamp < readyAt) return true;
-      if (state === 'gate') { state = 'intro'; time = 0; onBegin(); }
-      else if (state === 'intro') this.skip();
+      if (state === 'intro') this.skip();
       // 'title': 題字の途中でも終わりの絵へ（ボタンを押すまでゲームは始めない）
       else if (time < timeline.total) time = timeline.total;
+      return true;
+    },
+    // TAP の画面で離した（pointerup・click）・キーを押した: 導入を始める（音の unlock は呼ぶ側が先に済ませる）。
+    // TAP の画面のときだけ。始めたら true。導入の間の pointerup・click は何もしない（飛ばすのは pointerdown だけ）
+    release() {
+      if (state !== 'gate') return false;
+      state = 'intro'; time = 0; onBegin();
       return true;
     },
     skip() {

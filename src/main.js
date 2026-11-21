@@ -37,7 +37,9 @@ import { createIntro } from './render/intro.js';
 import { createIntroOverlay } from './ui/introOverlay.js';
 import { createIntroFlow, introMode, markRetry } from './ui/introFlow.js';
 import { scheduleIntroSfx, renderIntroAudio } from './audio/introSfx.js';
-import { prepareIntroMusic } from './audio/introMusic.js';
+import { prepareIntroMusic, introMusicPlan } from './audio/introMusic.js';
+import { createIntroClock } from './audio/introClock.js';
+import { createIntroGesture } from './ui/introGesture.js';
 
 const MAX_FRAME_DT = 0.1;
 const GRABBED_STEADY = 0.15; // 掴まれている間の手の画面の光の安定（弱く瞬く）
@@ -114,7 +116,7 @@ const press = createPressTracker({
 });
 canvas.addEventListener('pointerdown', (e) => {
   if (e.pointerType === 'mouse' && e.button !== 0) return;
-  // 導入（S6）: ゲームが始まるまで、画面のタップは導入のもの（始める・飛ばす）。長押しにはならない
+  // 導入（S6）: ゲームが始まるまで、画面のタップは導入のもの（飛ばす。TAP の画面は受け取るだけで、始めるのは離したとき）。長押しにはならない
   if (introFlow.consumePointer(e.timeStamp)) return;
   // リプレイの間は、画面のタップで飛ばして結果へ
   if (replay.active && !replay.finished) { skipReplay(); return; }
@@ -133,8 +135,8 @@ window.addEventListener('keydown', (e) => {
   if (introFlow.blocksInput) {
     if (['Space', 'Enter'].includes(e.code)) {
       e.preventDefault();
-      if (!audio.running) audio.unlock(); // キーでも音を鳴らせるように（画面のタップと同じ）
-      if (!e.repeat && !introFlow.start()) introFlow.consumePointer(e.timeStamp);
+      // キーでも音を鳴らせるように（unlock してから、TAP START・導入を始める・飛ばす）
+      if (e.repeat) introGesture.unlock(); else introGesture.key(e.timeStamp);
     }
     return;
   }
@@ -146,8 +148,6 @@ window.addEventListener('keydown', (e) => {
   if (!e.repeat) game.puff();
 });
 window.addEventListener('contextmenu', (e) => e.preventDefault());
-// iOS では最初の1回で running にならないことがあるので、鳴らせるまで毎回呼ぶ
-window.addEventListener('pointerdown', () => { if (!audio.running) audio.unlock(); }, { capture: true });
 document.addEventListener('visibilitychange', () => {
   // 隠れる前に押下を打ち切る（放たず、貯めた力は残る。戻ってきたとき指が引っかかったままにならない）
   if (document.hidden) press.reset();
@@ -255,30 +255,28 @@ cityScene.add(heroAura.group);
 const intro = createIntro({ views, scene: cityScene, cityView, enemyView, heroAura, patrolGlow, hand, city: game.city, tier, getTier: () => tier, seed });
 // 2D の層の画素比は画質の段の上限まで（録画の ?pr はそれを上書き）。文字の光のにじみは段ごとに軽く
 const overlay = createIntroOverlay(document.body, { dprMax: Number.isFinite(prParam) ? prParam : TIERS[tier].pixelRatioMax, glow: tier === 'high' ? 'full' : tier === 'mid' ? 'cheap' : 'none' });
-let introSfx = null, introT0 = null, introWait = 0, liftT = 0, introWarmed = false;
-const INTRO_AUDIO_LEAD = 0.12; // 導入の 0 秒を、音の時計のこれだけ先に置く（最初の音が欠けない）
+let liftT = 0, introWarmed = false;
 // TAP START: 主人公がふわりと浮き上がって（最大 up m）、いつもの宙の高さへ戻る。足は地面より下へ沈まない（y ≥ 0）
 const HERO_LIFT = { up: 0.45, sec: 0.9 };
 const introFlow = createIntroFlow({
   mode: startMode,
   onBegin() {
     overlay.showGate(false);
-    introWait = 0;
-    const out = audio.introOutput;
     // 楽器の音がまだ全部できていなければ、ここで作り終えてから導入の 0 秒を決める（最初の拍を過去の時刻に予約しない）
     while (!prepareIntroMusic()) { /* 残りの楽器を作る */ }
     intro.finishPrepare(); // 主人公の導入の体も（ライトの拍で組み立てて止まらない）
     // 画質の段の主人公の体と乗り手の体も（バイクの拍の近いバイクが最初のフレームから乗り手の体。導入の再生中に組み立てない）
     bodyPrep.finish();
     warmIntro(); // 導入の材質と形も（導入の最初のフレームで止まらない）
-    if (out) { introT0 = out.ctx.currentTime + INTRO_AUDIO_LEAD; introSfx = scheduleIntroSfx(out.ctx, out.dest, introT0, introFlow.timeline); }
-    else introClock = 'dt'; // 音を鳴らせない（Web Audio がない）: 絵はフレームの dt で
+    // 導入の 0 秒は、ここでは決めない: 音の時計が running になってから（introClock。TAP の操作で呼んだ resume は、すぐには効かない）
+    const ready = performance.now();
+    introClock.begin(ready);
     // ここまでの準備は同期で走り、その間の画面は止まって見える。その間に押したタップ・キーは導入を飛ばさない
-    introFlow.markReady(performance.now());
+    introFlow.markReady(ready);
   },
-  onSkip() { introSfx?.cut(); },
+  onSkip() { introClock.cut(); },
   onStart() {
-    introSfx?.cut();
+    introClock.cut();
     intro.end();
     overlay.fadeOut(0.55);
     game.begin(); // タイマーが 60 から進み、BGM が鳴りはじめる（updateAudio）
@@ -288,6 +286,9 @@ const introFlow = createIntroFlow({
   },
 });
 overlay.button.addEventListener('click', () => introFlow.start());
+// 音を鳴らせるようにする操作と、TAP の画面を離した操作で導入を始めること（introGesture.js。持ち主 22:15）
+const introGesture = createIntroGesture({ audio, flow: introFlow });
+introGesture.attach(window, canvas);
 if (introFlow.blocksInput) hud.setVisible(false); // HUD はゲームが始まってから
 if (introFlow.state === 'gate') overlay.showGate(true);
 if (introFlow.state === 'game') { overlay.fadeOut(0); }
@@ -295,9 +296,14 @@ else startHint.hidden = true;
 // 浮き上がり: 0 から上がって（前半）ゆっくり宙の高さ 0 へ降りる。どの時刻も ≥ 0
 const heroLiftAt = (u) => HERO_LIFT.up * Math.sin(Math.PI * Math.min(1, Math.max(0, u))) ** 2;
 let overlayT = -1;
-// 音の時計: 'audio'（音の時計に合わせる）か 'dt'（音が鳴らせないあいだ、フレームの dt で進めた）。
-// リトライの短い題字は TAP を通らず導入の 0 秒を音の時計に置かない（onBegin がない）ので、はじめから dt で進める（待たずに出る）
-let introClock = startMode === 'short' ? 'dt' : 'audio';
+// 導入の音の時計（introClock.js）: running になってから 0 秒を決める。鳴らせないあいだは絵を dt で進め、
+// あとで鳴らせるようになったら次の拍の頭から入る。リトライの短い題字は TAP を通らない（begin しない）ので、はじめから dt
+const introMusicGrid = (() => { const p = introMusicPlan(introFlow.timeline); return p ? { start: p.start, beatSec: 60 / p.tempo } : { start: 0, beatSec: 60 / 116 }; })();
+const introClock = createIntroClock({
+  getOutput: () => audio.introOutput,
+  schedule: (ctx, dest, t0, opts) => scheduleIntroSfx(ctx, dest, t0, introFlow.timeline, opts),
+  grid: introMusicGrid,
+});
 // 導入の時刻 t の絵（3D の拍は画面全体、カード・白・題字は 2D が覆う）
 // alive: 題字が出きったあとも動き続けるもの（「の」の後ろのブラックホールの渦）の時刻。撮影は t をそのまま渡す
 let introAlive = 0;
@@ -352,18 +358,11 @@ function introTick(dt) {
     if (introWarmed) overlay.gate.classList.add('ready');
     return;
   }
-  const out = audio.introOutput;
-  const running = out?.ctx.state === 'running';
-  if (introFlow.state === 'intro' && running && introClock === 'dt') {
-    // dt で先へ進んだ絵を止めて待たせない: 音のほうを今の絵の時刻へ合わせ直し、ここから先の音だけを組み直す
-    introSfx?.cut();
-    introT0 = out.ctx.currentTime - introFlow.time;
-    introSfx = scheduleIntroSfx(out.ctx, out.dest, introT0, introFlow.timeline, { from: introFlow.time + 0.05 });
-    introClock = 'audio';
-  }
-  if (introFlow.state === 'intro' && introT0 !== null && running && introClock === 'audio') introFlow.syncTo(out.ctx.currentTime - introT0);
-  else if (introFlow.state === 'intro' && introClock === 'audio' && (introWait += dt) < 0.5) { /* 音の時計が動き出すのを少しだけ待つ */ }
-  else { introFlow.update(dt); if (introFlow.state === 'intro') introClock = 'dt'; }
+  if (introFlow.state === 'intro') {
+    const c = introClock.tick(performance.now(), introFlow.time);
+    if (c === 'dt') introFlow.update(dt);
+    else if (c !== 'hold') introFlow.syncTo(c); // 'hold': 音の時計が動き出すのを少しだけ待つ（絵は 0 秒のまま）
+  } else introFlow.update(dt); // 題字（title）
   if (bgm.state === 'off' && audio.running) bgm.prepare(); // 題字の間に楽器の音を作っておく
   introAlive = introFlow.time >= introFlow.timeline.total ? introAlive + dt : introFlow.time;
   renderIntroAt(introFlow.time, { alive: introAlive });
@@ -747,6 +746,17 @@ const debugHooks = {
     return { state: introFlow.state, beat: b.name, local: +b.local.toFixed(3), total: introFlow.timeline.total };
   },
   get introFlow() { return introFlow; },
+  // 導入の音（調べる用）: 音の時計の段（wait・audio・dt・done）、AudioContext の状態、導入の音の出口の今の最大の振れ幅
+  get introClock() { return { mode: introClock.mode, t0: introClock.t0, ctx: audio.introOutput?.ctx.state ?? 'none', ctxTime: audio.introOutput?.ctx.currentTime ?? null }; },
+  introPeak() {
+    const an = audio.introAnalyser();
+    if (!an) return 0;
+    const d = new Float32Array(an.fftSize);
+    an.getFloatTimeDomainData(d);
+    let p = 0;
+    for (const x of d) p = Math.max(p, Math.abs(x));
+    return p;
+  },
   // 導入の音を書き出す（録画用）。16 bit の WAV を base64 で返す
   async introAudio(sampleRate = 48000) {
     const r = await renderIntroAudio(introFlow.timeline, { sampleRate });
