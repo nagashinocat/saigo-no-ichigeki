@@ -106,3 +106,79 @@ test('飾りは種類ごとに 1 つの InstancedMesh（描画の回数を増や
   sh.setSignTier('low');
   expect(sh.uniforms.uSignFlicker.value).toBe(0);
 });
+
+test('restore のあと同じフレームで隠す・つぶすと、部分の送り（updateRanges）に戻した全体も含める（リプレイで飾りが GPU 上で消えたままになった不具合）', () => {
+  const view = createCityView(city, createStyle('high'), 'high');
+  const snap = view.snapshot();
+  view.update(1, {});
+  for (const b of city.buildings.slice(0, 40)) view.hideBuilding(b.id);
+  view.restore(snap);
+  // 描く前（GPU へ送る前）に、別のビルが光に溶け、別のビルがつぶれ始めた
+  view.hideBuilding(city.buildings[50].id);
+  view.crushBuilding(city.buildings[51].id, 0.4);
+  // three は updateRanges が空なら全体を、あればその範囲だけを送る。範囲があるなら、全体を覆っていること
+  view.group.traverse((o) => {
+    if (!o.isInstancedMesh) return;
+    for (const a of [o.instanceMatrix, ...Object.values(o.geometry.attributes).filter((x) => x.isInstancedBufferAttribute)]) {
+      if (a.updateRanges.length === 0) continue;
+      expect(a.updateRanges.some((r) => r.start === 0 && r.count >= a.array.length), o.name).toBe(true);
+    }
+  });
+});
+
+// S7 fix 1: 軽くする
+test('fix1: 壁と道の細かい飾り（clutter-wall）は mid / low の上空の画面では描かず、近いカメラでは描く。high はいつも描く', () => {
+  const wallOf = (v) => { let m = null; v.group.traverse((o) => { if (o.name === 'clutter-wall') m = o; }); return m; };
+  const mid = createCityView(city, createStyle('mid'), 'mid'), high = createCityView(city, createStyle('high'), 'high');
+  expect(wallOf(mid).visible).toBe(false);
+  expect(wallOf(high).visible).toBe(true);
+  mid.setCloseView(true); expect(wallOf(mid).visible).toBe(true);
+  mid.setCloseView(false); expect(wallOf(mid).visible).toBe(false);
+  high.setTier('mid'); expect(wallOf(high).visible).toBe(false);
+  // 見えない面を省いた箱: 屋上の飾りは底なし（10 三角形）、壁の飾りは底と裏なし（8 三角形）
+  let roof = null; mid.group.traverse((o) => { if (o.name === 'clutter-boxes') roof = o; });
+  expect(roof.geometry.index.count / 3).toBe(10);
+  expect(wallOf(mid).geometry.index.count / 3).toBe(8);
+});
+
+test('fix1: 段が下がると、飾りは間引きの値の小さい順に残して数（count）を減らす。減ったぶんは描かない', () => {
+  const view = createCityView(city, createStyle('high'), 'high');
+  const meshes = {}; view.group.traverse((o) => { if (o.isInstancedMesh) meshes[o.name] = o; });
+  const hi = Object.fromEntries(['neon-signs', 'neon-pools', 'clutter-boxes', 'clutter-wall', 'clutter-tanks'].map((n) => [n, meshes[n].count]));
+  view.setTier('mid');
+  const mid = Object.fromEntries(Object.keys(hi).map((n) => [n, meshes[n].count]));
+  expect(mid['neon-signs'] / hi['neon-signs']).toBeGreaterThan(0.68); expect(mid['neon-signs'] / hi['neon-signs']).toBeLessThan(0.82);
+  expect(mid['clutter-boxes'] / hi['clutter-boxes']).toBeLessThan(0.72);
+  view.setTier('low');
+  expect(meshes['neon-signs'].count / hi['neon-signs']).toBeLessThan(0.56);
+  // low の段で作ったときと同じ数
+  const low = createCityView(city, createStyle('low'), 'low');
+  const lowMeshes = {}; low.group.traverse((o) => { if (o.isInstancedMesh) lowMeshes[o.name] = o; });
+  for (const n of Object.keys(hi)) expect(meshes[n].count).toBe(lowMeshes[n].count);
+});
+
+test('fix1: ビルは遊んでいる間は粗い箱、最後の一発から細かい箱（同じつぶれ・屋根の形の値を使う）', () => {
+  const view = createCityView(city, createStyle('high'), 'high');
+  const m = view.meshes.tower;
+  const coarse = m.geometry;
+  expect(view.detail).toBe('coarse');
+  view.setDetail('fine');
+  expect(m.geometry).not.toBe(coarse);
+  expect(m.geometry.index.count).toBeGreaterThan(coarse.index.count * 4);
+  expect(m.geometry.getAttribute('aCrush')).toBe(coarse.getAttribute('aCrush'));
+  expect(m.geometry.getAttribute('aShape')).toBe(coarse.getAttribute('aShape'));
+  let outline = null; view.group.traverse((o) => { if (o.name === 'outline-tower') outline = o; });
+  expect(outline.geometry).toBe(m.geometry);
+  // 低い家（20m 未満）は細かくしても縦は 3 段まで
+  view.setDetail('fine');
+  const house = view.meshes.house.geometry;
+  const ys = new Set(); const pos = house.attributes.position;
+  for (let i = 0; i < pos.count; i++) ys.add(pos.getY(i).toFixed(4));
+  expect(ys.size).toBeLessThanOrEqual(4);
+});
+
+test('fix1: 飾りの乱数は街の種を使う（別の街なら別の並び）', () => {
+  const a = createCityView(generateCity(7), createStyle('low'), 'low'), b = createCityView(generateCity(8), createStyle('low'), 'low');
+  expect(generateCity(7).seed).toBe(7);
+  expect(a.dressCounts).not.toEqual(b.dressCounts);
+});

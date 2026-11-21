@@ -227,7 +227,7 @@ export function generateCity(seed, cfg = CONFIG, opts = {}) {
     b.kind = kindOf(b.h);
     b.value = b.w * b.h * b.d * RATE[b.kind];
   }
-  return { buildings, props };
+  return { seed, buildings, props };
 }
 
 // 目印の超高層: 街の中ほどの帯から、向きが離れた 2〜4 区画を選んで、段々の超高層にする。

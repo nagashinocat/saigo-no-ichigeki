@@ -708,10 +708,22 @@ function makeSignMaterial(uniforms) {
       attribute vec4 aTile;
       attribute vec4 aSign;
       varying vec2 vUv; varying vec3 vCol; flat varying vec4 vTile; flat varying vec4 vSign; flat varying float vFace;
-      varying float vLife; varying float vSurge; varying vec3 vFogW;
+      varying float vLife; varying float vSurge; varying vec3 vFogW; varying float vThin;
       ${DEFORM_VERT_PARS}
       void main() {
-        vec3 w0 = (instanceMatrix * vec4(position, 1.0)).xyz;
+        // 細いネオン管（描き方 2）は、遠くで 1 画素より細くなると点線のようにちらつく。画面で約 1 画素の太さまで太らせ、
+        // そのぶん暗くする（遠くの塔の角のネオン管が、光の球ごしに点線に見えた）
+        vec3 pos = position;
+        vThin = 1.0;
+        if (aSign.w > 1.5) {
+          vec3 sc = vec3(length(instanceMatrix[0].xyz), length(instanceMatrix[1].xyz), length(instanceMatrix[2].xyz));
+          float minW = length(cameraPosition - instanceMatrix[3].xyz) * 0.0022;
+          if (sc.x < minW) { pos.x *= minW / sc.x; vThin = min(vThin, sc.x / minW); }
+          if (sc.y < minW) { pos.y = 0.5 + (pos.y - 0.5) * minW / sc.y; vThin = min(vThin, sc.y / minW); }
+          if (sc.z < minW) { pos.z *= minW / sc.z; vThin = min(vThin, sc.z / minW); }
+          vThin = max(vThin, 0.2);
+        }
+        vec3 w0 = (instanceMatrix * vec4(pos, 1.0)).xyz;
         float ck = aCrush.y > 0.0 ? clamp((uTime - aCrush.x) / aCrush.y, 0.0, 1.0) : 0.0;
         vec3 sq = crushSquash(w0, ck);
         vec3 w1 = deformPoint(sq);
@@ -735,7 +747,7 @@ function makeSignMaterial(uniforms) {
       uniform sampler2D uAtlas;
       uniform float uFlicker, uGain, uTime;
       varying vec2 vUv; varying vec3 vCol; flat varying vec4 vTile; flat varying vec4 vSign; flat varying float vFace;
-      varying float vLife; varying float vSurge;
+      varying float vLife; varying float vSurge; varying float vThin;
       float h11(float x) { return fract(sin(x * 12.9898) * 43758.5453); }
       void main() {
         float mode = vSign.w, core = 0.0, halo = 0.0;
@@ -753,7 +765,7 @@ function makeSignMaterial(uniforms) {
         // 球が近い・つぶれていく: 激しい明滅
         float dying = max(vSurge * 0.85, step(vLife, 0.985));
         fl *= mix(1.0, step(0.42, h11(floor(uTime * 24.0 + ph * 3.0))), dying);
-        float lit = vLife * fl;
+        float lit = vLife * fl * vThin;
         vec3 board = c * 0.035 + vec3(0.018, 0.016, 0.022);
         vec3 neon = (c * (core * 0.95 + halo * 0.42) + vec3(core) * 0.18) * uGain * vSign.z;
         vec3 col = mix(board, vec3(0.0), core) + neon * lit;

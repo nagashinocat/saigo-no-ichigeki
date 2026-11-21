@@ -101,3 +101,53 @@ test('看板の絵柄のアトラス: タイルはアトラスの内で重なら
   }
   expect(buildSignAtlas().data).toEqual(atlas.data);
 });
+
+// S7 fix 1
+test('fix1: 縦に長い箱（角のネオン管・配管・塔の先）は 12m ごとに分かれ、球の線に沿って曲がれる', () => {
+  for (const x of full.boxes) if (!x.a) expect(x.h).toBeLessThanOrEqual(12 + 1e-6);
+  for (const s of full.signs) if (s.type === 'strip') expect(s.h).toBeLessThanOrEqual(12 + 1e-6);
+});
+
+test('fix1: 壁と道の細かい飾りは layer "wall"。霞の中（300m より遠いビル）にはエアコン・配管・物干しを置かない', () => {
+  const dist = new Map(city.buildings.map((b) => [b.id, b.dist]));
+  const wall = full.boxes.filter((x) => x.layer === 'wall');
+  expect(wall.length).toBeGreaterThan(2000);
+  for (const x of wall) {
+    const tiny = !x.a && (x.w <= 0.9 && x.h <= 0.72 || x.w <= 0.3); // エアコン・洗濯物・配管
+    if (tiny || (x.a && x.t < 0.1)) expect(dist.get(x.bid)).toBeLessThan(300);
+  }
+  // 屋上・区画の飾りは 'roof'
+  expect(full.boxes.filter((x) => x.layer === 'roof').length).toBeGreaterThan(2000);
+});
+
+test('fix1: 間引きの値 roll: 密度 d の飾りは、roll < d のものとちょうど同じ（段が下がったら roll の順に減らせる）', () => {
+  const mid = dressCity(city, { density: DENSITY.mid, clutter: CLUTTER_DENSITY.mid });
+  expect(mid.signs).toEqual(full.signs.filter((s) => s.roll < DENSITY.mid));
+  expect(mid.boxes).toEqual(full.boxes.filter((s) => s.roll < CLUTTER_DENSITY.mid));
+});
+
+test('fix1: 広場の近く（60m 未満）のネオン管は暖かい白を使わず、暗めで、縁を一周させない', () => {
+  const near = new Set(city.buildings.filter((b) => b.dist < 60).map((b) => b.id));
+  const strips = full.signs.filter((s) => s.type === 'strip' && near.has(s.bid));
+  expect(strips.length).toBeGreaterThan(0);
+  for (const s of strips) { expect(s.color).not.toEqual(NEON.warmWhite); expect(s.gain).toBeLessThan(0.7); }
+  const perBuilding = new Map();
+  for (const s of strips) if (s.h < 1) perBuilding.set(s.bid, (perBuilding.get(s.bid) ?? 0) + 1);
+  for (const [bid, n] of perBuilding) {
+    const parts = city.buildings.find((b) => b.id === bid).parts.length;
+    expect(n).toBeLessThanOrEqual(2 * parts);
+  }
+});
+
+test('fix1: 看板の表と裏は、外から見てどちらも左から右へ読める（BoxGeometry の ±z 面の u は見る人の右へ増える）', () => {
+  const g = new THREE.BoxGeometry(1, 1, 1);
+  const pos = g.attributes.position, uv = g.attributes.uv, n = g.attributes.normal;
+  for (const nz of [1, -1]) {
+    // 外から見る人の右: (-法線) × 上
+    const right = new THREE.Vector3(0, 0, -nz).cross(new THREE.Vector3(0, 1, 0));
+    const vs = [];
+    for (let i = 0; i < pos.count; i++) if (Math.round(n.getZ(i)) === nz) vs.push([pos.getX(i) * right.x, uv.getX(i)]);
+    const lo = vs.reduce((a, b) => (b[0] < a[0] ? b : a)), hi = vs.reduce((a, b) => (b[0] > a[0] ? b : a));
+    expect(hi[1]).toBeGreaterThan(lo[1]);
+  }
+});

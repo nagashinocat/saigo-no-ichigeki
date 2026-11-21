@@ -187,6 +187,7 @@ warmBoth(() => cityView.warmup(renderer, views.cityCamera, cityScene));
 // 最後の一発: 放つ瞬間から、時間が戻るまで世界の音は消える（鳴るのは心臓の鼓動だけ。音の段取りは演出が cue で知らせる）
 game.on('shot', (shot) => {
   bgm.stop(); // 放った瞬間にぴたりと止める（演出の無音・鼓動・爆音のため）
+  cityView.setDetail('fine'); // ビルを球の線に沿って曲がる細かい箱へ（遊んでいる間は粗い箱）
   explosionView.begin(shot); hand.release(shot);
 });
 // 小爆発: 両手が素早く組み合わさって弾け、主人公のまわりに小さな光の球（貯めの唸りは止めない）
@@ -480,6 +481,8 @@ function collapseHits(stage = null) {
 // 白の間の最初のフレームで、そのあとの画面全体の描画を温める（白から街への切り替わりで止まらない）
 let whiteWarmed = false;
 function draw() {
+  // mid / low: 壁と道の細かい飾りは、近いカメラ（演出の全画面・リプレイ・結末）のときだけ描く
+  cityView.setCloseView(blackhole.active || replay.active || cinematic.white || cinematic.fullscreen);
   if (!cinematic.white) whiteWarmed = false;
   if (blackhole.active) blackhole.draw();
   else if (replay.active) views.renderFull(cityScene, replay.camera, replay.screen);

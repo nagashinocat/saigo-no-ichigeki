@@ -18,10 +18,26 @@ const CAR_COLORS = ['#f4f4f2', '#c9ccd2', '#26282e', '#b8322e', '#2f5d9e', '#e8b
 const SIGN_COLORS = Object.values(NEON).map((c) => '#' + new THREE.Color(...c).getHexString());
 
 const unitBox = () => new THREE.BoxGeometry(1, 1, 1).translate(0, 0.5, 0);
+// 見えない面を省いた箱（屋上の飾りの底、壁の飾りの裏）。drop: 'px' 'nx' 'py' 'ny' 'pz' 'nz'（BoxGeometry の面の順）
+const FACE_ORDER = ['px', 'nx', 'py', 'ny', 'pz', 'nz'];
+export function openBox(drop) {
+  const g = unitBox();
+  const idx = g.index.array, keep = [];
+  for (const grp of g.groups) {
+    if (drop.includes(FACE_ORDER[grp.materialIndex])) continue;
+    for (let i = grp.start; i < grp.start + grp.count; i++) keep.push(idx[i]);
+  }
+  g.setIndex(keep);
+  g.clearGroups();
+  return g;
+}
 // ビルの箱は、球の線に沿って曲がれるよう細かく分ける（縦を多めに）
 const BUILDING_SEGMENTS = { high: [4, 14, 4], mid: [3, 10, 3], low: [2, 6, 2] };
 // 低い家（20m 未満。商店の並びの一軒ずつなど）は曲がりが小さいので縦の分け方を少なく（S7 で部品が増えた分の三角形を抑える）
-const HOUSE_V = { high: 6, mid: 4, low: 3 };
+const HOUSE_V = { high: 3, mid: 3, low: 2 };
+// 2 段の細かさ（S7 fix 1）: 遊んでいる間はビルはつぶれない（小爆発はビルをゆがめない）ので粗い箱で描き、
+// 最後の一発を放ったら（setDetail('fine')）球の線に沿って曲がる細かい箱へ差し替える（同じ材質・同じインスタンスの値）
+const COARSE_SEGMENTS = [1, 2, 1];
 // 平面の影（mid / low）はつぶれの形だけ追えばよいので、粗い箱で描く
 const SHADOW_SEGMENTS = [1, 3, 1];
 // 地面: 中心が細かい放射状のメッシュ（えぐれの縁がなめらかな円になるように）。街の外は粗く地平まで
@@ -108,18 +124,25 @@ export function createCityView(city, style, tier) {
   // ビル（種類ごとに箱の形を持ち、つぶれ始めた時刻を部品ごとの aCrush、屋根の形を aShape に書く）
   const segs = BUILDING_SEGMENTS[tier] ?? BUILDING_SEGMENTS.mid;
   const byId = new Map(); // building id -> { parts: [{mesh, index}], extras: [{mesh, index}] }
+  const lod = []; // 種類ごと: { coarse, fine, meshes }
   const meshes = {};
   const color = new THREE.Color(), base = new THREE.Color();
   for (const kind of KINDS) {
     const list = city.buildings.filter((b) => b.kind === kind);
     const n = list.reduce((a, b) => a + b.parts.length, 0);
     const sg = kind === 'house' ? [segs[0], HOUSE_V[tier] ?? HOUSE_V.mid, segs[2]] : segs;
-    const geo = new THREE.BoxGeometry(1, 1, 1, ...sg).translate(0, 0.5, 0);
     const crushAttr = new THREE.InstancedBufferAttribute(new Float32Array(Math.max(1, n) * 2), 2);
-    geo.setAttribute('aCrush', crushAttr);
     const shape = new THREE.InstancedBufferAttribute(new Float32Array(Math.max(1, n) * 2), 2);
-    geo.setAttribute('aShape', shape);
+    const boxGeo = (sgm) => {
+      const g = new THREE.BoxGeometry(1, 1, 1, ...sgm).translate(0, 0.5, 0);
+      g.setAttribute('aCrush', crushAttr);
+      g.setAttribute('aShape', shape);
+      return g;
+    };
+    const geo = boxGeo(COARSE_SEGMENTS);
+    lod.push({ kind, coarse: geo, fine: boxGeo(sg), meshes: [] });
     const mesh = instanced(geo, style.building(kind), n, { cast: shadows, receive: shadows });
+    lod[lod.length - 1].meshes.push(mesh);
     if (style.buildingDepth) mesh.customDepthMaterial = style.buildingDepth;
     mesh.name = 'buildings-' + kind;
     const colors = style.kindColors[kind];
@@ -145,6 +168,7 @@ export function createCityView(city, style, tier) {
       const line = instanced(geo, style.outline, n);
       line.instanceMatrix = mesh.instanceMatrix; // 同じ行列を使うので、隠すと線も消える
       line.name = 'outline-' + kind;
+      lod[lod.length - 1].meshes.push(line);
       group.add(line);
     }
     if (style.planarShadow) {
@@ -161,33 +185,50 @@ export function createCityView(city, style, tier) {
   }
 
 
-  // 屋上・壁の飾り、看板・ネオン、店先の光の溜まり（cityDress.js）。画質の段で数を間引く
-  const dress = dressCity(city, { density: DENSITY[tier] ?? DENSITY.mid, clutter: CLUTTER_DENSITY[tier] ?? CLUTTER_DENSITY.mid, seed: 7 });
+  // 屋上・壁の飾り、看板・ネオン、店先の光の溜まり（cityDress.js）。作るときの段の密度で作り、
+  // どの InstancedMesh も間引きの値 roll の小さい順に並べる。段が下がったら count を減らすだけで間引ける（setTier）
+  const dress = dressCity(city, { density: DENSITY[tier] ?? DENSITY.mid, clutter: CLUTTER_DENSITY[tier] ?? CLUTTER_DENSITY.mid, seed: city.seed ?? 7 });
+  const byRoll = (a, b) => a.roll - b.roll;
+  const roofBoxes = dress.boxes.filter((x) => x.layer !== 'wall').sort(byRoll);
+  const wallBoxes = dress.boxes.filter((x) => x.layer === 'wall').sort(byRoll);
+  dress.tanks.sort(byRoll); dress.signs.sort(byRoll); dress.pools.sort(byRoll);
   const withCrush = (g, n) => { g.setAttribute('aCrush', new THREE.InstancedBufferAttribute(new Float32Array(Math.max(1, n) * 2), 2)); return g; };
   const attach = (bid, mesh, index) => byId.get(bid)?.extras.push({ mesh, index });
+  // 段ごとの数: 並べた先頭から roll < 密度 のものだけ
+  const tiered = []; // { mesh, list, kind: 'sign' | 'clutter' }
+  const countAt = (list, d) => { let n = 0; while (n < list.length && list[n].roll < d) n++; return n; };
 
-  const boxMesh = instanced(withCrush(unitBox(), dress.boxes.length), style.props.clutter, dress.boxes.length, { receive: shadows });
-  boxMesh.name = 'clutter-boxes';
   const _a = new THREE.Vector3(), _b = new THREE.Vector3(), _d = new THREE.Vector3(), XAX = new THREE.Vector3(1, 0, 0);
-  dress.boxes.forEach((x, i) => {
+  const _flip = new THREE.Quaternion().setFromAxisAngle(XAX, Math.PI);
+  const placeBoxes = (mesh, list) => list.forEach((x, i) => {
     if (x.a) {
-      // a → b の細い箱（電線・腕・竿）。箱の底が y=0 なので、太さの半分だけ下げて線の上に中心を置く
+      // a → b の細い箱（電線・腕・竿）。見えない面（底・裏）を省いた箱なので、省いた面を上へ向ける（下や横から見える面を残す）。
+      // 箱の底が y=0 なので、太さの半分だけずらして線の上に中心を置く
       _a.fromArray(x.a); _b.fromArray(x.b);
       _d.subVectors(_b, _a);
       const L = _d.length();
-      _q.setFromUnitVectors(XAX, _d.normalize());
+      _q.setFromUnitVectors(XAX, _d.normalize()).multiply(_flip);
       _p.addVectors(_a, _b).multiplyScalar(0.5).sub(_s.set(0, x.t / 2, 0).applyQuaternion(_q));
-      boxMesh.setMatrixAt(i, _m.compose(_p, _q, _s.set(L, x.t, x.t)));
-    } else boxMesh.setMatrixAt(i, boxMatrix(x.x, x.y, x.z, x.w, x.h, x.d, x.ry));
-    boxMesh.setColorAt(i, color.setRGB(...x.color, THREE.SRGBColorSpace));
-    attach(x.bid, boxMesh, i);
+      mesh.setMatrixAt(i, _m.compose(_p, _q, _s.set(L, x.t, x.t)));
+    } else mesh.setMatrixAt(i, boxMatrix(x.x, x.y, x.z, x.w, x.h, x.d, x.ry));
+    mesh.setColorAt(i, color.setRGB(...x.color, THREE.SRGBColorSpace));
+    attach(x.bid, mesh, i);
   });
+  // 屋上・区画の飾り: 底の面を省いた箱。壁と道の飾り: 底と裏（壁の側 = ローカルの -z）を省いた箱
+  const boxMesh = instanced(withCrush(openBox(['ny']), roofBoxes.length), style.props.clutter, roofBoxes.length, { receive: shadows });
+  boxMesh.name = 'clutter-boxes';
+  placeBoxes(boxMesh, roofBoxes);
+  tiered.push({ mesh: boxMesh, list: roofBoxes, kind: 'clutter' });
+  const wallMesh = instanced(withCrush(openBox(['ny', 'nz']), wallBoxes.length), style.props.clutter, wallBoxes.length, { receive: shadows });
+  wallMesh.name = 'clutter-wall';
+  placeBoxes(wallMesh, wallBoxes);
+  tiered.push({ mesh: wallMesh, list: wallBoxes, kind: 'clutter' });
 
   const tankGeo = mergeGeometries([
-    new THREE.CylinderGeometry(1, 1, 0.62, 10).translate(0, 0.62, 0),
-    new THREE.ConeGeometry(1.05, 0.2, 10).translate(0, 1.03, 0),
+    new THREE.CylinderGeometry(1, 1, 0.62, 10, 1, true).translate(0, 0.62, 0),
+    new THREE.ConeGeometry(1.05, 0.2, 10, 1, true).translate(0, 1.03, 0),
     ...[[0.62, 0.62], [-0.62, 0.62], [0.62, -0.62], [-0.62, -0.62]].map(([x, z]) => new THREE.BoxGeometry(0.14, 0.32, 0.14).translate(x, 0.16, z)),
-  ]);
+  ].map((g) => g.toNonIndexed()));
   const tankMesh = instanced(withCrush(tankGeo, dress.tanks.length), style.props.clutter, dress.tanks.length, { receive: shadows });
   tankMesh.name = 'clutter-tanks';
   dress.tanks.forEach((x, i) => {
@@ -195,6 +236,7 @@ export function createCityView(city, style, tier) {
     tankMesh.setColorAt(i, color.setRGB(...x.color, THREE.SRGBColorSpace));
     attach(x.bid, tankMesh, i);
   });
+  tiered.push({ mesh: tankMesh, list: dress.tanks, kind: 'clutter' });
 
   const signGeo = withCrush(unitBox(), dress.signs.length);
   const tileAttr = new THREE.InstancedBufferAttribute(new Float32Array(Math.max(1, dress.signs.length) * 4), 4);
@@ -210,6 +252,7 @@ export function createCityView(city, style, tier) {
     signAttr.setXYZW(i, x.flicker, x.phase, x.gain, x.mode);
     attach(x.bid, signMesh, i);
   });
+  tiered.push({ mesh: signMesh, list: dress.signs, kind: 'sign' });
 
   const poolGeo = withCrush(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2).translate(0, 0.07, 0), dress.pools.length);
   const neonPools = instanced(poolGeo, style.props.neonPool, dress.pools.length);
@@ -220,6 +263,7 @@ export function createCityView(city, style, tier) {
     neonPools.setColorAt(i, color.setRGB(...x.color));
     attach(x.bid, neonPools, i);
   });
+  tiered.push({ mesh: neonPools, list: dress.pools, kind: 'sign' });
 
   const beaconMesh = instanced(new THREE.SphereGeometry(0.7, 8, 6).translate(0, 1.2, 0), style.props.beacon, dress.beacons.length);
   beaconMesh.name = 'beacons';
@@ -227,8 +271,12 @@ export function createCityView(city, style, tier) {
     beaconMesh.setMatrixAt(i, boxMatrix(r.x, r.y, r.z, 1, 1, 1));
     attach(r.bid, beaconMesh, i);
   });
-  group.add(boxMesh, tankMesh, signMesh, neonPools, beaconMesh);
-  const dressCounts = { boxes: dress.boxes.length, tanks: dress.tanks.length, signs: dress.signs.length, pools: dress.pools.length, beacons: dress.beacons.length };
+  group.add(boxMesh, wallMesh, tankMesh, signMesh, neonPools, beaconMesh);
+  const dressCounts = { boxes: roofBoxes.length + wallBoxes.length, roofBoxes: roofBoxes.length, wallBoxes: wallBoxes.length, tanks: dress.tanks.length, signs: dress.signs.length, pools: dress.pools.length, beacons: dress.beacons.length };
+  let tierNow = tier, closeView = false;
+  // 壁と道の細かい飾りは、mid / low の上空の画面では描かない（演出・リプレイ・結末の近いカメラでは描く）
+  const applyWallVisibility = () => { wallMesh.visible = closeView || tierNow === 'high'; };
+  applyWallVisibility();
 
   // 道路沿いの props
   const cars = city.props.filter((p) => p.kind === 'car');
@@ -295,25 +343,31 @@ export function createCityView(city, style, tier) {
   group.add(carMesh, poles, heads, signPoles, panels);
   if (pools) group.add(pools);
 
-  // 範囲だけ GPU へ送る（1 棟の飾りは並んだ番号なので、three が隣り合う範囲をまとめて送る）
+  // 範囲だけ GPU へ送る（three は updateRanges があればその範囲だけを送り、なければ全体を送る）。
+  // restore は全体を送る印（範囲なし）を付けるが、描く前に同じ値へ部分の範囲を足すと、全体が送られずに部分だけになる
+  // （リプレイで、戻した飾りが GPU の上では隠れたままになった）。そこで restore のあと最初に範囲を足すときは、全体の範囲も足す
+  const fullPending = new Set();
+  const markRange = (attr, start, count) => {
+    if (fullPending.has(attr)) { fullPending.delete(attr); attr.addUpdateRange(0, attr.array.length); }
+    attr.addUpdateRange(start, count);
+    attr.needsUpdate = true;
+  };
   const hide = ({ mesh, index }) => {
     mesh.setMatrixAt(index, ZERO);
-    mesh.instanceMatrix.addUpdateRange(index * 16, 16);
-    mesh.instanceMatrix.needsUpdate = true;
+    markRange(mesh.instanceMatrix, index * 16, 16);
   };
   const setCrush = ({ mesh, index }, at, delay) => {
     const attr = mesh.geometry.getAttribute('aCrush');
     if (!attr) return false;
     attr.setXY(index, at, delay);
-    attr.addUpdateRange(index * 2, 2);
-    attr.needsUpdate = true;
+    markRange(attr, index * 2, 2);
     return true;
   };
-  let time = 0;
+  let time = 0, detail = 'coarse';
   // 一時的に隠したビル（演出の肩越しのカットの間だけ）: id → 隠す前の行列。本当に隠した（gone）・つぶし始めた（crushed）ものは覚えておく
   const veiled = new Map(), gone = new Set(), crushed = new Set();
   const matOf = ({ mesh, index }) => mesh.instanceMatrix.array.slice(index * 16, index * 16 + 16);
-  const setMat = ({ mesh, index }, arr) => { mesh.instanceMatrix.array.set(arr, index * 16); mesh.instanceMatrix.addUpdateRange(index * 16, 16); mesh.instanceMatrix.needsUpdate = true; };
+  const setMat = ({ mesh, index }, arr) => { mesh.instanceMatrix.array.set(arr, index * 16); markRange(mesh.instanceMatrix, index * 16, 16); };
 
   return {
     group,
@@ -338,10 +392,32 @@ export function createCityView(city, style, tier) {
       e.parts[0].mesh.getColorAt(e.parts[0].index, c);
       return [c.r, c.g, c.b];
     },
-    // 画質の段が下がったとき（看板のちらつき・明るさ。飾りの数は作ったときの段のまま）
-    setTier(t) { style.setSignTier?.(t); },
-    // 初めて描くときに止まらないよう、街の材質を前もって作る（scene: 光の数を合わせるため、街を入れたシーン）
-    warmup(renderer, camera, scene = group) { renderer.compile(scene, camera); },
+    // 画質の段が下がったとき: 看板のちらつき・明るさを合わせ、飾りを roll の小さい順に残して数を減らす（作ったときの段より増やさない）
+    setTier(t) {
+      style.setSignTier?.(t);
+      for (const { mesh, list, kind } of tiered) {
+        const d = kind === 'sign' ? (DENSITY[t] ?? DENSITY.mid) : (CLUTTER_DENSITY[t] ?? CLUTTER_DENSITY.mid);
+        mesh.count = Math.min(mesh.count, countAt(list, d));
+      }
+      tierNow = t;
+      applyWallVisibility();
+    },
+    // 近いカメラ（演出・リプレイ・結末）で描いているか。mid / low では、その間だけ壁と道の細かい飾りを描く
+    setCloseView(on) { closeView = !!on; applyWallVisibility(); },
+    // ビルの細かさ: 'coarse'（遊んでいる間）/ 'fine'（最後の一発から。球の線に沿って曲がる）
+    setDetail(level) {
+      for (const l of lod) for (const m of l.meshes) m.geometry = level === 'fine' ? l.fine : l.coarse;
+      detail = level;
+    },
+    get detail() { return detail; },
+    // 初めて描くときに止まらないよう、街の材質を前もって作る（scene: 光の数を合わせるため、街を入れたシーン）。
+    // 隠している壁の飾りも作る
+    warmup(renderer, camera, scene = group) {
+      const v = wallMesh.visible;
+      wallMesh.visible = true;
+      renderer.compile(scene, camera);
+      wallMesh.visible = v;
+    },
     // 爆発の球に沿ったゆがみを進める。fronts: [えぐれの半径, ...今の球の半径]（createFrontTracker）、
     // heat: 球の明るさ（0〜1。押し付けられた面と穴の割れ目が光る）、ember: 熾火の残り（0〜1）
     update(dt, { fronts = [], heat = 0, ember = 0 } = {}) {
@@ -421,6 +497,7 @@ export function createCityView(city, style, tier) {
         attr.array.set(array);
         attr.clearUpdateRanges();
         attr.needsUpdate = true;
+        fullPending.add(attr);
       }
     },
   };

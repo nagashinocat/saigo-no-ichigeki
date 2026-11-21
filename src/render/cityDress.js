@@ -37,6 +37,9 @@ export const DENSITY = { high: 1, mid: 0.75, low: 0.5 };
 // 屋上・壁の細かい飾り（箱・給水塔）は数が多いので、看板より強く間引く（mid の Android で 30fps）
 export const CLUTTER_DENSITY = { high: 1, mid: 0.6, low: 0.4 };
 const FLOOR = 3.3;
+const SEG_MAX = 12;        // m。縦に長い箱（角のネオン・配管・塔の先）の一つの長さの上限
+const FINE_DIST = 300;     // m。これより遠いビルには壁の小さな飾り（エアコン・配管・物干し）を置かない（霞の中）
+const STRIP_NEAR = 60;     // m。広場からこの距離の内のネオン管は控えめに
 
 // 汚れた・錆びた・色あせた増築の色（sRGB）
 const GRIME = [[0.42, 0.40, 0.37], [0.36, 0.33, 0.30], [0.47, 0.42, 0.36], [0.33, 0.35, 0.36], [0.45, 0.30, 0.24], [0.30, 0.31, 0.34], [0.52, 0.49, 0.44]];
@@ -75,10 +78,24 @@ export function dressCity(city, { density = 1, clutter = density, seed = 7 } = {
   for (const b of city.buildings) {
     const r = createRng((seed * 7919 + b.id * 104729 + 0x2545) >>> 0);
     const pick = (arr) => arr[Math.floor(r() * arr.length)];
-    const keep = () => r() < density; // 看板の間引き（いつも 1 つ引く）
-    const keepC = () => r() < clutter; // 飾りの間引き
-    const box = (spec) => out.boxes.push({ bid: b.id, ...spec });
-    const sign = (spec) => out.signs.push({ bid: b.id, flicker: 0, phase: 0, gain: 1, mode: 0, ...spec });
+    // 間引きの値 roll（0〜1）を引いて、続けて置く飾りに付ける。roll < 密度 のものだけ使う（画質の段が下がったら、
+    // cityView が roll の小さい順に並べた InstancedMesh の count を減らすだけで同じように間引ける）
+    let roll = 0;
+    const keep = () => { roll = r(); return true; };
+    const keepC = keep;
+    const box = (spec) => out.boxes.push({ bid: b.id, roll, layer: 'roof', ...spec });
+    const wall = (spec) => box({ ...spec, layer: 'wall' }); // 壁と道の細かい飾り（mid / low の上空の画面では描かない）
+    const sign = (spec) => out.signs.push({ bid: b.id, roll, flicker: 0, phase: 0, gain: 1, mode: 0, ...spec });
+    // 縦に長い箱は、球の線に沿って曲がるよう SEG_MAX m ごとに分ける
+    const tallBox = (spec, put = box) => {
+      const n = Math.max(1, Math.ceil(spec.h / SEG_MAX));
+      for (let i = 0; i < n; i++) put({ ...spec, y: spec.y + (spec.h / n) * i, h: spec.h / n });
+    };
+    const tallSign = (spec) => {
+      const n = Math.max(1, Math.ceil(spec.h / SEG_MAX));
+      for (let i = 0; i < n; i++) sign({ ...spec, y: spec.y + (spec.h / n) * i, h: spec.h / n });
+    };
+    const fine = b.dist < FINE_DIST; // 霞の始まりより手前だけ、壁の小さな飾りを置く
     const ang = Math.atan2(b.z, b.x);
     const cnBias = 0.5 + 0.38 * Math.sin(2 * ang + 1.3) + 0.25 * (r() - 0.5);
     const culture = r() < cnBias ? 'cn' : 'jp';
@@ -100,8 +117,8 @@ export function dressCity(city, { density = 1, clutter = density, seed = 7 } = {
           const k = keepC(), fl = 1 + Math.floor(r() * Math.max(1, floors)), s = (r() - 0.5) * (f.width - 1.6);
           const y = Math.max(p.y, FLOOR) + (fl - 1) * FLOOR + 0.9;
           const dep = Math.min(0.6, room);
-          if (!k || dep < 0.25 || y + 0.6 > p.y + p.h - 0.4) continue;
-          box({ x: f.c[0] + f.t[0] * s + f.n[0] * dep / 2, y, z: f.c[1] + f.t[1] * s + f.n[1] * dep / 2, w: 0.9, h: 0.6, d: dep, ry: faceRy(f.n), color: pick(GRIME) });
+          if (!k || !fine || dep < 0.25 || y + 0.6 > p.y + p.h - 0.4) continue;
+          wall({ x: f.c[0] + f.t[0] * s + f.n[0] * dep / 2, y, z: f.c[1] + f.t[1] * s + f.n[1] * dep / 2, w: 0.9, h: 0.6, d: dep, ry: faceRy(f.n), color: pick(GRIME) });
         }
         // 増築の部屋・檻のようなベランダ（中国寄りに多い）
         const nAdd = p.y === 0 && p.h > 9 ? Math.floor(r() * (culture === 'cn' ? 4 : 2)) : 0;
@@ -110,22 +127,22 @@ export function dressCity(city, { density = 1, clutter = density, seed = 7 } = {
           const s = (r() - 0.5) * Math.max(0, f.width - w - 0.6), cage = r() < 0.4;
           const y = fl * FLOOR + 0.2;
           if (!k || dep < 0.5 || w < 1.5 || y + 2.6 > p.y + p.h - 0.5) continue;
-          box({ x: f.c[0] + f.t[0] * s + f.n[0] * dep / 2, y, z: f.c[1] + f.t[1] * s + f.n[1] * dep / 2, w, h: cage ? 2.2 : 2.7, d: dep, ry: faceRy(f.n), color: cage ? pick(METAL) : pick(GRIME) });
+          wall({ x: f.c[0] + f.t[0] * s + f.n[0] * dep / 2, y, z: f.c[1] + f.t[1] * s + f.n[1] * dep / 2, w, h: cage ? 2.2 : 2.7, d: dep, ry: faceRy(f.n), color: cage ? pick(METAL) : pick(GRIME) });
         }
         // 配管（壁を縦に走る）
         if (r() < 0.3 && keepC() && p.h > 8 && f.gap > 0.45) {
           const s = (r() - 0.5) * (f.width - 1);
-          box({ x: f.c[0] + f.t[0] * s + f.n[0] * 0.2, y: p.y, z: f.c[1] + f.t[1] * s + f.n[1] * 0.2, w: 0.28, h: p.h - 0.3, d: 0.28, ry: faceRy(f.n), color: pick(METAL) });
+          if (fine) tallBox({ x: f.c[0] + f.t[0] * s + f.n[0] * 0.2, y: p.y, z: f.c[1] + f.t[1] * s + f.n[1] * 0.2, w: 0.28, h: p.h - 0.3, d: 0.28, ry: faceRy(f.n), color: pick(METAL) }, wall);
         }
         // 物干し竿と洗濯物（中国寄り）
         if (culture === 'cn' && p.y === 0 && r() < 0.45 && keepC() && floors >= 2 && room > 1.2) {
           const s = (r() - 0.5) * (f.width - 2), y = (1 + Math.floor(r() * Math.min(floors, 6))) * FLOOR + 1.8, L = Math.min(1.6, room);
-          if (y < p.y + p.h - 0.5) {
+          if (fine && y < p.y + p.h - 0.5) {
             const ax = f.c[0] + f.t[0] * s, az = f.c[1] + f.t[1] * s;
-            box({ a: [ax, y, az], b: [ax + f.n[0] * L, y, az + f.n[1] * L], t: 0.07, color: METAL[0] });
+            wall({ a: [ax, y, az], b: [ax + f.n[0] * L, y, az + f.n[1] * L], t: 0.07, color: METAL[0] });
             for (let j = 0; j < 3; j++) {
               const o = 0.3 + (L - 0.4) * (j / 2);
-              box({ x: ax + f.n[0] * o, y: y - 0.75, z: az + f.n[1] * o, w: 0.06, h: 0.72, d: 0.5, ry: faceRy(f.n), color: pick(CLOTH) });
+              wall({ x: ax + f.n[0] * o, y: y - 0.75, z: az + f.n[1] * o, w: 0.06, h: 0.72, d: 0.5, ry: faceRy(f.n), color: pick(CLOTH) });
             }
           }
         }
@@ -153,7 +170,7 @@ export function dressCity(city, { density = 1, clutter = density, seed = 7 } = {
       }
       if (top > 12 && r() < 0.55) { // 給水塔
         const k = keepC(), rad = 1.1 + 0.7 * r(), [x, z] = inset(rad * 2, rad * 2);
-        if (k) out.tanks.push({ bid: b.id, x, y: top, z, r: rad, h: 2.4 + 1.4 * r(), color: pick(GRIME) });
+        if (k) out.tanks.push({ bid: b.id, roll, x, y: top, z, r: rad, h: 2.4 + 1.4 * r(), color: pick(GRIME) });
       }
       const nAnt = Math.floor(r() * (culture === 'cn' ? 7 : 3)); // アンテナの林
       for (let i = 0; i < nAnt; i++) {
@@ -197,7 +214,7 @@ export function dressCity(city, { density = 1, clutter = density, seed = 7 } = {
         if (lit && room - dep > 0.3) {
           sign(flick({ type: 'shop', x: ax + f.n[0] * (dep + 0.08), y: 0.3, z: az + f.n[1] * (dep + 0.08), w: w * 0.85, h: Math.min(2.4, h - 0.5), t: 0.1, ry: faceRy(f.n), tile, color: c }));
           const reach = Math.max(0, f.gap - dep) + 3.2;
-          out.pools.push({ bid: b.id, x: ax + f.n[0] * (dep + reach / 2), z: az + f.n[1] * (dep + reach / 2), w: w + 3, d: reach, ry: faceRy(f.n), color: c });
+          out.pools.push({ bid: b.id, roll, x: ax + f.n[0] * (dep + reach / 2), z: az + f.n[1] * (dep + reach / 2), w: w + 3, d: reach, ry: faceRy(f.n), color: c });
         }
       }
     }
@@ -214,7 +231,7 @@ export function dressCity(city, { density = 1, clutter = density, seed = 7 } = {
         const x = f.c[0] + f.t[0] * s + f.n[0] * 0.12, z = f.c[1] + f.t[1] * s + f.n[1] * 0.12;
         sign(flick({ type: 'shop', x, y: 0.35, z, w, h: 2.5, t: 0.12, ry: faceRy(f.n), tile: pick(tiles.shop).uv, color: c, mode: 0 }));
         const reach = Math.max(0, f.gap) + 3.2;
-        out.pools.push({ bid: b.id, x: f.c[0] + f.t[0] * s + f.n[0] * reach / 2, z: f.c[1] + f.t[1] * s + f.n[1] * reach / 2, w: w + 3, d: reach, ry: faceRy(f.n), color: c });
+        out.pools.push({ bid: b.id, roll, x: f.c[0] + f.t[0] * s + f.n[0] * reach / 2, z: f.c[1] + f.t[1] * s + f.n[1] * reach / 2, w: w + 3, d: reach, ry: faceRy(f.n), color: c });
       }
     }
     if (culture === 'cn') {
@@ -269,24 +286,30 @@ export function dressCity(city, { density = 1, clutter = density, seed = 7 } = {
     // ネオン管: ビルの縁と段の縁（日本寄りと目印の超高層に多い）
     const stripP = b.arch === 'landmark' ? 1 : culture === 'jp' ? 0.45 : 0.22;
     if (r() < stripP) {
-      const c = col(b.arch === 'landmark' ? 'jp' : culture);
+      // 広場の近くでは、暖かい白をやめ、暗めにし、縁を一周させない（上空から選択の枠のように見えた）
+      const nearPlaza = b.dist < STRIP_NEAR;
+      let c = col(b.arch === 'landmark' ? 'jp' : culture);
+      if (nearPlaza && c === NEON.warmWhite) c = NEON.amber;
+      const sg = nearPlaza ? 0.55 : 1;
+      const edges = nearPlaza ? Math.floor(r() * 4) : -1;
       for (const p of b.parts) {
         if (p.h < 12 && b.arch !== 'shop') continue;
         const k = keep();
         if (!k) continue;
         const px = b.x + p.x, pz = b.z + p.z, top = p.y + p.h - (p.shape && p.shape[0] ? p.h * p.shape[1] : 0);
         // 段の上の縁を一周
-        for (const f of facesOf(b, p)) {
+        facesOf(b, p).forEach((f, fi) => {
+          if (edges >= 0 && fi !== edges && fi !== (edges + 2) % 4) return; // 広場の近く: 向かい合う 2 辺だけ
           const len = f.width + 0.3;
-          sign({ type: 'strip', x: f.c[0] + f.n[0] * 0.12, y: top - 0.32, z: f.c[1] + f.n[1] * 0.12, w: len, h: 0.22, t: 0.18, ry: faceRy(f.n), tile: null, color: c, mode: 2, gain: 1.1 });
-        }
+          sign({ type: 'strip', x: f.c[0] + f.n[0] * 0.12, y: top - 0.32, z: f.c[1] + f.n[1] * 0.12, w: len, h: 0.22, t: 0.18, ry: faceRy(f.n), tile: null, color: c, mode: 2, gain: 1.1 * sg });
+        });
         // 縦の角（1〜2 本）
         if (p.h > 25) {
           const corners = [[1, 1], [-1, 1], [1, -1], [-1, -1]];
           const m = b.arch === 'landmark' ? 4 : 1 + Math.floor(r() * 2);
           for (let i = 0; i < m; i++) {
             const [sx, sz] = corners[(i + Math.floor(r() * 4)) % 4];
-            sign({ type: 'strip', x: px + sx * (p.w / 2 + 0.05), y: Math.max(p.y + 0.3, STREET_CLEAR), z: pz + sz * (p.d / 2 + 0.05), w: 0.2, h: top - Math.max(p.y + 0.3, STREET_CLEAR) - 0.3, t: 0.2, ry: 0, tile: null, color: c, mode: 2, gain: 1.0 });
+            tallSign({ type: 'strip', x: px + sx * (p.w / 2 + 0.05), y: Math.max(p.y + 0.3, STREET_CLEAR), z: pz + sz * (p.d / 2 + 0.05), w: 0.2, h: top - Math.max(p.y + 0.3, STREET_CLEAR) - 0.3, t: 0.2, ry: 0, tile: null, color: c, mode: 2, gain: 1.0 * sg });
           }
         }
       }
@@ -306,17 +329,23 @@ export function dressCity(city, { density = 1, clutter = density, seed = 7 } = {
         const tx = f.n[0] ? bx : Math.max(nb.x - nb.w / 2 + 0.3, Math.min(nb.x + nb.w / 2 - 0.3, bx));
         const tz = f.n[0] ? Math.max(nb.z - nb.d / 2 + 0.3, Math.min(nb.z + nb.d / 2 - 0.3, bz)) : bz;
         const y2 = y + (r() - 0.5) * 1.5, mx = (ax + tx) / 2, mz = (az + tz) / 2, my = Math.max(STREET_CLEAR + 0.6, (y + y2) / 2 - 0.9);
-        box({ a: [ax, y, az], b: [mx, my, mz], t: 0.13, color: [0.1, 0.1, 0.11] });
-        box({ a: [mx, my, mz], b: [tx, y2, tz], t: 0.13, color: [0.1, 0.1, 0.11] });
+        wall({ a: [ax, y, az], b: [mx, my, mz], t: 0.13, color: [0.1, 0.1, 0.11] });
+        wall({ a: [mx, my, mz], b: [tx, y2, tz], t: 0.13, color: [0.1, 0.1, 0.11] });
       }
     }
 
     function addSpire(x, top, z) {
       const h = 22 + 16 * r();
-      box({ x, y: top, z, w: 0.7, h, d: 0.7, ry: 0, color: METAL[0] });
+      roll = 0; // 目印の塔の先は、どの段でも残す
+      tallBox({ x, y: top, z, w: 0.7, h, d: 0.7, ry: 0, color: METAL[0] });
       box({ x, y: top, z, w: 2.4, h: h * 0.3, d: 2.4, ry: Math.PI / 4, color: METAL[1] });
       out.beacons.push({ bid: b.id, x, y: top + h - 1.2, z });
     }
   }
+  // 密度で間引く（看板・光の溜まりは density、箱・給水塔は clutter）
+  out.signs = out.signs.filter((x) => x.roll < density);
+  out.pools = out.pools.filter((x) => x.roll < density);
+  out.boxes = out.boxes.filter((x) => x.roll < clutter);
+  out.tanks = out.tanks.filter((x) => x.roll < clutter);
   return out;
 }
