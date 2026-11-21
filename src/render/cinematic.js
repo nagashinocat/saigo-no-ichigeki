@@ -87,6 +87,20 @@ const DOME0 = 0.4;
 // 宇宙の衝撃波の殻の半径（rMax に対する割合）。p は半球のふくらみ（finaleTimeline の domeAt、0〜1）。
 // 半球（DOME0 + (1 − DOME0)·p）の少し先（1.05 倍から 1.45 倍へ）を、半球と同じ進みでふくらむ
 export const shellRadius = (p) => (DOME0 + (1 - DOME0) * p) * (1.05 + 0.4 * p);
+// S8 fix2: 宇宙で、街を見回る者（爆心から dist m）の火花が散る時刻（演出の秒）。宇宙の光の半球の縁
+// （rMax·(DOME0 + (1 − DOME0)·domeAt(t))。見回る者は dist / radius·rMax に描く）がその者に届いた瞬間。
+// 時刻表の domeAt（街の前線の残りの進みと、見せる期のゆるみの遅い方）から求めるので、火花は半球の縁に沿って広がる輪になる。
+// 宇宙へ切り替わった瞬間にもう半球の中にいる者は -Infinity（追うカットで飲まれ、その火花は街の画で見せた。宇宙では描かない）。
+// 半径の外の者は Infinity（届かない。緑の点のまま）
+export function spaceSparkTime(tl, dist, radius, dome0 = DOME0) {
+  const frac = dist / Math.max(1e-6, radius);
+  if (frac > 1 + 1e-9) return Infinity;
+  if (frac <= dome0) return -Infinity;
+  const g = Math.min(1, (frac - dome0) / (1 - dome0));
+  let lo = tl.chaseEnd, hi = tl.domeEnd;
+  for (let i = 0; i < 40; i++) { const m = (lo + hi) / 2; if (tl.domeAt(m) < g) lo = m; else hi = m; }
+  return hi;
+}
 // 宇宙のカメラの画角（縦長は横の、横長は縦の、度）
 const SPACE_FOV = { h: 54, v: 36 };
 
@@ -391,14 +405,17 @@ export function createCinematic(views, enemyView, explosionView, { renderer, sce
     const len = 2 * d * Math.tan(hf / 2) * (0.6 + 0.5 * smooth(f / 0.7)) * (1 + 0.15 * th);
     const lineI = smooth((f - 0.15) / 0.35) * (1 - smooth((th - 0.35) / 0.65)) * (1.2 + 0.8 * Math.sin(Math.PI * clamp01(f * 1.3)));
     space.setLine(len, r * 1.1 * (1 - 0.8 * flat), th, lineI);
-    // 街を見回る軍勢: 生きている者は緑の点、前線に飲まれた瞬間に火花（宇宙の座標へ縮める: 半径 radius m → rMax）
+    // 街を見回る軍勢: 生きている者は緑の点、宇宙の光の半球の縁が届いた瞬間に火花（宇宙の座標へ縮める: 半径 radius m → rMax）
     if (getEnemies) {
-      const k = rMax / Math.max(1, shot.radius), front = tl.front(t);
+      const k = rMax / Math.max(1, shot.radius);
       _sparks.length = 0;
       for (const e of getEnemies()) {
         if (!e.patrol) continue;
-        if (e.dist <= front && !sparkAt.has(e.id)) sparkAt.set(e.id, t);
-        const age = sparkAt.has(e.id) ? t - sparkAt.get(e.id) : -1;
+        // 火花の時刻は時刻表から一人ずつ決める（S8 fix2: 前は宇宙の最初のフレームで、追う間に飲まれた者が一斉に弾けていた）
+        if (!sparkAt.has(e.id)) sparkAt.set(e.id, spaceSparkTime(tl, e.dist, shot.radius));
+        const at = sparkAt.get(e.id);
+        if (at === -Infinity) continue;
+        const age = t >= at ? t - at : -1;
         if (age > 0.7 || f > 0.3) continue;
         _sparks.push({ x: e.x * k, z: e.z * k, age });
       }
@@ -441,6 +458,8 @@ export function createCinematic(views, enemyView, explosionView, { renderer, sce
     // ガラスの一拍の確かめ用: { rider（姿勢）, glass（目が映るガラス片 { pos, quat, width, reflect, slide } か null）, eyePos, eye（目の uniforms） }
     get beat() { beatInfo.eye = eye.uniforms; return beatInfo; },
     get timeline() { return tl; },
+    // 宇宙で描いている見回る者の点と火花（[{ x, z, age }]。テスト用）
+    get spaceSparks() { return _sparks; },
     get time() { return t; },
     get stage() { return stage; },
     get phase() { return phase; },

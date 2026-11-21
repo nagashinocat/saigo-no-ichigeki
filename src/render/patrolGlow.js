@@ -7,6 +7,11 @@ import { DUSK } from './style.js';
 //  - 爆発の光の壁に飲まれた瞬間、白緑の火花がぱっと広がって消える（flash 秒）。光の壁を透かして見える（深さを見ない）
 // 一つの Points（1 回の描画、最大 count 点）。毎フレーム位置と状態を書く（数十点なので軽い）
 
+// S8 fix2: 上空のゲームの画面では描かない（ビル越しに透けて見える点が、払うの届かない隠れたバイクに見える）。
+// 最後の一発の演出・リプレイ・宇宙・結末（時間切れのブラックホールと、終わったあとの画面）・撮影用のカメラでは描く。
+// overhead: 上空カメラ用の補助表示を出している画面（main.js の aids）、over: ゲームが終わっている
+export const patrolGlowVisible = ({ overhead, over = false }) => !overhead || over;
+
 export const PATROL_GLOW = { near: 70, far: 420, minPx: 2.2, maxPx: 7.5, flash: 0.7, flashPx: 46 };
 
 const VERT = /* glsl */`

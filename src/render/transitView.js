@@ -31,6 +31,28 @@ const UP = new THREE.Vector3(0, 1, 0);
 // ローカルの +x を道の向き heading（x 軸から z 軸への角）へ
 const along = (heading) => -heading;
 
+// S8 fix2: 柱が 1 本の橋脚の横梁は、橋桁の中心の線の上に置く（柱が橋桁の幅の中で横へずれていても、梁が橋桁の外へはみ出して
+// 宙に浮いて見えないように）。道の向きの位置は柱に合わせ、幅は橋桁の幅の内で柱の上を覆う（w より狭くはしない）。
+// s: 区間、p: 橋脚（p.x, p.z は橋桁の中心の線の上の点）、w: ふつうの梁の幅。戻り値 { x, z, width, along, across }
+// （along: 柱の道の向きのずれ、across: 柱の横のずれ）
+export function pierBeam(s, p, w) {
+  const ax = Math.cos(s.heading), az = Math.sin(s.heading);
+  const [x, z] = p.legs[0];
+  const along = (x - p.x) * ax + (z - p.z) * az, across = -(x - p.x) * az + (z - p.z) * ax;
+  const width = Math.min(s.width, Math.max(w, 2 * (Math.abs(across) + p.w / 2) + 0.4));
+  return { x: p.x + ax * along, z: p.z + az * along, width, along, across };
+}
+
+// 区間の一覧 list（s0 の昇順）から、道筋 path の長さ s の点がある区間を返す。輪（path.closed）は回り込み、
+// 最初の橋脚より手前の s は最後の区間（s0 〜 最初の橋脚 + L）
+export function segmentAt(list, path, s) {
+  const L = path.length; s = path.closed ? ((s % L) + L) % L : s;
+  if (path.closed && s < list[0].s0) s += L;
+  let lo = 0, hi = list.length - 1;
+  while (lo < hi) { const m = (lo + hi + 1) >> 1; if (list[m].s0 <= s) lo = m; else hi = m - 1; }
+  return list[lo];
+}
+
 export function createTransitView(transit, style, tier, { markRange } = {}) {
   const group = new THREE.Group();
   group.name = 'transitView';
@@ -49,7 +71,7 @@ export function createTransitView(transit, style, tier, { markRange } = {}) {
   const strips = []; // 橋桁の縁の光の線（遠くからも高速の線が読める）{ seg, x, y, z, len, ry }
   // 柱の上の横梁: 柱が 1 本なら柱の上に橋桁の幅で、門形（2 本）なら 2 本の柱を結ぶ長さで（道の上をまたぐ）
   const beam = (s, p, y, h, t, w, ry) => {
-    if (p.legs.length < 2) { const [x, z] = p.legs[0]; put(s.id, x, y, z, t, h, w, ry, CONCRETE[1]); return; }
+    if (p.legs.length < 2) { const b = pierBeam(s, p, w); put(s.id, b.x, y, b.z, t, h, b.width, ry, CONCRETE[1]); return; }
     const [[x1, z1], [x2, z2]] = p.legs;
     const span = Math.hypot(x2 - x1, z2 - z1) + p.w;
     put(s.id, (x1 + x2) / 2, y, (z1 + z2) / 2, span, h, t, -Math.atan2(z2 - z1, x2 - x1), CONCRETE[1]);
@@ -192,16 +214,7 @@ export function createTransitView(transit, style, tier, { markRange } = {}) {
   // ---- 状態 ----
   let time = 0;
   const broken = new Set(); // つぶれ始めた・隠れた区間（その上の車の光は消える。電車はそこで脱線する）
-  const segAt = (path, line, s) => {
-    // 長さ s の点がどの区間か（区間は s0〜s1。輪は回り込む）
-    const L = path.length; s = path.closed ? ((s % L) + L) % L : s;
-    const list = line === 'expressway' ? xSegs : rSegs;
-    // 輪の最後の区間は長さ L をまたぐ（s0 〜 最初の橋脚 + L）。最初の橋脚より手前の s は最後の区間
-    if (path.closed && s < list[0].s0) s += L;
-    let lo = 0, hi = list.length - 1;
-    while (lo < hi) { const m = (lo + hi + 1) >> 1; if (list[m].s0 <= s) lo = m; else hi = m - 1; }
-    return list[lo];
-  };
+  const segAt = (path, line, s) => segmentAt(line === 'expressway' ? xSegs : rSegs, path, s);
   const xSegs = segments.filter((s) => s.line === 'expressway'), rSegs = segments.filter((s) => s.line === 'rail');
   const events = [];
   const vaporizeRatio = CONFIG.blast.vaporizeRatio;

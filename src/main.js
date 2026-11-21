@@ -30,7 +30,7 @@ import { createAudio, finaleBoomOpts } from './audio/audio.js';
 import { createHitFeed } from './audio/hitFeed.js';
 import { transitObstacles } from './world/transit.js';
 import { transitMix } from './audio/transitSound.js';
-import { createPatrolGlow } from './render/patrolGlow.js';
+import { createPatrolGlow, patrolGlowVisible } from './render/patrolGlow.js';
 import { createBgm } from './audio/bgm.js';
 
 const MAX_FRAME_DT = 0.1;
@@ -422,7 +422,7 @@ function stepWorld(wdt, live, enemies, cam, focus, glowScale = 1) {
   _frustum.setFromProjectionMatrix(_projView.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse));
   _shown.length = 0;
   for (const e of enemies) if (!e.patrol || _frustum.intersectsSphere(_sph.set(_sphC.set(e.x, 3, e.z), 12))) _shown.push(e);
-  patrolGlow.update(enemies, { pixelRatio: renderer.getPixelRatio(), dt: wdt });
+  patrolGlow.update(enemies, { pixelRatio: renderer.getPixelRatio(), dt: wdt, visible: patrolGlowVisible({ overhead: aids, over: game.phase === 'over' }) });
   enemyView.sync(_shown, { fronts: list, pointScale: ps, glow: explosionView.ground.heat * glowScale, dt: wdt, pixelRatio: renderer.getPixelRatio(), silhouette: 1 - glowScale, aids });
   heroAura.update(wdt, ps, 1 - glowScale);
 }
@@ -624,6 +624,7 @@ if (debugMode) {
   window.__views = views;
   window.__hand = hand;
   window.__enemyView = enemyView;
+  window.__patrolGlow = patrolGlow;
   Object.defineProperty(window, '__firstFrameMs', { get: () => firstFrameMs });
   window.__cinematic = cinematic;
   window.__replay = replay;

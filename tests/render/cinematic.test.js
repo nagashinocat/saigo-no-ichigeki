@@ -1,6 +1,7 @@
 import { test, expect } from 'vitest';
 import * as THREE from 'three';
-import { leadFor, minLeadFor, createChase, createCinematic, barsFor, shellRadius, FLING_LEAD } from '../../src/render/cinematic.js';
+import { leadFor, minLeadFor, createChase, createCinematic, barsFor, shellRadius, FLING_LEAD, spaceSparkTime } from '../../src/render/cinematic.js';
+import { createEnemies } from '../../src/game/enemies.js';
 import { createTimeline } from '../../src/render/finaleTimeline.js';
 import { planFinale, planRetreat } from '../../src/render/finalePlan.js';
 import { buildEyeCloseup } from '../../src/render/enemyView.js';
@@ -400,4 +401,58 @@ test('光の壁の面は不透明で深さを書く（後ろの明るい爆発�
   expect(wall.material.depthWrite).toBe(true);
   expect(wall.renderOrder).toBeGreaterThan(0); // 不透明の街・乗り手・瓦礫のあと
   expect(wall.material.fragmentShader).toMatch(/gl_FragColor = vec4\([^;]*, 1\.0\);/);
+});
+
+// S8 fix2: 宇宙の火花は一斉に弾けず、宇宙の光の半球の縁に沿って広がる輪になる（前は追う間に飲まれた者が、宇宙の最初の
+// フレームで一斉に弾けていた）
+test('fix2: spaceSparkTime は時刻表の半球の縁から決まり、遠い者ほど遅い。半球の中の者は -Infinity、半径の外は Infinity', () => {
+  const R = CONFIG.radius.max;
+  const tl = createTimeline({ radius: R, hitDist: 40 });
+  expect(spaceSparkTime(tl, 0.3 * R, R)).toBe(-Infinity);
+  expect(spaceSparkTime(tl, 1.05 * R, R)).toBe(Infinity);
+  let prev = tl.chaseEnd;
+  for (let f = 0.42; f <= 1.0001; f += 0.04) {
+    const at = spaceSparkTime(tl, f * R, R);
+    expect(at).toBeGreaterThan(prev - 1e-9);
+    expect(at).toBeGreaterThanOrEqual(tl.chaseEnd);
+    expect(at).toBeLessThanOrEqual(tl.domeEnd + 1e-9);
+    // 縁がちょうどその者に届いている
+    expect(0.4 + 0.6 * tl.domeAt(at)).toBeCloseTo(Math.min(1, f), 3);
+    prev = at;
+  }
+});
+
+test('fix2: 宇宙の火花は街じゅうの見回る者が波のように弾ける（宇宙の最初のフレームに一斉に弾けず、どの 0.1 秒にも 15% 以下）', () => {
+  const { cin, plan, shot } = makeCinematic();
+  const city7 = generateCity(7);
+  const E = createEnemies(createRng(2), CONFIG, { buildings: city7.buildings, patrolRng: createRng(9) });
+  const pats = E.list.filter((e) => e.patrol);
+  expect(pats.length).toBe(CONFIG.enemy.patrol.count);
+  cin.play(plan, shot, { enemies: () => pats });
+  const tl = cin.timeline;
+  // 追う間に前線に飲まれた者（ゲームではもう倒れている）
+  const engulfed = pats.filter((e) => e.dist <= tl.front(tl.chaseEnd)).length;
+  expect(engulfed / pats.length).toBeGreaterThan(0.5);
+  advance(cin, tl.chaseEnd + 1 / 60 - cin.time);
+  expect(cin.stage).toBe('space');
+  const firstAt = new Map();
+  const bins = new Map();
+  let firstFrame = null;
+  while (cin.time < tl.flatten) {
+    const sp = cin.spaceSparks;
+    const fresh = sp.filter((s) => s.age >= 0 && s.age < 1 / 60 + 1e-9).length;
+    if (firstFrame === null) firstFrame = sp.filter((s) => s.age >= 0).length;
+    const b = Math.floor((cin.time - tl.chaseEnd) / 0.1);
+    bins.set(b, (bins.get(b) ?? 0) + fresh);
+    for (const s of sp) if (s.age >= 0 && !firstAt.has(`${s.x},${s.z}`)) firstAt.set(`${s.x},${s.z}`, cin.time);
+    advance(cin, 1 / 60);
+  }
+  // 最初のフレームで弾けているのは 1 割以下（前は約 74%）
+  expect(firstFrame).toBeLessThanOrEqual(Math.ceil(pats.length * 0.1));
+  // 半球の外にいた者は宇宙のうちに火花になる（半分以上）、どの 0.1 秒にも 15% 以下
+  expect(firstAt.size).toBeGreaterThan(pats.length * 0.5);
+  for (const n of bins.values()) expect(n).toBeLessThanOrEqual(Math.ceil(pats.length * 0.15));
+  // 波: 火花の始まる時刻が 1 秒以上に広がる
+  const ts = [...firstAt.values()];
+  expect(Math.max(...ts) - Math.min(...ts)).toBeGreaterThan(1);
 });

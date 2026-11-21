@@ -1,6 +1,7 @@
 import { test, expect } from 'vitest';
 import * as THREE from 'three';
 import { createCityView } from '../../src/render/cityView.js';
+import { segmentAt, pierBeam } from '../../src/render/transitView.js';
 import { createStyle } from '../../src/render/style.js';
 import { generateCity } from '../../src/world/cityGen.js';
 import { createDestruction } from '../../src/world/destruction.js';
@@ -178,15 +179,61 @@ test('fix1: リプレイは毎回同じ: 放った瞬間へ戻すと、脱線の
   expect(run()).toEqual(run());
 });
 
-test('fix1: 環状線のつなぎ目（最初の橋脚より手前）を走る車両も、正しい区間（最後の区間）で確かめる', () => {
-  const view = createCityView(city, createStyle('low'), 'low');
-  const rs = city.transit.segments.filter((s) => s.line === 'rail');
+// S8 fix2: 前の版のつなぎ目のテストは、最初の橋脚が s0 = 0 にあるので（if (rs[0].s0 > 0.5)）一度も走らなかった。
+// 区間の探し方（segmentAt）だけを取り出し、最初の橋脚が 0 より先にある輪を作ってつなぎ目を通す
+test('fix2: segmentAt: 輪のつなぎ目（最初の橋脚より手前）は最後の区間。回り込み・負の s・開いた道も正しい区間', () => {
+  const ring = { closed: true, length: 100 };
+  const list = [{ id: 'r0', s0: 12 }, { id: 'r1', s0: 40 }, { id: 'r2', s0: 75 }]; // r2 は 75 〜 112（= 12 + L）
+  const at = (s) => segmentAt(list, ring, s).id;
+  expect(at(5)).toBe('r2');   // つなぎ目: 最初の橋脚（12）より手前
+  expect(at(0)).toBe('r2');
+  expect(at(11.99)).toBe('r2');
+  expect(at(12)).toBe('r0');
+  expect(at(39.9)).toBe('r0');
+  expect(at(40)).toBe('r1');
+  expect(at(99)).toBe('r2');
+  expect(at(105)).toBe('r2'); // 回り込み（105 → 5）
+  expect(at(-3)).toBe('r2');  // 負（-3 → 97）
+  expect(at(-90)).toBe('r2'); // -90 → 10（最初の橋脚 12 より手前なので、つなぎ目の最後の区間）
+  // 開いた道（高速）は回り込まない
+  const road = { closed: false, length: 100 };
+  expect(segmentAt(list, road, 5).id).toBe('r0');
+  expect(segmentAt(list, road, 50).id).toBe('r1');
+  expect(segmentAt(list, road, 130).id).toBe('r2');
+});
+
+test('fix2: 環状線のつなぎ目を走る車両は最後の区間で確かめる（区間の s0 を 0 より先へずらした街で、つぶれた最後の区間で脱線する）', () => {
+  const c = generateCity(7);
+  const rs = c.transit.segments.filter((s) => s.line === 'rail');
+  expect(rs[0].s0).toBe(0); // 今の街ではつなぎ目は 0 にある（だから街を少しずらして通す）
+  const shift = 30;
+  for (const s of rs) s.s0 += shift;
+  rs[rs.length - 1].s1 = rs[0].s0 + c.transit.paths.rail.length;
+  const view = createCityView(c, createStyle('low'), 'low');
   const last = rs[rs.length - 1];
-  if (rs[0].s0 > 0.5) {
-    view.crushTransit(last.id, 0.3);
-    // 車両を最初の橋脚の手前に置く
-    view.transit.train.s = rs[0].s0 * 0.5 + city.transit.config.rail.carLen / 2;
-    const ev = view.update(1 / 60, {});
-    expect(ev.some((e) => e.kind === 'derail' && e.target.id === 't0')).toBe(true);
+  view.crushTransit(last.id, 0.3);
+  view.transit.train.s = shift * 0.5 + c.transit.config.rail.carLen / 2; // 先頭の車両がつなぎ目の手前（最初の橋脚より前）
+  const ev = view.update(1 / 60, {});
+  expect(ev.some((e) => e.kind === 'derail' && e.target.id === 't0')).toBe(true);
+});
+
+test('fix2: 柱が 1 本の橋脚の横梁は橋桁の中心の線の上にあり、橋桁の外へはみ出さず、柱の上を覆う', () => {
+  const T = city.transit;
+  let moved = 0;
+  for (const p of T.pillars) {
+    if (p.legs.length !== 1) continue;
+    const s = T.segments.find((q) => q.id === p.seg);
+    const w = s.width * (s.line === 'expressway' ? 0.82 : 0.85);
+    const b = pierBeam(s, p, w);
+    const ax = Math.cos(s.heading), az = Math.sin(s.heading);
+    // 梁の中心の横のずれ（橋桁の中心の線から）は 0
+    expect(Math.abs(-(b.x - p.x) * az + (b.z - p.z) * ax)).toBeLessThan(1e-6);
+    // 道の向きは柱の上
+    expect((b.x - p.x) * ax + (b.z - p.z) * az).toBeCloseTo(b.along, 6);
+    expect(b.width).toBeLessThanOrEqual(s.width + 1e-9);
+    expect(b.width).toBeGreaterThanOrEqual(w - 1e-9);
+    expect(b.width / 2).toBeGreaterThanOrEqual(Math.abs(b.across) + p.w / 2 - 1e-9);
+    if (Math.abs(b.across) + w / 2 > s.width / 2 + 0.01) moved++; // 前の版では梁が橋桁の外へはみ出していた橋脚
   }
+  expect(moved).toBeGreaterThan(0);
 });
