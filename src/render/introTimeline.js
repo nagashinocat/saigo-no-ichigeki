@@ -20,8 +20,10 @@ export const INTRO = {
   ],
   // 題字: 最初の文字まで lead 秒、step 秒おき。文字は burst 秒の星から生まれ、settle 秒で落ち着く。
   // 最後の文字の buttonGap 秒あとに TAP START が buttonFade 秒で出る。白は flashOut 秒で黒へ引く
-  title: { text: '最後の一撃', lead: 0.2, step: 0.22, burst: 0.6, settle: 0.32, buttonGap: 0.45, buttonFade: 0.5, flashOut: 0.07 },
-  shortTitle: { lead: 0.25, step: 0.16, burst: 0.5, settle: 0.28, buttonGap: 0.3, buttonFade: 0.4, flashOut: 0 },
+  // 持ち主 20:47: 5 文字が出そろって（最後の「撃」の bhGap 秒あと）から、「の」の後ろにブラックホールが点から bhGrow 秒で開く。
+  // 開ききって buttonGap 秒あとに TAP START
+  title: { text: '最後の一撃', lead: 0.2, step: 0.22, burst: 0.6, settle: 0.32, bhGap: 0.4, bhGrow: 0.8, buttonGap: 0.2, buttonFade: 0.5, flashOut: 0.07 },
+  shortTitle: { lead: 0.25, step: 0.16, burst: 0.5, settle: 0.28, bhGap: 0.3, bhGrow: 0.6, buttonGap: 0.15, buttonFade: 0.4, flashOut: 0 },
   // カードの叩きつけ: overshoot 秒で大きめから縮んで止まる、揺れ shake 秒、粒子の閃き grain 秒
   card: { black: 0.4, overshoot: 0.16, scale0: 1.2, shake: 0.22, grain: 0.12 },
   // 3: ライトが主人公を捉える（拍の中の秒）。すくむ
@@ -46,12 +48,14 @@ export function createIntroTimeline({ short = false } = {}) {
   const titleStart = t;
   const chars = [...INTRO.title.text].map((ch, i) => ({ ch, t: titleStart + T.lead + i * T.step }));
   const lastChar = chars[chars.length - 1].t;
-  const buttonAt = lastChar + T.buttonGap;
+  // 最後の文字が出きって（settle）から bhGap 秒でブラックホールが開き始める
+  const bhAt = lastChar + T.settle + T.bhGap;
+  const buttonAt = bhAt + T.bhGrow + T.buttonGap;
   const total = buttonAt + T.buttonFade;
   beats.push({ name: 'title', dur: total - titleStart, start: titleStart, end: total });
   const byName = Object.fromEntries(beats.map((b) => [b.name, b]));
   return {
-    short, beats, chars, buttonAt, total, title: T,
+    short, beats, chars, bhAt, buttonAt, total, title: T,
     // 1〜7 拍のどこで飛ばしても、題字の終わり（TAP START が出ている）へ
     skipTarget: total,
     beat: (name) => byName[name],
@@ -73,6 +77,8 @@ export function createIntroTimeline({ short = false } = {}) {
           const d = time - c.t;
           return { ch: c.ch, k: d < 0 ? 0 : smooth(d / T.settle), burst: d < 0 ? -1 : clamp01(d / T.burst), age: d };
         }),
+        // ブラックホールの開き（0: まだ、点から 1: 開ききった）
+        bh: clamp01((time - bhAt) / T.bhGrow),
         button: time >= total ? 1 : clamp01((time - buttonAt) / T.buttonFade),
         flash: short || local < 0 ? (local < 0 ? 1 : 0) : Math.exp(-local / Math.max(1e-3, T.flashOut)),
       };

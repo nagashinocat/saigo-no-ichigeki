@@ -19,7 +19,7 @@ test('導入の流れ（持ち主 15:55）: バイク → ありったけを →
   // 全体: 白が明けるまで 13.85 秒（持ち主 18:04 のスポットライトで +0.6、19:04 のカードの真っ黒と球の浮き上がりで +1.55）、
   // そのあと題字と TAP START
   expect(tl.beat('title').start).toBeCloseTo(13.85, 9);
-  expect(tl.total).toBeLessThan(14.33 + 1.6);
+  expect(tl.total).toBeLessThan(14.33 + 1.6 + 1.35); // 持ち主 20:47 でブラックホールが文字のあとに開く分 +1.27 秒
   // カード: 最初の INTRO.card.black 秒は真っ黒
   expect(INTRO.card.black).toBeGreaterThanOrEqual(0.4);
   expect(INTRO.card.black).toBeLessThanOrEqual(0.6);
@@ -35,7 +35,15 @@ test('「最後の一撃」は 1 文字ずつ約 0.22 秒おきに生まれ、�
   for (let i = 1; i < tl.chars.length; i++) expect(tl.chars[i].t - tl.chars[i - 1].t).toBeCloseTo(INTRO.title.step, 9);
   expect(INTRO.title.step).toBeCloseTo(0.22, 9);
   const last = tl.chars[tl.chars.length - 1].t;
-  expect(tl.buttonAt).toBeGreaterThan(last + 0.2);
+  // 持ち主 20:47: 5 文字が出そろって（最後の「撃」が落ち着いて）から 0.3〜0.5 秒でブラックホールが点から開き、開ききってから TAP START
+  expect(tl.bhAt - (last + INTRO.title.settle)).toBeGreaterThanOrEqual(0.3);
+  expect(tl.bhAt - (last + INTRO.title.settle)).toBeLessThanOrEqual(0.5);
+  expect(tl.titleState(tl.bhAt - 0.01).bh).toBe(0);
+  expect(tl.titleState(last + INTRO.title.settle).bh).toBe(0);
+  expect(tl.titleState(tl.bhAt + INTRO.title.bhGrow / 2).bh).toBeGreaterThan(0);
+  expect(tl.titleState(tl.bhAt + INTRO.title.bhGrow + 1e-6).bh).toBe(1);
+  expect(tl.buttonAt).toBeGreaterThanOrEqual(tl.bhAt + INTRO.title.bhGrow);
+  expect(tl.titleState(tl.buttonAt - 0.01).button).toBe(0);
   expect(tl.total).toBeGreaterThanOrEqual(tl.buttonAt + INTRO.title.buttonFade - 1e-9);
 });
 
@@ -65,7 +73,10 @@ test('リトライ: 導入を飛ばした短い題字だけ（音を鳴らす拍
   const tl = createIntroTimeline({ short: true });
   expect(names(tl)).toEqual(['title']);
   expect(tl.beat('title').start).toBe(0);
-  expect(tl.total).toBeLessThan(2.2);
+  expect(tl.total).toBeLessThan(2.7);
+  // 短い題字も、文字が出そろってからブラックホール、そのあと TAP START
+  expect(tl.bhAt).toBeGreaterThan(tl.chars[4].t);
+  expect(tl.buttonAt).toBeGreaterThanOrEqual(tl.bhAt + INTRO.shortTitle.bhGrow);
   expect(tl.chars.map((c) => c.ch).join('')).toBe('最後の一撃');
   for (let i = 1; i < tl.chars.length; i++) expect(tl.chars[i].t).toBeGreaterThan(tl.chars[i - 1].t);
   expect(tl.titleState(tl.total).button).toBe(1);

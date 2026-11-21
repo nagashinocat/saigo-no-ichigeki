@@ -183,9 +183,9 @@ export function createIntroOverlay(root = document.body, { dprMax = 2, glow = 'f
   let lensImg = null;
   function blackHole(L, state, alive) {
     const c = L[NO], S = c.base;
-    const age = state.chars[NO].age;
-    if (age < 0) return;
-    const grow = easeOut(age / 0.55);
+    // 持ち主 20:47: 5 文字が出そろってから、点から開く（レンズが広がり、輪に火がつく）
+    if (!(state.bh > 0)) return;
+    const grow = easeOut(state.bh);
     const cx = c.x, cy = c.y - S * 0.02;
     const thE = S * 0.46 * grow, rc = S * 0.25 * grow, R = S * 1.45 * grow;
     if (R < 2) return;
