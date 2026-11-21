@@ -32,6 +32,10 @@ import { transitObstacles } from './world/transit.js';
 import { transitMix } from './audio/transitSound.js';
 import { createPatrolGlow, patrolGlowVisible } from './render/patrolGlow.js';
 import { createBgm } from './audio/bgm.js';
+import { createIntro } from './render/intro.js';
+import { createIntroOverlay } from './ui/introOverlay.js';
+import { createIntroFlow, introMode, markRetry } from './ui/introFlow.js';
+import { scheduleIntroSfx, renderIntroAudio } from './audio/introSfx.js';
 
 const MAX_FRAME_DT = 0.1;
 const GRABBED_STEADY = 0.15; // 掴まれている間の手の画面の光の安定（弱く瞬く）
@@ -43,6 +47,10 @@ const seedParam = Number.parseInt(params.get('seed') ?? '', 10);
 const seed = Number.isFinite(seedParam) ? seedParam : Math.floor(Math.random() * 2 ** 31);
 const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || navigator.maxTouchPoints > 1 && matchMedia('(pointer: coarse)').matches;
 const tierParam = params.get('tier');
+// 導入（S6）の始め方: 'full'（最初の読み込み: TAP → 導入 → 題字 → TAP START）・'short'（リトライ: 短い題字から）・
+// 'bypass'（撮影の ?debug で ?intro がないとき: 今までどおりすぐ遊べる）
+const session = (() => { try { return window.sessionStorage; } catch { return null; } })();
+const startMode = introMode({ params, storage: session });
 let tier = tierParam in TIERS ? tierParam : pickTier({ isMobile, deviceMemory: navigator.deviceMemory, cores: navigator.hardwareConcurrency });
 
 const canvas = document.getElementById('game');
@@ -53,7 +61,9 @@ renderer.toneMappingExposure = 1.0;
 renderer.shadowMap.enabled = TIERS[tier].shadows;
 renderer.shadowMap.type = THREE.PCFShadowMap;
 
-const applyPixelRatio = () => renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, TIERS[tier].pixelRatioMax));
+// 録画用（?debug のときだけ）: ?pr=N で画素比の上限を上書きする（scripts/record-intro.mjs が 1080×1920 で撮る）
+const prParam = debugMode ? Number.parseFloat(params.get('pr') ?? '') : NaN;
+const applyPixelRatio = () => renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, Number.isFinite(prParam) ? prParam : TIERS[tier].pixelRatioMax));
 applyPixelRatio();
 
 const game = createGame({ seed });
@@ -85,6 +95,7 @@ const startHint = document.getElementById('start');
 const result = createResult(document.getElementById('result'), {
   // 壊れた街や地面のえぐれは作り直せないので、新しい種でページを読み直す
   onRetry() {
+    markRetry(session); // 読み直したページは導入を飛ばし、題字と TAP START から
     const q = new URLSearchParams(location.search);
     q.set('seed', String(Math.floor(Math.random() * 2 ** 31)));
     location.search = q.toString();
@@ -101,6 +112,8 @@ const press = createPressTracker({
 });
 canvas.addEventListener('pointerdown', (e) => {
   if (e.pointerType === 'mouse' && e.button !== 0) return;
+  // 導入（S6）: ゲームが始まるまで、画面のタップは導入のもの（始める・飛ばす）。長押しにはならない
+  if (introFlow.consumePointer()) return;
   // リプレイの間は、画面のタップで飛ばして結果へ
   if (replay.active && !replay.finished) { skipReplay(); return; }
   // キャプチャに失敗しても（もう離した指・一部のブラウザ）押下は始める
@@ -114,6 +127,11 @@ canvas.addEventListener('lostpointercapture', (e) => press.cancel(e.pointerId));
 window.addEventListener('blur', () => press.reset());
 // PC はマウスで長押ししながら、もう片方の手の Space キーで小爆発
 window.addEventListener('keydown', (e) => {
+  // 導入の間: Space / Enter は画面のタップと同じ（TAP START が出ていれば始める）
+  if (introFlow.blocksInput) {
+    if (['Space', 'Enter'].includes(e.code)) { e.preventDefault(); if (!e.repeat && !introFlow.start()) introFlow.consumePointer(); }
+    return;
+  }
   // リプレイの間は Space / Enter / Esc で飛ばす
   if (replay.active && !replay.finished && ['Space', 'Enter', 'Escape'].includes(e.code)) { e.preventDefault(); skipReplay(); return; }
   // 結果画面では奪わない（ボタンを Space で押せる）
@@ -220,6 +238,58 @@ const survivorIds = (outcome) => new Set(outcome.survivors.map((s) => s.id));
 cityScene.add(patrolGlow.points);
 const heroAura = createHeroAura(tier); // 浮いている主人公のまわりの力のゆらぎ
 cityScene.add(heroAura.group);
+
+// ---- 導入（S6。持ち主 11:15 / 13:06 / 15:55）----
+// 最初の読み込み: 黒に小さな「TAP」（このタップで音を鳴らせるようになる）→ 導入（バイク・カード・ライト・隠れる・手・白）→
+// 「最後の一撃」が 1 文字ずつ十字の星から生まれる → TAP START でゲーム。導入の途中のタップは題字の終わりへ飛ばす（音はすぐ切る）。
+// TAP START までゲームは動かさない（タイマーは 60 のまま、軍勢も湧かない）。リトライは短い題字から
+const intro = createIntro({ views, scene: cityScene, cityView, enemyView, heroAura, patrolGlow, hand, city: game.city, tier, getTier: () => tier, seed });
+const overlay = createIntroOverlay(document.body);
+let introSfx = null, introT0 = null, introWait = 0, liftT = 0;
+const INTRO_AUDIO_LEAD = 0.12; // 導入の 0 秒を、音の時計のこれだけ先に置く（最初の音が欠けない）
+const HERO_LIFT = { from: -0.7, sec: 0.9 }; // TAP START: 主人公が下から浮き上がる
+const introFlow = createIntroFlow({
+  mode: startMode,
+  onBegin() {
+    overlay.showGate(false);
+    introWait = 0;
+    const out = audio.introOutput;
+    if (out) { introT0 = out.ctx.currentTime + INTRO_AUDIO_LEAD; introSfx = scheduleIntroSfx(out.ctx, out.dest, introT0, introFlow.timeline); }
+  },
+  onSkip() { introSfx?.cut(); },
+  onStart() {
+    introSfx?.cut();
+    intro.end();
+    overlay.fadeOut(0.55);
+    game.begin(); // タイマーが 60 から進み、BGM が鳴りはじめる（updateAudio）
+    startHint.hidden = false;
+    liftT = HERO_LIFT.sec;
+    resize();
+  },
+});
+overlay.button.addEventListener('click', () => introFlow.start());
+if (introFlow.blocksInput) hud.setVisible(false); // HUD はゲームが始まってから
+if (introFlow.state === 'gate') overlay.showGate(true);
+if (introFlow.state === 'game') { overlay.fadeOut(0); }
+else startHint.hidden = true;
+let overlayT = -1;
+// 導入の時刻 t の絵（3D の拍は画面全体、カード・白・題字は 2D が覆う）
+function renderIntroAt(t, { force = false } = {}) {
+  const tl = introFlow.timeline, b = tl.beatAt(t);
+  intro.update(t, b);
+  if (!overlay.covers(b)) intro.draw();
+  if (force || t !== overlayT) { overlay.draw(tl, t, b, { speed: intro.speed, vanish: intro.vanish }); overlayT = t; }
+  return b;
+}
+function introTick(dt) {
+  if (introFlow.state === 'gate') { if (!intro.prepared) intro.prepareStep(); return; }
+  const out = audio.introOutput;
+  if (introFlow.state === 'intro' && introT0 !== null && out?.ctx.state === 'running') introFlow.syncTo(out.ctx.currentTime - introT0);
+  else if (introFlow.state === 'intro' && introT0 !== null && (introWait += dt) < 0.5) { /* 音の時計が動き出すのを待つ */ }
+  else introFlow.update(dt);
+  if (bgm.state === 'off' && audio.running) bgm.prepare(); // 題字の間に楽器の音を作っておく
+  renderIntroAt(introFlow.time);
+}
 
 // 最後の一発の演出（画面全体、仕様 12 章の絵コンテ 1〜5）: 白 → 軍勢の一人の肩越しのガラスの一拍（飛んでくるガラスに映った目と
 // 目が合う）→ 時間が戻りその一人が飲まれる → 弾ける爆発から逃げる → 宇宙から見た光の半球と衝撃波の輪 → 横一線の光 → 無音と地鳴り（cinematic.js）
@@ -442,6 +512,9 @@ function stepWorld(wdt, live, enemies, cam, focus, glowScale = 1) {
 }
 
 function simulate(dt) {
+  if (introFlow.blocksInput) return; // 導入の間はゲームを進めない（描くのは introTick）
+  // TAP START のあと: 主人公が下から浮き上がる
+  if (liftT > 0) { liftT = Math.max(0, liftT - dt); const k = liftT / HERO_LIFT.sec; enemyView.setHeroLift(HERO_LIFT.from * k * k * k); }
   if (replay.active) {
     // リプレイの間: 世界はリプレイの刻みで進む（onTick）。ゲームは終わっている
     replay.update(dt);
@@ -534,6 +607,7 @@ function collapseHits(stage = null) {
 let whiteWarmed = false;
 let debugCam = null; // 撮影用（?debug の __debug.look）: 画面全体を決まったカメラで描く
 function draw() {
+  if (introFlow.blocksInput) return; // 導入の間の絵は introTick が描く
   // mid / low: 壁と道の細かい飾りは、近いカメラ（演出の全画面・リプレイ・結末）のときだけ描く
   cityView.setCloseView(!!debugCam || blackhole.active || replay.active || cinematic.white || cinematic.fullscreen);
   if (!cinematic.white) whiteWarmed = false;
@@ -570,6 +644,7 @@ function frame(now) {
   last = now;
   if (!paused) {
     if (governor.sample(dt) === 'down') lowerTier();
+    if (introFlow.blocksInput) introTick(dt);
     simulate(dt);
     draw();
   }
@@ -592,6 +667,32 @@ const debugHooks = {
     return { simMs: (t1 - t0) / n, drawMs: performance.now() - t1 };
   },
   draw,
+  // 導入（S6）: 時刻 t（導入の秒）の絵を描く（撮影・録画。音は鳴らさない）。gate なら導入へ進める
+  introSeek(t) {
+    if (introFlow.state === 'game') return null;
+    if (introFlow.state === 'gate') overlay.showGate(false);
+    introFlow.seek(t);
+    const b = renderIntroAt(introFlow.time, { force: true });
+    return { state: introFlow.state, beat: b.name, local: +b.local.toFixed(3), total: introFlow.timeline.total };
+  },
+  get introFlow() { return introFlow; },
+  // 導入の音を書き出す（録画用）。16 bit の WAV を base64 で返す
+  async introAudio(sampleRate = 48000) {
+    const r = await renderIntroAudio(introFlow.timeline, { sampleRate });
+    const n = r.left.length, buf = new ArrayBuffer(44 + n * 4), v = new DataView(buf);
+    const str = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+    str(0, 'RIFF'); v.setUint32(4, 36 + n * 4, true); str(8, 'WAVE'); str(12, 'fmt '); v.setUint32(16, 16, true);
+    v.setUint16(20, 1, true); v.setUint16(22, 2, true); v.setUint32(24, sampleRate, true); v.setUint32(28, sampleRate * 4, true);
+    v.setUint16(32, 4, true); v.setUint16(34, 16, true); str(36, 'data'); v.setUint32(40, n * 4, true);
+    for (let i = 0; i < n; i++) {
+      v.setInt16(44 + i * 4, Math.max(-1, Math.min(1, r.left[i])) * 32767, true);
+      v.setInt16(46 + i * 4, Math.max(-1, Math.min(1, r.right[i])) * 32767, true);
+    }
+    const bytes = new Uint8Array(buf);
+    let bin = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    return { wav: btoa(bin), peak: r.peak, rawPeak: r.rawPeak, seconds: n / sampleRate };
+  },
   // 画面全体を決まったカメラで描く（撮影用）: { pos: [x, y, z], look: [x, y, z], fov }。null で戻す
   look(o) {
     if (!o) { debugCam = null; return; }
@@ -644,4 +745,5 @@ if (debugMode) {
   window.__replay = replay;
   window.__blackhole = blackhole;
   window.__bgm = bgm;
+  window.__intro = intro;
 }

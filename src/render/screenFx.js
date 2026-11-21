@@ -24,12 +24,15 @@ const FinalShader = {
     // 演出の画づくり: 黒い帯（画面の高さに対する片側の割合）、色ずれ、周辺減光、彩度、暖色寄せ、粒子、横に伸びる光の筋、明るさ、暗転
     uBars: { value: 0 }, uCA: { value: 0 }, uVig: { value: 0 }, uSat: { value: 1 }, uWarm: { value: 0 },
     uGrain: { value: 0 }, uStreak: { value: 0 }, uExposure: { value: 1 }, uFade: { value: 0 }, uContrast: { value: 1 },
+    // 動きのぶれ（S6 の導入。high/mid だけ）: 中心 uZoomC へ向かう放射状のぶれ uZoom と、画面の向きのぶれ uBlur（UV）
+    uZoom: { value: 0 }, uZoomC: { value: new THREE.Vector2(0.5, 0.5) }, uBlur: { value: new THREE.Vector2(0, 0) },
   },
   vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
   fragmentShader: /* glsl */`
     uniform sampler2D tDiffuse;
     uniform float uFlash, uTime, uHeat, uHeatRadius, uAspect;
-    uniform float uBars, uCA, uVig, uSat, uWarm, uGrain, uStreak, uExposure, uFade, uContrast;
+    uniform float uBars, uCA, uVig, uSat, uWarm, uGrain, uStreak, uExposure, uFade, uContrast, uZoom;
+    uniform vec2 uZoomC, uBlur;
     float hash(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
     uniform vec2 uHeatCenter;
     varying vec2 vUv;
@@ -49,6 +52,13 @@ const FinalShader = {
       #endif
       vec4 c = texture2D(tDiffuse, uv);
       #ifdef GRADE
+      // 動きのぶれ: 今の点から、ぶれの向きへ 8 点を平均する
+      if (uZoom > 0.0 || dot(uBlur, uBlur) > 0.0) {
+        vec2 bd = (uv - uZoomC) * uZoom + uBlur;
+        vec4 acc = c;
+        for (int i = 1; i < 8; i++) acc += texture2D(tDiffuse, uv - bd * (float(i) / 7.0));
+        c = acc / 8.0;
+      }
       // 色ずれ: 画面の端ほど赤と青が外と内へずれる
       if (uCA > 0.0) {
         vec2 dc = (uv - 0.5);
@@ -176,6 +186,9 @@ export function createScreenFx(renderer) {
       u.uTime.value = fx.time ?? 0;
       u.uBars.value = grade.bars; u.uCA.value = grade.ca; u.uVig.value = grade.vig; u.uSat.value = grade.sat; u.uWarm.value = grade.warm;
       u.uGrain.value = grade.grain; u.uStreak.value = grade.streak; u.uExposure.value = grade.exposure; u.uFade.value = grade.fade; u.uContrast.value = grade.contrast ?? 1;
+      u.uZoom.value = grade.zoom ?? 0;
+      if (grade.zoomC) u.uZoomC.value.set(grade.zoomC[0], grade.zoomC[1]); else u.uZoomC.value.set(0.5, 0.5);
+      if (grade.blur) u.uBlur.value.set(grade.blur[0], grade.blur[1]); else u.uBlur.value.set(0, 0);
       u.uAspect.value = rect.w / Math.max(1, rect.h);
       bloomPass.strength = BLOOM.strength * (grade.bloom ?? 1);
       if (tier.heatHaze && fx.heat && fx.heat.strength > 0) projectHeat(fx.heat, camera, rect, u); else u.uHeat.value = 0;

@@ -534,6 +534,8 @@ export function createHandView(models, tierName) {
     // 払う（小爆発）は手のひらを街のほうへ突き出して弾き（約 0.08 秒）、約 0.4 秒で構えへ戻る
     // 足りずに離した: 放たず、両手がびくっと震えて球の光が一瞬しぼむ
     fizzle() { fizzT = 0; },
+    // 構えへ戻す（S6: 導入の手のアップのあと、ゲームを始める前と、撮影で時刻を戻すとき）。貯め 0・放ったあとの動きなし
+    reset() { grip = null; push = null; fizzT = Infinity; lvl = 0; clock = 0; collapse = 0; joined = 0; pushed = 0; flashK = 0; },
     // 時間切れの結末のつぶれ具合（0〜1）
     setCollapse(k) { collapse = Number.isFinite(k) ? Math.min(1, Math.max(0, k)) : 0; },
     get collapse() { return collapse; },

@@ -121,6 +121,11 @@ export function createGame({ seed, cfg = CONFIG }) {
     on(event, fn) { (listeners[event] ??= []).push(fn); },
     setHidden(h) { hidden = h; },
 
+    // 導入の TAP START（S6）: 遊びを始める（タイマーが進み、軍勢が湧く）。貯めはしない。'ready' のときだけ
+    begin() {
+      if (phase === 'ready') phase = 'playing';
+    },
+
     pressStart() {
       if (hidden) return;
       if (phase === 'ready') phase = 'playing';

@@ -161,6 +161,7 @@ export function createAudio() {
   // master・out を通さずリミッターへ直接つなぐ: 地鳴りが master を 0 に保つ間にも、リプレイの静かな変奏を鳴らせるように。
   // BGM は放った瞬間に自分で止まるので、演出の無音を邪魔しない
   let bgmBus = null;
+  let introBus = null; // S6: 導入の音の出口（master・out を通さずリミッターへ。導入の音は introSfx.js が組む）
   let boomBus = null; // 爆発の音のまとめ（天井の曲線を通って master へ）
   let drone = null; // 時間切れの結末の低い唸り（鳴っている間だけ）
   let hidden = false; // タブが隠れている間（suspend から resume まで）
@@ -218,6 +219,9 @@ export function createAudio() {
     bgmBus = ctx.createGain();
     bgmBus.gain.value = 1;
     bgmBus.connect(limiter);
+    introBus = ctx.createGain();
+    introBus.gain.value = 1;
+    introBus.connect(limiter);
     boomBus = ctx.createGain();
     boomBus.gain.value = 1 / BOOM_CLIP.range;
     const clip = ctx.createWaveShaper(); clip.curve = boomClipCurve(); clip.oversample = '2x';
@@ -297,6 +301,8 @@ export function createAudio() {
     get running() { return !!ctx && ctx.state === 'running'; },
     // BGM の出口（unlock の前は null）
     get bgmOutput() { return ctx && bgmBus ? { ctx, dest: bgmBus } : null; },
+    // 導入の音の出口（unlock の前は null）
+    get introOutput() { return ctx && introBus ? { ctx, dest: introBus } : null; },
     // タブが隠れた / 戻った。止める処理（suspend）は少しあとで終わるので、終わったときにもう戻っていたら鳴らし直す
     // （すぐ戻ると、戻した時点ではまだ running のままで、そのあと止まりっぱなしになる）。
     // 戻ったら suspended でなくても（iOS の interrupted など）鳴らし直す

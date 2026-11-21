@@ -770,10 +770,12 @@ export function buildHeroBody({ detail = 'mid', pose = FLOAT_POSE } = {}) {
 }
 
 // 組み立てた姿勢に、骨ごとの回転 rot（{ 骨の名前: [rx, ry, rz] }、親から見た向きに重ねる）を足した頂点の位置
-export function skinPose(body, rot = {}) {
+// out: 書き込む配列（毎フレーム使い回すとき。省けば新しく作る）
+export function skinPose(body, rot = {}, out = null) {
   const F0 = body._fk, F1 = fk(body.pose, rot);
   for (const b of HERO_BONES) F1[b].p.y += body._dy;
-  const P = body.geometry.attributes.position.array, out = new Float32Array(P.length);
+  const P = body.geometry.attributes.position.array;
+  out ??= new Float32Array(P.length);
   const M = HERO_BONES.map((b) => {
     const q = F1[b].q.clone().multiply(F0[b].q.clone().invert());
     return { q, p0: F0[b].p, p1: F1[b].p };
