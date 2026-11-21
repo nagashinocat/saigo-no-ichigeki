@@ -15,6 +15,7 @@ import { createFrontTracker } from './render/sphereDeform.js';
 import { createHeroAura } from './render/heroAura.js';
 import { createEnemyView } from './render/enemyView.js';
 import { buildHeroBody, createHeroBodyBuilder } from './render/heroBody.js';
+import { createRiderBodyBuilder } from './render/riderBody.js';
 import { createCinematic, leadFor } from './render/cinematic.js';
 import { FINALE } from './render/finaleTimeline.js';
 import { planFinale, planRetreat } from './render/finalePlan.js';
@@ -65,6 +66,9 @@ const hand = createHandView({ right: buildHandModel({ detail: handDetail }), lef
 // 画質の段の細かい体は最初のフレームのあと、手の空いた時間に区切りごとに組み立てて差し替える（heroUpgrade）
 const heroBody = buildHeroBody({ detail: 'low' });
 const heroBuilder = tier === 'low' ? null : createHeroBodyBuilder({ detail: tier });
+// 最後の一発の肩越しのカットで大きく映る軍勢の一人の体（riderBody.js）。主人公の細かい体のあと、手の空いた時間に組み立てる
+// （low の段は粗い格子）。遅くとも最後の一発を放つときまでに組み立てて渡す
+const riderBuilder = createRiderBodyBuilder({ detail: tier });
 
 // 入力・HUD・結果・音
 const audio = createAudio();
@@ -197,6 +201,7 @@ function ensureHeroBody() {
   if (heroBuilder && enemyView.heroBody !== heroBuilder.finish()) enemyView.setHeroBody(heroBuilder.body);
 }
 game.on('shot', ensureHeroBody);
+game.on('shot', () => { if (enemyView.focusMesh?.geometry !== riderBuilder.finish().geometry) enemyView.setRiderBody(riderBuilder.body); });
 game.on('over', ensureHeroBody);
 const heroAura = createHeroAura(tier); // 浮いている主人公のまわりの力のゆらぎ
 cityScene.add(heroAura.group);
@@ -204,7 +209,7 @@ cityScene.add(heroAura.group);
 // 最後の一発の演出（画面全体、仕様 12 章の絵コンテ 1〜5）: 白 → 軍勢の一人の肩越しのガラスの一拍（飛んでくるガラスに映った目と
 // 目が合う）→ 時間が戻りその一人が飲まれる → 弾ける爆発から逃げる → 宇宙から見た光の半球と衝撃波の輪 → 横一線の光 → 無音と地鳴り（cinematic.js）
 // 画質の段は演出を始めるたびに読む（途中で段が下がっていれば、その段の重さで演じる）
-const cinematic = createCinematic(views, enemyView, explosionView, { renderer, scene: cityScene, sunDir: style.sunDir, tier, getTier: () => tier, lights: { sun: style.lights[0], fill: style.lights[2] }, hideBuilding: (id) => cityView.hideBuilding(id) });
+const cinematic = createCinematic(views, enemyView, explosionView, { renderer, scene: cityScene, sunDir: style.sunDir, tier, getTier: () => tier, lights: { sun: style.lights[0], fill: style.lights[2] }, veilBuilding: (id, on) => cityView.veilBuilding(id, on) });
 warmBoth(() => cinematic.warmup(renderer, views.cityCamera));
 
 // 時間切れの結末（仕様 12 章「時間切れの結末」）: 手の中の球がつぶれて両手が引き込まれ、画面全体で重力レンズが育ち、
@@ -467,10 +472,15 @@ let firstFrameMs = null; // ページを開いてから最初のフレームを�
 // 最初のフレームのあと: 細かい主人公の体を、手の空いた時間に区切り 1 つずつ組み立てる
 const idle = (fn) => (window.requestIdleCallback ? window.requestIdleCallback(fn, { timeout: 500 }) : setTimeout(fn, 16));
 function onFirstFrame() {
-  if (!heroBuilder) return;
+  // 主人公の細かい体 → 肩越しの一人の体の順に、区切りごとに手の空いた時間で
   const tick = () => {
-    if (heroBuilder.done) return;
-    if (heroBuilder.step()) enemyView.setHeroBody(heroBuilder.body); else idle(tick);
+    if (heroBuilder && !heroBuilder.done) {
+      if (heroBuilder.step()) enemyView.setHeroBody(heroBuilder.body);
+      idle(tick);
+      return;
+    }
+    if (riderBuilder.done) return;
+    if (riderBuilder.step()) enemyView.setRiderBody(riderBuilder.body); else idle(tick);
   };
   idle(tick);
 }

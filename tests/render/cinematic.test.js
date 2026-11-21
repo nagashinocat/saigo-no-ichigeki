@@ -340,13 +340,14 @@ test('目が合う一瞬: 映り込みは tl.eye の間だけ（0.4〜0.7 秒）
   }
 });
 
-test('肩越しのカットの間、光の壁が触れたビルはその瞬間に隠す（半分だけ球の面へ押されたビルの壁が引き伸ばされてレンズの前を横切らない）。触れる前は隠さない', () => {
-  const hidden = new Map();
+test('肩越しのカットの間だけ、光の壁が触れたビルをその瞬間に一時的に隠し（半分だけ球の面へ押されたビルの壁が引き伸ばされてレンズの前を横切らない）、追うカットへ切り替わると戻す（そこから先はつぶれていく）。触れる前は隠さない', () => {
+  const veiled = new Map(), restored = new Map();
   const shot = SHOTS[0];
   const enemyView = { setHeroYaw() {}, eyeCloseup: (id) => buildEyeCloseup(id), setFocus() {} };
   const explosionView = { screen: { flash: 0, time: 0, heat: null }, cameraInfo: { front: 0, shake: 0 } };
   const renderer = { getRenderTarget: () => null, setRenderTarget() {}, render() {}, getPixelRatio: () => 1, compile() {} };
-  const cin = createCinematic({ size: { w: 390, h: 844 } }, enemyView, explosionView, { renderer, scene: new THREE.Scene(), hideBuilding: (id) => hidden.set(id, cin.time) });
+  const cin = createCinematic({ size: { w: 390, h: 844 } }, enemyView, explosionView, { renderer, scene: new THREE.Scene(),
+    veilBuilding: (id, on) => (on ? veiled.set(id, cin.time) : restored.set(id, cin.time)) });
   const plan = planFinale({ shot, buildings: city.buildings, enemies: ARMY, rng: createRng(3), lead: leadFor(shot.radius) });
   cin.play(plan, shot, { buildings: city.buildings });
   const tl = cin.timeline;
@@ -354,15 +355,37 @@ test('肩越しのカットの間、光の壁が触れたビルはその瞬間�
   while (cin.time < tl.snap + 0.5) {
     cin.update(1 / 60);
     for (const b of city.buildings) {
-      if (hidden.has(b.id)) continue;
+      if (veiled.has(b.id)) continue;
       if (cin.time >= tl.white && cin.time < tl.snap) expect(near(b), `building ${b.id} t=${cin.time.toFixed(3)}`).toBeGreaterThan(tl.front(cin.time) - 1e-6);
     }
+    if (cin.time < tl.snap) expect(restored.size).toBe(0);
   }
-  expect(hidden.size).toBeGreaterThan(0);
-  for (const [id, at] of hidden) {
+  expect(veiled.size).toBeGreaterThan(0);
+  for (const [id, at] of veiled) {
     const b = city.buildings.find((x) => x.id === id);
     expect(at).toBeGreaterThanOrEqual(tl.white);
     expect(at).toBeLessThan(tl.snap + 1e-9);
     expect(near(b)).toBeLessThanOrEqual(tl.front(at) + 1e-6);
+    // 追うカットへ切り替わった最初のフレームで戻す
+    expect(restored.get(id)).toBeGreaterThanOrEqual(tl.snap);
+    expect(restored.get(id)).toBeLessThan(tl.snap + 1 / 60 + 1e-9);
   }
+  // やめたときも戻す（一度だけ）
+  const n = restored.size;
+  cin.stop();
+  expect(restored.size).toBe(n);
+});
+
+test('光の壁の面は不透明で深さを書く（後ろの明るい爆発の球や街の影が透けたり上に描かれたりして、壁の中に段々の板が見えない）', () => {
+  const { cin, plan, shot } = makeShoulder();
+  cin.play(plan, shot);
+  advance(cin, 2);
+  let wall = null;
+  cin.propsGroup.traverse((o) => { if (o.name === 'cine-wall') wall = o; });
+  expect(wall.visible).toBe(true);
+  expect(wall.material.transparent).toBe(false);
+  expect(wall.material.depthTest).toBe(true);
+  expect(wall.material.depthWrite).toBe(true);
+  expect(wall.renderOrder).toBeGreaterThan(0); // 不透明の街・乗り手・瓦礫のあと
+  expect(wall.material.fragmentShader).toMatch(/gl_FragColor = vec4\([^;]*, 1\.0\);/);
 });

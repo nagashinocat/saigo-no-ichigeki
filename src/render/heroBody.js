@@ -792,3 +792,6 @@ export function skinPose(body, rot = {}) {
   }
   return out;
 }
+
+// 距離の場の部品と網を作る道具（演出で大きく映る軍勢の一人の体 riderBody.js も同じやり方で組む）
+export const FIELD = { capsule, ellipsoid, roundBox, clip, makeField, meshField };

@@ -95,9 +95,11 @@ const SPACE_FOV = { h: 54, v: 36 };
 // opts.lights: { sun, fill }（街の光。一拍の間は、光を背にしたビルの壁が影に沈むよう弱める）
 // opts.getTier: 今の画質の段（演出を始めるたびに読み、目の画像の大きさ・雲の細かさ・星やガラス片の数を合わせる。
 // 部品は始めの段の大きさで作る。段は下がるだけなので、それより重くはならない）
-// opts.hideBuilding(id): 肩越しのカットの間、光の壁が触れた（近い縁に届いた）ビルを隠す（球の面へ半分だけ押されたビルの壁が
-// 引き伸ばされてレンズの前を横切らないように。光の壁の面がその場所をおおう。リプレイは街を写しから戻す）
-export function createCinematic(views, enemyView, explosionView, { renderer, scene, sunDir, tier = 'high', getTier = () => tier, cfg = CONFIG, lights = null, hideBuilding = null } = {}) {
+// opts.veilBuilding(id, on): 肩越しのカットの間だけ、光の壁が触れた（近い縁に届いた）ビルを一時的に隠す（球の面へ半分だけ
+// 押されたビルの壁が引き伸ばされてレンズの前を横切らないように。光の壁の面がその場所をおおう）。追うカットへ切り替わると戻す
+// （そこから先は今までどおり、光の壁に飲まれてつぶれていく）。触れたかは水平の距離で見る（ビルは地面 y=0 に立つ箱で、
+// 爆心の球に最も近い点は足元の、水平に最も近い点）
+export function createCinematic(views, enemyView, explosionView, { renderer, scene, sunDir, tier = 'high', getTier = () => tier, cfg = CONFIG, lights = null, veilBuilding = null } = {}) {
   const listeners = {};
   const emit = (name, arg) => { for (const fn of listeners[name] ?? []) fn(arg); };
   const cam = new THREE.PerspectiveCamera(60, 1, 0.1, 9000);
@@ -115,6 +117,11 @@ export function createCinematic(views, enemyView, explosionView, { renderer, sce
   let resolveRetreat = null;
   // 光の壁が近い縁に届いたら隠すビル（近い順）と、次に見る番号
   let touch = [], touchAt = 0;
+  // 一時的に隠したビルを戻す（隠したのは touch の先頭から touchAt まで）
+  function unveilAll() {
+    for (let i = 0; i < touchAt; i++) veilBuilding(touch[i][1], false);
+    touch = []; touchAt = 0;
+  }
   function ensureRetreat() {
     if (!plan.retreat && resolveRetreat) plan.retreat = resolveRetreat();
     resolveRetreat = null;
@@ -399,6 +406,8 @@ export function createCinematic(views, enemyView, explosionView, { renderer, sce
     // 描く場面（null なら街の場面）
     get renderScene() { return self.camera === space.camera ? space.scene : null; },
     get plan() { return plan; },
+    // 小道具の場面（確かめ用）
+    get propsGroup() { return props.group; },
     // ガラスの一拍の確かめ用: { rider（姿勢）, glass（目が映るガラス片 { pos, quat, width, reflect, slide } か null）, eyePos, eye（目の uniforms） }
     get beat() { beatInfo.eye = eye.uniforms; return beatInfo; },
     get timeline() { return tl; },
@@ -432,7 +441,7 @@ export function createCinematic(views, enemyView, explosionView, { renderer, sce
     get quality() { return { tier: playTier, eye: [rt.width, rt.height], space: space.tierInfo, props: props.counts }; },
     // 'cinematicStart': plan は finalePlan.planFinale の戻り値。
     // opts.retreat: plan.retreat が null のとき逃げる道を返す関数（重いので、放つ瞬間ではなく止まった一拍の間に呼ぶ）
-    // opts.buildings: 残っているビル（肩越しのカットの間、光の壁が触れたものを hideBuilding で隠す）
+    // opts.buildings: 残っているビル（肩越しのカットの間、光の壁が触れたものを veilBuilding で一時的に隠す）
     play(p, s, { retreat = null, buildings = null } = {}) {
       plan = { ...p }; phase = 'play'; t = 0; stage = 'hands';
       resolveRetreat = retreat;
@@ -444,7 +453,8 @@ export function createCinematic(views, enemyView, explosionView, { renderer, sce
       tl = createTimeline({ radius: s.radius, hitDist: p.hitDist, riderDist: p.riderDist, camDist: p.camDist }, undefined, cfg);
       chase = null; cuesDone = new Set(); focusOn = false;
       const nearOf = (b) => Math.hypot(Math.max(0, Math.abs(b.x) - b.w / 2), Math.max(0, Math.abs(b.z) - b.d / 2));
-      touch = hideBuilding && buildings ? buildings.map((b) => [nearOf(b), b.id]).filter(([d]) => d < s.radius).sort((a, b) => a[0] - b[0]) : [];
+      unveilAll();
+      touch = veilBuilding && buildings ? buildings.map((b) => [nearOf(b), b.id]).filter(([d]) => d < s.radius).sort((a, b) => a[0] - b[0]) : [];
       touchAt = 0;
       P.cam.fromArray(p.camPos); P.look.fromArray(p.look);
       P.radial.set(p.camPos[0], 0, p.camPos[2]).normalize();
@@ -533,7 +543,7 @@ export function createCinematic(views, enemyView, explosionView, { renderer, sce
         dimLights(smooth((t - tl.white + 0.1) / 0.2) * (1 - smooth((t - tl.engulf) / 0.15)));
         if (stage === 'snap') cue('snap'); // 時間が戻る瞬間に爆発の音が開く
         const fr = tl.front(t);
-        while (touchAt < touch.length && touch[touchAt][0] <= fr) hideBuilding(touch[touchAt++][1]);
+        while (touchAt < touch.length && touch[touchAt][0] <= fr) veilBuilding(touch[touchAt++][1], true);
         updateShoulder();
         // 逃げる道は、世界がほぼ止まった一拍のはじめに求める（必要になるのは時間が戻ってから）
         if (stage === 'beat') ensureRetreat();
@@ -542,6 +552,7 @@ export function createCinematic(views, enemyView, explosionView, { renderer, sce
       props.hide();
       dimLights(0);
       riderPose.keep = 0; // 吹き飛んだ乗り手は消える
+      unveilAll(); // 追うカットでは、触れたビルは今までどおり飲まれてつぶれていく
       if (stage === 'chase') { cue('snap'); updateChase(dt); return; }
       cue('space');
       if (t >= tl.rumble) cue('rumble');
@@ -557,6 +568,7 @@ export function createCinematic(views, enemyView, explosionView, { renderer, sce
       if (focusOn) enemyView.setFocus?.(null);
       focusOn = false;
       setExplosionDust(true);
+      unveilAll();
       dimLights(0);
       props.hide();
     },

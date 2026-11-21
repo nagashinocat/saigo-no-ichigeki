@@ -244,7 +244,8 @@ void main() {
   // 芯（爆心の方）ほど明るく、斜めに見る縁ほど熱でにじむ。地面に触れる裾はわずかに明るい
   col *= 0.8 + 0.7 * pow(face, 5.0) + 0.3 * smoothstep(0.12, 0.0, vDir.y);
   col = mix(col, vec3(1.0, 0.7, 0.42) * 1.2, pow(1.0 - face, 4.0) * 0.45);
-  gl_FragColor = vec4(col * uI, clamp(uI * 2.0, 0.0, 1.0) * 0.96);
+  // 不透明: 少しでも透けると、後ろのとても明るい爆発の球と、それをさえぎる街の影が壁の中に段々の板として見える
+  gl_FragColor = vec4(col * uI, 1.0);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
 }`;
@@ -296,7 +297,10 @@ export function createCinematicProps(scene, eyeTexture, { sunDir = new THREE.Vec
   // 光の壁（上半分の球。大きさは毎フレームの前線）
   const wallUniforms = { uP: { value: 0 }, uI: { value: 0 }, uFront: { value: 10 } };
   const wall = new THREE.Mesh(new THREE.SphereGeometry(1, 72, 20, 0, Math.PI * 2, 0, Math.PI / 2), new THREE.ShaderMaterial({
-    uniforms: wallUniforms, vertexShader: WALL_VERT, fragmentShader: WALL_FRAG, transparent: true, depthWrite: false,
+    // 不透明で深さを書く: 不透明の物（街・乗り手・瓦礫）のあとに描き（renderOrder）、手前の物には隠れ、後ろのもの（とても明るい
+    // 爆発の球と、それと深さを競う飲まれたビル）は壁の上に描かれない。前は半透明で深さを書かず、後ろの球と街の影が壁の中に
+    // 段々の板として見えていた
+    uniforms: wallUniforms, vertexShader: WALL_VERT, fragmentShader: WALL_FRAG, transparent: false, depthWrite: true,
     defines: { WALL_Q: tier === 'high' ? 2 : tier === 'mid' ? 1 : 0 },
   }));
   wall.frustumCulled = false;

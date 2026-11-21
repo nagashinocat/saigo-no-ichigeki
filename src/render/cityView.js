@@ -233,6 +233,10 @@ export function createCityView(city, style, tier) {
     mesh.instanceMatrix.needsUpdate = true;
   };
   let time = 0;
+  // 一時的に隠したビル（演出の肩越しのカットの間だけ）: id → 隠す前の行列。本当に隠した（gone）・つぶし始めた（crushed）ものは覚えておく
+  const veiled = new Map(), gone = new Set(), crushed = new Set();
+  const matOf = ({ mesh, index }) => mesh.instanceMatrix.array.slice(index * 16, index * 16 + 16);
+  const setMat = ({ mesh, index }, arr) => { mesh.instanceMatrix.array.set(arr, index * 16); mesh.instanceMatrix.needsUpdate = true; };
 
   return {
     group,
@@ -269,12 +273,33 @@ export function createCityView(city, style, tier) {
       attr.addUpdateRange(e.index * 2, 2);
       attr.needsUpdate = true;
       e.extras.forEach(hide);
+      crushed.add(id);
     },
     hideBuilding(id) {
       const e = byId.get(id);
       if (!e) return;
       hide(e);
       e.extras.forEach(hide);
+      gone.add(id);
+    },
+    // 一時的に隠す（on）・戻す（off）。戻すとき、その間に hideBuilding されたものは隠したまま、crushBuilding されたものは
+    // ビルだけ戻す（つぶれはシェーダーが進める。屋上の設備は隠したまま）
+    veilBuilding(id, on) {
+      const e = byId.get(id);
+      if (!e) return;
+      if (on) {
+        if (veiled.has(id) || gone.has(id)) return;
+        veiled.set(id, { m: matOf(e), extras: e.extras.map(matOf) });
+        hide(e);
+        e.extras.forEach(hide);
+        return;
+      }
+      const v = veiled.get(id);
+      if (!v) return;
+      veiled.delete(id);
+      if (gone.has(id)) return;
+      setMat(e, v.m);
+      if (!crushed.has(id)) e.extras.forEach((x, i) => setMat(x, v.extras[i]));
     },
     // 破片の出発点と色。props は道路沿いに数 m ずらして置いているので、見えている位置を返す。
     getPropVisual(id) {
@@ -303,6 +328,7 @@ export function createCityView(city, style, tier) {
     },
     // snapshot の姿へ戻す。一部の範囲だけ送る印は消して、全部を GPU へ送り直す
     restore(snap) {
+      veiled.clear(); gone.clear(); crushed.clear();
       for (const { attr, array } of [...snap.mats, ...snap.attrs]) {
         attr.array.set(array);
         attr.clearUpdateRanges();

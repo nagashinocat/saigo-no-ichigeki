@@ -88,3 +88,25 @@ test('frontTracker.reset: えぐれた穴の記憶を消す', () => {
   expect(tr.update([])).toEqual([]);
   expect(tr.update([{ id: 1, front: 5, shot: { radius: 100 } }])).toEqual([5, 5]);
 });
+
+test('cityView の veilBuilding: 一時的に隠し、戻すと元の姿へ（屋上の設備も）。その間に本当に隠された・つぶし始めたビルは戻さない', () => {
+  const city = generateCity(3);
+  const view = createCityView(city, createStyle('low'), 'low');
+  const meshes = [];
+  view.group.traverse((o) => { if (o.isInstancedMesh) meshes.push(o); });
+  const before = meshes.map((m) => m.instanceMatrix.array.slice());
+  const ids = city.buildings.slice(0, 3).map((b) => b.id);
+  for (const id of ids) view.veilBuilding(id, true);
+  const m = new THREE.Matrix4();
+  for (const id of ids) { const { mesh, index } = view.getBuildingMesh(id); mesh.getMatrixAt(index, m); expect(m.determinant()).toBe(0); }
+  view.hideBuilding(ids[1]);           // 隠している間に光に溶けた
+  view.crushBuilding(ids[2], 0.4);     // 隠している間につぶれ始めた: ビルは戻すが屋上の設備は戻さない
+  for (const id of ids) view.veilBuilding(id, false);
+  const g0 = view.getBuildingMesh(ids[0]), g1 = view.getBuildingMesh(ids[1]), g2 = view.getBuildingMesh(ids[2]);
+  g0.mesh.getMatrixAt(g0.index, m); expect(m.determinant()).not.toBe(0);
+  g1.mesh.getMatrixAt(g1.index, m); expect(m.determinant()).toBe(0);
+  g2.mesh.getMatrixAt(g2.index, m); expect(m.determinant()).not.toBe(0);
+  // ids[0] は屋上の設備まで元どおり
+  const i0 = meshes.findIndex((x) => x === g0.mesh);
+  expect(Array.from(g0.mesh.instanceMatrix.array.slice(g0.index * 16, g0.index * 16 + 16))).toEqual(Array.from(before[i0].slice(g0.index * 16, g0.index * 16 + 16)));
+});

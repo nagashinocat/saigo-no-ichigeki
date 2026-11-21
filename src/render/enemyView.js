@@ -445,6 +445,8 @@ export function createEnemyView(scene, tier, { sunDir = new THREE.Vector3(0.8, 0
   let time = 0, heroYaw = 0;
   // 演出の一人（最後の一発の肩越しのカット）: { id, pose }。その一人は本当の場所ではなく pose で描く（cinematic.js が決める）
   let focus = null;
+  // その一人の専用の体（riderBody.js、距離の場の網。setRiderBody で渡す）。同じ材質で、インスタンス 1 つ
+  let focusMesh = null, focusAnim = null, focusPose = null;
 
   return {
     group, hero, mesh, shadows, tier, // 形は画質の段では変えない（透かしの重ねだけ high のみ）
@@ -506,7 +508,21 @@ export function createEnemyView(scene, tier, { sunDir = new THREE.Vector3(0.8, 0
         if (!b) continue; // 吹き飛んで消えた
         place(b, e.id, e.state === 'dead' ? 1 - (e.deadTime ?? 0) / BIKE.deadFling : 1);
       }
-      if (focus && focus.pose.keep > 0 && n < CAPACITY) place({ anchor: 0, ...focus.pose }, focus.id ?? 0.5, 1);
+      // 演出の一人: 専用の体（setRiderBody）があればその網で、なければ instanced の体で
+      const fp = focus?.pose;
+      if (focusMesh) focusMesh.visible = !!(fp && fp.keep > 0);
+      if (fp && fp.keep > 0) {
+        if (focusMesh) {
+          _p.set(fp.x, fp.y, fp.z);
+          _q.setFromEuler(_e.set(fp.pitch, fp.yaw, fp.roll, 'YXZ'));
+          focusMesh.setMatrixAt(0, _m.compose(_p, _q, _s));
+          focusMesh.instanceMatrix.needsUpdate = true;
+          const h = hash(focus.id ?? 0.5);
+          focusAnim.setXYZW(0, h * 6.283, fp.reach ?? 0, 1, fp.keep);
+          focusPose.setXYZ(0, 0, fp.thrust ?? 1, fp.head ?? 0);
+          focusAnim.needsUpdate = focusPose.needsUpdate = true;
+        } else if (n < CAPACITY) place({ anchor: 0, ...fp }, focus.id ?? 0.5, 1);
+      }
       mesh.count = xray.count = shadows.count = n;
       markerGeo.setDrawRange(0, n);
       markerPos.needsUpdate = true;
@@ -520,6 +536,23 @@ export function createEnemyView(scene, tier, { sunDir = new THREE.Vector3(0.8, 0
     // 演出の一人: { id, pose: { x, y, z, yaw, pitch, roll, reach, thrust, keep, head } }（pose は毎フレーム読む）。null でやめる。
     // id が null（軍勢がいない）でも、名もない一人を描く
     setFocus(f) { focus = f; },
+    // 演出の一人の専用の体（riderBody の戻り値）。大きく映っても箱の寄せ集めに見えない
+    setRiderBody(b) {
+      if (focusMesh?.geometry === b.geometry) return;
+      const g = b.geometry;
+      focusAnim = new THREE.InstancedBufferAttribute(new Float32Array(4), 4);
+      focusPose = new THREE.InstancedBufferAttribute(new Float32Array(3), 3);
+      g.setAttribute('aAnim', focusAnim);
+      g.setAttribute('aPose', focusPose);
+      if (!focusMesh) {
+        focusMesh = new THREE.InstancedMesh(g, mat, 1);
+        focusMesh.frustumCulled = false;
+        focusMesh.name = 'focus-rider';
+        focusMesh.visible = false;
+        group.add(focusMesh);
+      } else focusMesh.geometry = g;
+    },
+    get focusMesh() { return focusMesh; },
     get focus() { return focus; },
     // 主人公の向き（y 軸まわり。0 で +z を向く）
     setHeroYaw(yaw) { heroYaw = yaw; },

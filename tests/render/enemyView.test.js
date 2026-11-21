@@ -142,3 +142,31 @@ test('演出の一人（setFocus）: 本当の場所ではなく演出の決め�
   view.sync(list, {});
   expect(view.mesh.count).toBe(2);
 });
+
+test('演出の一人の体（setRiderBody）があれば、その一人は instanced の箱の体ではなく専用の網で、同じ材質・決めた姿勢・頭の向きで描く。keep 0 や focus なしでは出さない', async () => {
+  const { buildRiderBody } = await import('../../src/render/riderBody.js');
+  const view = createEnemyView(new THREE.Scene(), 'low', { sunDir: new THREE.Vector3(0.3, 1, 0.2).normalize() });
+  const body = buildRiderBody({ detail: 'low' });
+  view.setRiderBody(body);
+  const fm = view.focusMesh;
+  expect(fm.geometry).toBe(body.geometry);
+  expect(fm.material).toBe(view.mesh.material);
+  const list = [{ id: 1, angle: 0.3, dist: 40, state: 'approach' }, { id: 2, angle: 2.0, dist: 30, state: 'approach' }];
+  const pose = { x: 10, y: 3, z: -20, yaw: 0.5, pitch: 0.1, roll: 0, reach: 0, thrust: 1.2, keep: 1, head: -0.3 };
+  view.setFocus({ id: 2, pose });
+  view.sync(list, {});
+  expect(view.mesh.count).toBe(1);   // instanced はほかの一人だけ
+  expect(fm.visible).toBe(true);
+  const m = new THREE.Matrix4(), p = new THREE.Vector3();
+  fm.getMatrixAt(0, m); p.setFromMatrixPosition(m);
+  expect(p.toArray()).toEqual([10, 3, -20]);
+  expect(fm.geometry.attributes.aPose.getZ(0)).toBeCloseTo(-0.3, 6);
+  expect(fm.geometry.attributes.aPose.getY(0)).toBeCloseTo(1.2, 6);
+  pose.keep = 0;
+  view.sync(list, {});
+  expect(fm.visible).toBe(false);
+  view.setFocus(null);
+  view.sync(list, {});
+  expect(fm.visible).toBe(false);
+  expect(view.mesh.count).toBe(2);
+});
