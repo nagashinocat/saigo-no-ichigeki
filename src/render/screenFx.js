@@ -9,7 +9,8 @@ import { FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
 // 街の画面の画面効果: 光のにじみ（bloom、high/mid）、熱による空気のゆがみ（high）、放つ瞬間の白い閃光（全段）。
 // fx = { flash: 0..1, heat: { center:[x,y,z], radius, strength } | null, time }
 
-const BLOOM = { strength: 0.38, radius: 0.3, threshold: 1.05 };
+// 閾値は窓の明かり（style.js の WINDOW_LAMP_MAX）より上: 暗めの夕方の街では、にじむのはバイクの推進の光・街灯の頭・爆発だけ
+export const BLOOM = { strength: 0.46, radius: 0.32, threshold: 1.05 };
 
 const FinalShader = {
   uniforms: {

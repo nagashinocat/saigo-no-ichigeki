@@ -189,6 +189,8 @@ game.on('puff', (shot) => { explosionView.begin(shot); hand.release(shot); });
 
 // 軍勢と主人公の姿
 const enemyView = createEnemyView(cityScene, tier, { sunDir: style.sunDir, heroBody });
+// 軍勢・主人公の陰影と推進の光を、暗めの夕方の光に合わせる（材質どうしで共有している uniform の値を書き換える）
+style.tintFigures(enemyView.mesh.material.uniforms);
 // 細かい主人公の体は、遅くとも最後の一発を放つとき（と時間切れのとき）までに差し替える（まだなら残りをここで一度に組み立てる）。
 // 演出・リプレイ・時間切れの結末で近くに映る主人公は、かならず画質の段の体になる
 function ensureHeroBody() {

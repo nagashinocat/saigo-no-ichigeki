@@ -4,19 +4,51 @@ import { GRID } from '../world/cityGen.js';
 import { CONFIG } from '../config.js';
 import { SPHERE_DEFORM_GLSL, MAX_FRONTS, CRATER_LIP } from './sphereDeform.js';
 
-// 作風「写実的なアニメ調」: 夕方の空、強い一方向の太陽、3段に量子化した陰影、空を映す窓、遠景は空の色へ溶ける。
+// 作風「写実的なアニメ調」: 暗めの夕方（日が沈んだ直後）の空、弱く低い一方向の光、3段に量子化した陰影、
+// 多く灯る窓の明かりと街灯、遠景は地平の茜色へ溶ける。暗い街の上で浮遊バイクの推進の光が映える。
 
-// 太陽は低い夕日。カメラから見て右奥にあり、右上の空を橙に染め、長い影を左手前へ落とす。
-const SUN_DIR = new THREE.Vector3(0.80, 0.42, -0.45).normalize();
-const SUN_COLOR = new THREE.Color(1.0, 0.66, 0.40);
-const SKY_FILL = new THREE.Color(0.46, 0.54, 1.0);    // 影側に回る空の青紫
-const GROUND_FILL = new THREE.Color(0.55, 0.40, 0.42); // 地面からの照り返し
+// 光の方角: カメラから見て右奥。直射光は低く弱い深い橙（沈んだ夕日の名残り）で、長い影を左手前へ落とす。
+// アニメ調の3段の陰影が残るよう、光そのものは地平の少し上から当てる（空に見える夕日は地平の下: SKY_SUN）
+const SUN_DIR = new THREE.Vector3(0.80, 0.30, -0.45).normalize();
+// 空に見える夕日（光の名残りの中心）: 光と同じ方角の、地平のすぐ下。宇宙から見た地球の夕日も同じ（spaceView）
+const SKY_SUN_Y = -0.07;
+export const SKY_SUN = (() => {
+  const h = new THREE.Vector2(SUN_DIR.x, SUN_DIR.z).normalize().multiplyScalar(Math.sqrt(1 - SKY_SUN_Y * SKY_SUN_Y));
+  return new THREE.Vector3(h.x, SKY_SUN_Y, h.y);
+})();
+const SUN_COLOR = new THREE.Color(1.0, 0.50, 0.30);
+const SUN_INTENSITY = 2.1;
+const SKY_FILL = new THREE.Color(0.30, 0.36, 0.85);    // 影側に回る空の群青
+const GROUND_FILL = new THREE.Color(0.42, 0.26, 0.30); // 地面からの照り返し（暗い茜）
+const FILL_INTENSITY = 1.0;
+const GROUND_DUSK = 0.78; // 地面の色を沈める割合
+
+// 夕方の光の色（軍勢・主人公の陰影は enemyView の自前のシェーダーなので、tintFigures で uniform の値を合わせる）
+export const DUSK = {
+  // 姿は暗い街の上でも形が読めるよう、建物よりわずかに明るめに当てる（縁の光も夕日の側から）
+  figureSun: new THREE.Color(1.0, 0.52, 0.32),
+  figureSky: new THREE.Color(0.45, 0.52, 1.0),
+  figureGround: new THREE.Color(0.46, 0.30, 0.36),
+  // 浮遊バイクの推進の光（淡い緑のまま明るく。窓の明かりより明るく、bloom の閾値を超える）
+  thrust: new THREE.Color(0.55, 1.0, 0.82).multiplyScalar(1.6),
+};
+
+// 窓の明かり（sRGB で決めた色。シェーダーの srgb() と同じく線形へ直して明るさを測る）
+const LAMP_WARM = [1.0, 0.78, 0.46], LAMP_COOL = [0.86, 0.93, 1.0], SHOP = [1.0, 0.82, 0.58];
+const LAMP_GAIN = 0.85, LAMP_VAR = [0.7, 0.5]; // 部屋ごとの明るさ: GAIN * (VAR[0] + VAR[1] * 乱数)
+const SHOP_GAIN = 1.2;
+const linLum = (c) => { const [r, g, b] = c.map((x) => x ** 2.2); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
+// いちばん明るい窓の灯りの輝度（bloom の閾値より下に保ち、にじむのはバイクの光・爆発・街灯の頭だけにする）
+export const WINDOW_LAMP_MAX = Math.max(
+  Math.max(linLum(LAMP_WARM), linLum(LAMP_COOL)) * LAMP_GAIN * (LAMP_VAR[0] + LAMP_VAR[1]),
+  linLum(SHOP) * SHOP_GAIN,
+);
 const FOG_DENSITY = 0.0015;
 const FOG_START = 320;
 
 // sRGB で決めた色をシェーダーの線形値へ（見た目の色で調整しやすくするため）
 const GLSL_COMMON = /* glsl */`
-uniform vec3 uSunDir;
+uniform vec3 uSunDir, uSkySun;
 uniform float uFogStart; // 霞み始める距離（ふだんは FOG_START。リプレイの真上のカメラは遠いので延ばす）
 varying vec3 vFogW;
 vec3 srgb(vec3 c) { return pow(c, vec3(2.2)); }
@@ -29,16 +61,18 @@ vec3 skyColor(vec3 d) {
   float h = d.y;
   vec2 dh = normalize(d.xz + 1e-5), sh = normalize(uSunDir.xz);
   float toSun = dot(dh, sh) * 0.5 + 0.5;
-  vec3 zenith = srgb(vec3(0.12, 0.17, 0.40));
-  vec3 upper = srgb(vec3(0.30, 0.40, 0.72));
-  vec3 band = mix(srgb(vec3(0.70, 0.58, 0.80)), srgb(vec3(1.00, 0.66, 0.52)), pow(toSun, 2.0));
-  vec3 horizon = mix(srgb(vec3(0.86, 0.62, 0.70)), srgb(vec3(1.00, 0.72, 0.42)), pow(toSun, 3.0));
+  // 日が沈んだ直後: 上は濃い藍、その下に群青、地平近くに茜色の帯（夕日の方ほど赤橙に明るい）
+  vec3 zenith = srgb(vec3(0.045, 0.055, 0.17));
+  vec3 upper = srgb(vec3(0.11, 0.15, 0.37));
+  vec3 band = mix(srgb(vec3(0.30, 0.22, 0.42)), srgb(vec3(0.74, 0.34, 0.30)), pow(toSun, 2.0));
+  vec3 horizon = mix(srgb(vec3(0.44, 0.27, 0.38)), srgb(vec3(0.98, 0.46, 0.22)), pow(toSun, 3.0));
   float t = max(h, 0.0);
-  vec3 c = mix(horizon, band, smoothstep(0.0, 0.10, t));
-  c = mix(c, upper, smoothstep(0.08, 0.38, t));
-  c = mix(c, zenith, smoothstep(0.35, 1.0, t));
-  float sd = max(dot(d, uSunDir), 0.0);
-  c += srgb(vec3(1.0, 0.62, 0.32)) * (pow(sd, 6.0) * 0.55 + pow(sd, 40.0) * 0.6);
+  vec3 c = mix(horizon, band, smoothstep(0.0, 0.07, t));
+  c = mix(c, upper, smoothstep(0.06, 0.30, t));
+  c = mix(c, zenith, smoothstep(0.28, 0.9, t));
+  // 地平の下に沈んだ夕日の名残り（円盤はなく、地平の上へにじむ光だけ）
+  float sd = max(dot(d, uSkySun), 0.0);
+  c += srgb(vec3(1.0, 0.50, 0.22)) * (pow(sd, 5.0) * 0.38 + pow(sd, 30.0) * 0.45) * smoothstep(-0.12, 0.02, h);
   return c;
 }
 // 遠くほど、その方向の地平の空の色へ溶かす（空とつながる大気遠近）
@@ -77,6 +111,7 @@ export const TOON_LIGHTS = THREE.ShaderChunk.lights_physical_pars_fragment.repla
 
 function patchCommon(shader, uniforms) {
   shader.uniforms.uSunDir = uniforms.uSunDir;
+  shader.uniforms.uSkySun = uniforms.uSkySun;
   shader.uniforms.uFogStart = uniforms.uFogStart;
   shader.vertexShader = shader.vertexShader
     .replace('#include <fog_pars_vertex>', 'varying vec3 vFogW;')
@@ -135,9 +170,9 @@ function buildingDeform(withNormal) {
 
 // 種類ごとのファサード（窓の格子）の決め方。単位は m。
 export const FACADE = {
-  house: { bay: 3.4, floor: 2.9, ground: 0.8, corner: 0.9, top: 0.9, wx: 0.42, wy: 0.46, refl: 0.30, lit: 0.34, shop: 0.0, glass: [0.10, 0.11, 0.14] },
-  office: { bay: 3.1, floor: 3.6, ground: 4.6, corner: 1.2, top: 1.4, wx: 0.66, wy: 0.52, refl: 0.55, lit: 0.22, shop: 0.65, glass: [0.08, 0.11, 0.17] },
-  tower: { bay: 1.7, floor: 3.9, ground: 6.0, corner: 0.8, top: 3.0, wx: 0.86, wy: 0.74, refl: 0.85, lit: 0.13, shop: 0.8, glass: [0.06, 0.12, 0.17] },
+  house: { bay: 3.4, floor: 2.9, ground: 0.8, corner: 0.9, top: 0.9, wx: 0.42, wy: 0.46, refl: 0.30, lit: 0.60, shop: 0.0, glass: [0.10, 0.11, 0.14] },
+  office: { bay: 3.1, floor: 3.6, ground: 4.6, corner: 1.2, top: 1.4, wx: 0.66, wy: 0.52, refl: 0.55, lit: 0.50, shop: 0.65, glass: [0.08, 0.11, 0.17] },
+  tower: { bay: 1.7, floor: 3.9, ground: 6.0, corner: 0.8, top: 3.0, wx: 0.86, wy: 0.74, refl: 0.85, lit: 0.42, shop: 0.8, glass: [0.06, 0.12, 0.17] },
 };
 const f = (x) => Number(x).toFixed(4);
 
@@ -204,12 +239,12 @@ float glassM = 0.0; vec3 winEmis = vec3(0.0);
   }
   #endif
 
-  // 窓の階ごと・部屋ごとの点灯（夕方なので一部だけ灯る）
+  // 窓の階ごと・部屋ごとの点灯（暗めの夕方なので多くの部屋が灯る）
   vec2 cell = vec2(floor(cx), floor(cy)) + n.xz * 37.0 + vSeed * 113.0;
   float floorLit = hash12(vec2(floor(cy), vSeed * 71.0 + n.x * 5.0 + n.z * 9.0));
   float lit = step(hash12(cell), ${f(p.lit)} * (0.25 + 1.5 * floorLit));
   float warm = hash12(cell + 7.7);
-  vec3 lampC = mix(srgb(vec3(1.0, 0.78, 0.46)), srgb(vec3(0.86, 0.93, 1.0)), step(0.8, warm)) * (0.9 + 0.8 * hash12(cell + 3.3));
+  vec3 lampC = mix(srgb(vec3(${LAMP_WARM.map(f).join(',')})), srgb(vec3(${LAMP_COOL.map(f).join(',')})), step(0.8, warm)) * (${f(LAMP_VAR[0])} + ${f(LAMP_VAR[1])} * hash12(cell + 3.3));
   float shopLit = step(hash12(vec2(floor((fu.x + faceW * 0.5) / 4.0), vSeed * 19.0 + n.x * 3.0 + n.z)), ${f(p.shop)});
 
   // ガラス: 暗い地の色に、空をわずかに映す
@@ -224,13 +259,13 @@ float glassM = 0.0; vec3 winEmis = vec3(0.0);
   vec3 glassBase = srgb(vec3(${p.glass.map(f).join(',')}));
   glassBase = mix(glassBase, sC < 0.33 ? srgb(vec3(0.24, 0.19, 0.15)) : sC < 0.66 ? srgb(vec3(0.15, 0.22, 0.24)) : srgb(vec3(0.18, 0.19, 0.24)), 0.6);
   diffuseColor.rgb = mix(wall, glassBase, glassM);
-  winEmis = (skyR * (1.0 - lit) + lampC * lit * 1.1) * m + srgb(vec3(1.0, 0.82, 0.58)) * shopLit * shopM * 1.25 + skyR * shopM * (1.0 - shopLit);
+  winEmis = (skyR * (1.0 - lit) + lampC * lit * ${f(LAMP_GAIN)}) * m + srgb(vec3(${SHOP.map(f).join(',')})) * shopLit * shopM * ${f(SHOP_GAIN)} + skyR * shopM * (1.0 - shopLit);
 
   // 屋上: 落ち着いたコンクリート、縁の立ち上がりは明るく
   float roof = step(0.5, n.y);
   float edge = min(vSize.x * 0.5 - abs(vB.x), vSize.z * 0.5 - abs(vB.z));
-  vec3 roofC = mix(srgb(vec3(0.62, 0.60, 0.62)), diffuseColor.rgb, 0.25) * mix(1.0, 0.88, vnoise(vB.xz * 0.35));
-  roofC = mix(srgb(vec3(0.78, 0.74, 0.72)), roofC, smoothstep(0.45, 0.7, edge));
+  vec3 roofC = mix(srgb(vec3(0.52, 0.50, 0.54)), diffuseColor.rgb, 0.25) * mix(1.0, 0.88, vnoise(vB.xz * 0.35));
+  roofC = mix(srgb(vec3(0.66, 0.62, 0.62)), roofC, smoothstep(0.45, 0.7, edge));
   diffuseColor.rgb = mix(diffuseColor.rgb, roofC, roof);
   glassM *= 1.0 - roof; winEmis *= 1.0 - roof;
 
@@ -356,6 +391,8 @@ float groundFogK = 1.0; // 穴の中は霞を薄くして、深さと岩肌を�
   // 街の外: 野原と畑へ
   vec3 field = mix(srgb(vec3(0.36, 0.42, 0.26)), srgb(vec3(0.50, 0.46, 0.30)), step(0.55, vnoise(p * 0.012))) * mix(0.85, 1.05, vnoise(p * 0.08));
   c = mix(c, field, smoothstep(${f(R + 20)}, ${f(R + 70)}, r));
+  // 暗めの夕方: 地面は全体に一段沈める（窓・街灯・推進の光が浮かぶように）
+  c *= ${f(GROUND_DUSK)};
 
   // 爆発のえぐれ（球の下半分の穴）: 焼けた岩肌、縁の外は掘り返された明るい土の盛り上がりと放射状の焦げ跡、
   // 縁に明るい筋。球が光っている間は割れ目が溶けて光り、消えたあとは熾火になって冷える。
@@ -430,6 +467,26 @@ float groundFogK = 1.0; // 穴の中は霞を薄くして、深さと岩肌を�
   return mat;
 }
 
+// 街灯の下の道路に落ちる光の溜まり（地面すれすれの板に加算で描く。中心ほど明るく、縁はやわらかく消える）
+function makeLampPoolMaterial() {
+  return new THREE.ShaderMaterial({
+    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+    polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3,
+    uniforms: { uColor: { value: new THREE.Color(1.0, 0.62, 0.30).multiplyScalar(0.30) } },
+    vertexShader: 'varying vec2 vUv; void main(){ vUv = uv * 2.0 - 1.0; gl_Position = projectionMatrix * modelViewMatrix * instanceMatrix * vec4(position, 1.0); }',
+    fragmentShader: /* glsl */`
+      uniform vec3 uColor;
+      varying vec2 vUv;
+      void main() {
+        float r = length(vUv);
+        float k = (1.0 - smoothstep(0.0, 1.0, r)) * (0.55 + 0.45 * (1.0 - smoothstep(0.0, 0.35, r)));
+        gl_FragColor = vec4(uColor * k, 1.0);
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
+      }`,
+  });
+}
+
 function makeToonMaterial(name, uniforms, params) {
   const mat = new THREE.MeshStandardMaterial({ roughness: 0.7, metalness: 0.0, ...params });
   mat.onBeforeCompile = (shader) => patchCommon(shader, uniforms);
@@ -449,7 +506,7 @@ function makeGlowMaterial(name, uniforms, params) {
 function makeOutlineMaterial(uniforms) {
   return new THREE.ShaderMaterial({
     side: THREE.BackSide,
-    uniforms: { uSunDir: uniforms.uSunDir, uFogStart: uniforms.uFogStart, uWidth: { value: 0.0016 }, uFronts: uniforms.uFronts, uFrontCount: uniforms.uFrontCount, uTime: uniforms.uTime },
+    uniforms: { uSunDir: uniforms.uSunDir, uSkySun: uniforms.uSkySun, uFogStart: uniforms.uFogStart, uWidth: { value: 0.0016 }, uFronts: uniforms.uFronts, uFrontCount: uniforms.uFrontCount, uTime: uniforms.uTime },
     vertexShader: /* glsl */`
       uniform float uWidth;
       varying vec3 vFogW;
@@ -514,7 +571,7 @@ function makePlanarShadowMaterial(uniforms) {
 function makeSky(uniforms) {
   const mat = new THREE.ShaderMaterial({
     side: THREE.BackSide, depthWrite: false, fog: false,
-    uniforms: { uSunDir: uniforms.uSunDir, uFogStart: uniforms.uFogStart },
+    uniforms: { uSunDir: uniforms.uSunDir, uSkySun: uniforms.uSkySun, uFogStart: uniforms.uFogStart },
     vertexShader: /* glsl */`
       varying vec3 vDir;
       void main() { vDir = position; gl_Position = (projectionMatrix * modelViewMatrix * vec4(position, 1.0)).xyww; }`,
@@ -534,13 +591,14 @@ function makeSky(uniforms) {
           // 縁ほど明るい（逆光の縁取り）。太陽の方角ほど金色に強く光る
           float edge = 1.0 - smoothstep(th + 0.01, th + 0.13, dens);
           float toSun = dot(normalize(d.xz), normalize(uSunDir.xz)) * 0.5 + 0.5;
-          vec3 body = mix(srgb(vec3(0.40, 0.38, 0.62)), srgb(vec3(0.66, 0.46, 0.60)), toSun * 0.8);
-          vec3 rim = mix(srgb(vec3(1.0, 0.74, 0.76)), srgb(vec3(1.0, 0.84, 0.56)), toSun);
+          // 沈んだ日に下から照らされる雲: 本体は暗い藍紫、縁は茜〜橙
+          vec3 body = mix(srgb(vec3(0.16, 0.14, 0.30)), srgb(vec3(0.36, 0.20, 0.30)), toSun * 0.8);
+          vec3 rim = mix(srgb(vec3(0.62, 0.36, 0.50)), srgb(vec3(1.0, 0.52, 0.30)), toSun);
           vec3 cloudC = mix(body, rim, edge * (0.45 + 0.55 * toSun));
           c = mix(c, cloudC, cl * 0.92);
           // 高い空の薄いすじ雲
           float streak = smoothstep(0.62, 0.75, fbm(vec2(uv.x * 0.25, uv.y * 1.4) + 9.0)) * smoothstep(0.2, 0.5, d.y) * 0.35;
-          c = mix(c, srgb(vec3(1.0, 0.80, 0.78)), streak);
+          c = mix(c, srgb(vec3(0.52, 0.34, 0.50)), streak);
         }
         gl_FragColor = vec4(c, 1.0);
         #include <tonemapping_fragment>
@@ -563,13 +621,14 @@ export function createStyle(tierName) {
   const tier = TIERS[tierName] ?? TIERS.mid;
   const uniforms = {
     uSunDir: { value: SUN_DIR.clone() },
+    uSkySun: { value: SKY_SUN.clone() },
     uFogStart: { value: FOG_START },
     // 爆発の球（cityView.update が毎フレーム書く）
     uFronts: { value: new Float32Array(MAX_FRONTS) }, uFrontCount: { value: 0 }, uTime: { value: 0 },
     uHeat: { value: 0 }, uEmber: { value: 0 }, uCrater: { value: 0 }, uRingStep: { value: 1 },
   };
 
-  const sun = new THREE.DirectionalLight(SUN_COLOR, 4.2);
+  const sun = new THREE.DirectionalLight(SUN_COLOR, SUN_INTENSITY);
   sun.position.copy(SUN_DIR).multiplyScalar(600);
   sun.target.position.set(0, 0, 0);
   if (tier.shadows) {
@@ -580,7 +639,7 @@ export function createStyle(tierName) {
     sun.shadow.bias = -0.0004;
     sun.shadow.normalBias = 0.6;
   }
-  const fill = new THREE.HemisphereLight(SKY_FILL, GROUND_FILL, 1.6);
+  const fill = new THREE.HemisphereLight(SKY_FILL, GROUND_FILL, FILL_INTENSITY);
 
   const buildingMats = {};
   const building = (kind) => (buildingMats[kind] ??= makeBuildingMaterial(kind, uniforms));
@@ -588,6 +647,7 @@ export function createStyle(tierName) {
   return {
     tier: tierName,
     sunDir: SUN_DIR.clone(),
+    skySun: SKY_SUN.clone(),
     fogStart: FOG_START,
     uniforms,
     building,
@@ -607,6 +667,12 @@ export function createStyle(tierName) {
       lampHead: makeGlowMaterial('lamp', uniforms, { color: new THREE.Color(1.0, 0.82, 0.55).multiplyScalar(1.6) }),
       signPanel: makeGlowMaterial('sign', uniforms, { color: 0xffffff }),
       beacon: makeGlowMaterial('beacon', uniforms, { color: new THREE.Color(1.0, 0.15, 0.1).multiplyScalar(2.0) }),
+      lampPool: makeLampPoolMaterial(),
+    },
+    // 軍勢・主人公の陰影の色（enemyView の uniform。材質どうしで共有しているので値だけ書き換える）を夕方の光に合わせる
+    tintFigures(u) {
+      const set = (k, c) => { if (u[k]?.value?.isColor) u[k].value.copy(c); };
+      set('uSun', DUSK.figureSun); set('uSky', DUSK.figureSky); set('uGround', DUSK.figureGround); set('uThrust', DUSK.thrust);
     },
   };
 }

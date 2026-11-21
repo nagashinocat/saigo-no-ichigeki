@@ -196,6 +196,11 @@ export function createCityView(city, style, tier) {
   const heads = instanced(new THREE.BoxGeometry(0.9, 0.22, 0.45).translate(1.35, 6.85, 0), style.props.lampHead, lamps.length);
   const signPoles = instanced(signPoleGeo, style.props.metal, signs.length, { cast: shadows });
   const panels = instanced(new THREE.BoxGeometry(3.0, 1.7, 0.3).translate(0, 5.0, 0), style.props.signPanel, signs.length);
+  // 街灯の頭の真下の道路に落ちる光の溜まり（暗めの夕方の照り返し）。街灯と一緒に隠す
+  const pools = style.props.lampPool
+    ? instanced(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2).scale(9, 1, 7).translate(1.6, 0.08, 0), style.props.lampPool, lamps.length)
+    : null;
+  if (pools) { pools.name = 'lamp-pools'; pools.renderOrder = 2; }
   const curbPlace = (p) => {
     // 街灯と看板は歩道の縁に立て、道路の側へ向ける
     const r = roadInfo(p.x, p.z), side = r.offset >= 0 ? 1 : -1, e = GRID.ROAD / 2 + 0.6;
@@ -207,8 +212,10 @@ export function createCityView(city, style, tier) {
     const { x, z, rot } = curbPlace(l);
     poles.setMatrixAt(i, boxMatrix(x, 0, z, 1, 1, 1, rot));
     heads.setMatrixAt(i, _m);
+    pools?.setMatrixAt(i, _m);
     addPart('p' + l.id, poles, i);
     addPart('p' + l.id, heads, i);
+    if (pools) addPart('p' + l.id, pools, i);
   });
   signs.forEach((s, i) => {
     const { x, z, rot } = curbPlace(s);
@@ -219,6 +226,7 @@ export function createCityView(city, style, tier) {
     addPart('p' + s.id, panels, i);
   });
   group.add(carMesh, poles, heads, signPoles, panels);
+  if (pools) group.add(pools);
 
   const hide = ({ mesh, index }) => {
     mesh.setMatrixAt(index, ZERO);

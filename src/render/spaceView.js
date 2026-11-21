@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { createRng } from '../rng.js';
+import { SKY_SUN } from './style.js';
 
 // 宇宙からのカメラ（絵コンテ 4〜5）: 夕暮れの地球の丸み、昼と夜の境目、雲、豆粒ほどの街の灯。
 // その街から光の半球がふくらみ、衝撃波の輪が雲の上を走る。最後に半球は地平に沿って押しつぶされ、横一線の光になって消える。
@@ -223,8 +224,8 @@ export function createSpaceView(tier = 'high') {
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0, 0, 0);
   const camera = new THREE.PerspectiveCamera(40, 1, 1, 30000);
-  // 太陽: 街のすぐ地平の下（夕暮れ）。カメラから見て左奥
-  const sun = new THREE.Vector3(-0.95, -0.06, -0.3).normalize();
+  // 太陽: 街のすぐ地平の下（日が沈んだ直後）。街の空に見える夕日と同じ方角・同じ低さ（style.js の SKY_SUN。カメラから見て右奥）
+  const sun = SKY_SUN.clone();
   const city = new THREE.Vector3(0, 1, 0);
   const center = new THREE.Vector3(0, -RE, 0);
 
@@ -305,6 +306,7 @@ export function createSpaceView(tier = 'high') {
 
   return {
     scene, camera,
+    sunDir: sun,
     // カメラの置き方: 街から地平の方へ dist だけ離れ、高さ alt から、街の少し先の地平を見る。
     // 縦長の画面では横の画角を、横長の画面では縦の画角を決める。roll: 地平の傾き（ラジアン）
     aim({ aspect, dist, alt, lookAhead, lookUp, fovH = 50, fovV = 30, roll = 0 }) {
