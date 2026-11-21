@@ -1,5 +1,5 @@
 import { test, expect } from 'vitest';
-import { INTRO, createIntroTimeline, introBikes, bikeAt, introStreaks, streakAt, introCues, introHands, BIKE_CAM, whooshAt, introRunFeet } from '../../src/render/introTimeline.js';
+import { heroPan, heroPath, INTRO, createIntroTimeline, introBikes, bikeAt, introStreaks, streakAt, introCues, introHands, BIKE_CAM, whooshAt, introRunFeet } from '../../src/render/introTimeline.js';
 
 const names = (tl) => tl.beats.map((b) => b.name);
 
@@ -7,7 +7,7 @@ test('導入の流れ（持ち主 15:55）: バイク → ありったけを →
   const tl = createIntroTimeline();
   expect(names(tl)).toEqual(['bikes', 'cardA', 'light', 'cardB', 'hide', 'hands', 'white', 'title']);
   // 拍の境目はすき間なく続き、長さはブリーフの目安どおり
-  const want = { bikes: 2.2, cardA: 1.3, light: 1.8, cardB: 1.3, hide: 2.2, hands: 2.5, white: 0.4 };
+  const want = { bikes: 2.2, cardA: 1.3, light: 2.4, cardB: 1.3, hide: 2.2, hands: 2.5, white: 0.4 };
   let t = 0;
   for (const b of tl.beats) {
     expect(b.start).toBeCloseTo(t, 9);
@@ -16,10 +16,10 @@ test('導入の流れ（持ち主 15:55）: バイク → ありったけを →
   }
   expect(tl.beats.find((b) => b.name === 'cardA').text).toBe('ありったけを');
   expect(tl.beats.find((b) => b.name === 'cardB').text).toBe('解き放て');
-  // 全体: 白が明けるまで 11.7 秒、そのあと題字と TAP START
-  expect(tl.beat('title').start).toBeCloseTo(11.7, 9);
-  expect(tl.total).toBeGreaterThan(13);
-  expect(tl.total).toBeLessThan(14.5);
+  // 全体: 白が明けるまで 12.3 秒（持ち主 18:04 のスポットライトで +0.6 秒）、そのあと題字と TAP START。+1 秒以内
+  expect(tl.beat('title').start).toBeCloseTo(12.3, 9);
+  expect(tl.total).toBeGreaterThan(13.5);
+  expect(tl.total).toBeLessThan(13.73 + 1);
   expect(tl.total).toBeCloseTo(tl.beat('title').end, 9);
 });
 
@@ -74,18 +74,21 @@ test('バイク: 4〜7 台。どれも最初の拍の中でカメラの真上を
   expect(bikes.length).toBeGreaterThanOrEqual(4);
   expect(bikes.length).toBeLessThanOrEqual(7);
   expect(introBikes()).toEqual(bikes);
+  expect(bikes.filter((b) => b.hero).length).toBe(1);
   const b0 = tl.beat('bikes');
   for (const b of bikes) {
     expect(b.tp).toBeGreaterThan(b0.start + 0.2);
     expect(b.tp).toBeLessThan(b0.end);
-    expect(b.v).toBeGreaterThan(60); // とても速い
+    // とても速い。見せ場の一台だけはゆっくりめ（それでも 120 km/h 超）で、レンズのすぐ上を通る
+    if (b.hero) { expect(b.v).toBeGreaterThan(30); expect(b.y - BIKE_CAM.pos[1]).toBeLessThan(2); } else expect(b.v).toBeGreaterThan(60);
     // 通る瞬間はカメラの上（高さはカメラより上）で、そのとき z はカメラと同じ
     const p = bikeAt(b, b.tp);
     expect(p.y).toBeGreaterThan(BIKE_CAM.pos[1] + 1);
     expect(p.z).toBeCloseTo(BIKE_CAM.pos[2], 6);
     // 前は奥（-z）、後ろは手前（+z）
-    expect(bikeAt(b, b.tp - 0.5).z).toBeLessThan(BIKE_CAM.pos[2] - 20);
-    expect(bikeAt(b, b.tp + 0.5).z).toBeGreaterThan(BIKE_CAM.pos[2] + 20);
+    const w = b.hero ? 0.7 : 0.5;
+    expect(bikeAt(b, b.tp - w).z).toBeLessThan(BIKE_CAM.pos[2] - 20);
+    expect(bikeAt(b, b.tp + w).z).toBeGreaterThan(BIKE_CAM.pos[2] + 20);
   }
 });
 
@@ -123,12 +126,22 @@ test('すき間の光の筋: 隠れる拍の中で開口部を横切り、風切
   }
 });
 
-test('合図: カードの叩きつけ・すくむ・足音・握り込む・白・各文字に音が乗る（時刻順）', () => {
+test('合図: ライトが捉える・すくむ・足音・握り込む・白（時刻順）。文字の拍（カード・題字の各文字）には効果音を乗せない（持ち主 18:02）', () => {
   const tl = createIntroTimeline();
   const cues = introCues(tl);
   for (let i = 1; i < cues.length; i++) expect(cues[i].t).toBeGreaterThanOrEqual(cues[i - 1].t);
   const at = (name) => cues.filter((c) => c.name === name).map((c) => c.t);
-  expect(at('slam')).toEqual([tl.beat('cardA').start, tl.beat('cardB').start]);
+  expect(at('slam')).toEqual([]);
+  expect(at('char')).toEqual([]);
+  for (const c of cues) for (const n of ['cardA', 'cardB', 'title']) {
+    const B = tl.beat(n);
+    expect(c.t >= B.start && c.t < B.end, `${c.name} at ${c.t} in ${n}`).toBe(false);
+  }
+  // スポットライトは 1 本から増えていく: 捉える一打はライトの拍の中、ばらばらの時刻に 4 回以上、どれもすくむより前
+  const locks = at('lock');
+  expect(locks.length).toBeGreaterThanOrEqual(4);
+  for (const t of locks) { expect(t).toBeGreaterThan(tl.beat('light').start); expect(t).toBeLessThan(at('flinch')[0]); }
+  expect(new Set(locks).size).toBe(locks.length);
   expect(at('flinch').length).toBe(1);
   expect(at('flinch')[0]).toBeGreaterThan(tl.beat('light').start);
   expect(at('flinch')[0]).toBeLessThan(tl.beat('light').end);
@@ -136,7 +149,6 @@ test('合図: カードの叩きつけ・すくむ・足音・握り込む・白
   for (const t of at('step')) expect(t).toBeGreaterThanOrEqual(tl.beat('light').start);
   expect(at('grip')).toEqual([tl.beat('hands').start + INTRO.hands.releaseAt]);
   expect(at('white')).toEqual([tl.beat('white').start]);
-  expect(at('char')).toEqual(tl.chars.map((c) => c.t));
   // 足音は走る脚の接地と同じ時刻
   const feet = introRunFeet(tl);
   expect(at('step')).toEqual(feet);
@@ -152,4 +164,30 @@ test('手の拍: 貯め始め（球が生まれ育つ）→ 最後の一撃を�
   expect(h(INTRO.hands.releaseAt - 0.05).active).toBe(true);
   expect(h(INTRO.hands.releaseAt + 0.05).active).toBe(false);
   expect(INTRO.hands.releaseAt).toBeLessThan(len - 0.3); // 握り込みを見せてから白
+});
+
+test('足音の左右は主人公の画面の位置から: ライトの拍では右へ走り去り、すき間では左の壁へ駆け込む', () => {
+  const tl = createIntroTimeline();
+  const feet = introRunFeet(tl);
+  const light = feet.filter((t) => t < tl.beat('light').end), hide = feet.filter((t) => t >= tl.beat('hide').start);
+  // 走り去るにつれて右へ流れる
+  expect(heroPan(tl, light[light.length - 1])).toBeGreaterThan(heroPan(tl, light[0]));
+  expect(heroPan(tl, light[light.length - 1])).toBeGreaterThan(0.2);
+  // すき間の最後の足音は左（主人公は左の壁へ）
+  expect(heroPan(tl, hide[hide.length - 1])).toBeLessThan(0);
+  expect(heroPath('hide', 5)).toMatchObject({ x: expect.any(Number) });
+});
+
+test('スポットライト（持ち主 18:04）: 一台ずつ飛び込んできて主人公を捉え、捉える音はそのバイクの画面の左右から', async () => {
+  const { LIGHT_BIKES, lightBikeAt, lightBikePan } = await import('../../src/render/introTimeline.js');
+  const tl = createIntroTimeline();
+  const len = tl.beat('light').dur;
+  // 捉える前は捉えておらず、捉えたあとは捉えたまま。捉えた数は 1 から増えていく
+  const count = (t) => LIGHT_BIKES.filter((b) => lightBikeAt(b, t).lock > 0.99).length;
+  expect(count(LIGHT_BIKES[0].lockAt + 0.1)).toBe(1);
+  expect(count(INTRO.light.flinchAt)).toBe(LIGHT_BIKES.length);
+  let prev = 0;
+  for (let t = 0; t < len; t += 0.02) { const c = count(t); expect(c).toBeGreaterThanOrEqual(prev); prev = c; }
+  // 左右: 画面の右のバイクは右、左は左
+  for (const b of LIGHT_BIKES) if (Math.abs(b.pos[0]) > 3) expect(Math.sign(lightBikePan(b, b.lockAt)), `${b.id}`).toBe(Math.sign(b.pos[0]));
 });

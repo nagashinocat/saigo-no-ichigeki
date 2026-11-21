@@ -23,7 +23,8 @@ export function slamScale(d) {
   return 1 - 0.05 * Math.exp(-(d - hit) / 0.045) * Math.cos((d - hit) * 38) + 0.022 * (d / 1.3);
 }
 
-export function createIntroOverlay(root = document.body) {
+// opts.dprMax: 2D の層の画素比の上限（画質の段の pixelRatioMax。録画は大きく）、opts.glow: 文字の光のにじみ（'full' high・'cheap' mid・'none' low）
+export function createIntroOverlay(root = document.body, { dprMax = 2, glow = 'full' } = {}) {
   const canvas = document.createElement('canvas');
   canvas.id = 'intro-fx';
   const gate = document.createElement('div');
@@ -35,7 +36,9 @@ export function createIntroOverlay(root = document.body) {
   button.textContent = 'TAP START';
   root.append(canvas, gate, button);
   const g = canvas.getContext('2d');
-  let W = 1, H = 1, dpr = 1;
+  let W = 1, H = 1, dpr = 1, lastEmpty = false;
+  // 光のにじみ（shadowBlur は半径に比例して重い）: mid は小さく、low はなし（星と後ろの光は描く）
+  const blurK = glow === 'full' ? 1 : glow === 'cheap' ? 0.35 : 0;
 
   // 書体（読み込めるまで、カードは仮の明朝で描く）
   let fontOk = false;
@@ -59,7 +62,8 @@ export function createIntroOverlay(root = document.body) {
   const grainPat = g.createPattern(grain, 'repeat');
 
   function resize() {
-    dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+    dpr = Math.min(window.devicePixelRatio || 1, dprMax);
+    lastEmpty = false;
     W = Math.max(1, window.innerWidth); H = Math.max(1, window.innerHeight);
     canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -128,27 +132,27 @@ export function createIntroOverlay(root = document.body) {
     g.closePath();
     g.fill();
   }
-  const white = (a) => `rgba(255,255,255,${a})`;
-  const warm = (a) => `rgba(255,226,170,${a})`;
-  const cool = (a) => `rgba(200,240,255,${a})`;
+  // 持ち主 18:02: 題字は横書き、星は黒。白の閃光のあと白い地に、黒い文字と黒い四方の十字の星が 1 文字ずつ弾ける
+  const ink = (a) => `rgba(8,6,10,${a})`;
+  const smoke = (a) => `rgba(60,52,58,${a})`;
   function star(x, y, S, u, big = 1, rot = 0) {
-    // u: 弾けの進み 0〜1。光の筋はすばやく伸び、ゆっくり細って消える
+    // u: 弾けの進み 0〜1。光の筋（黒）はすばやく伸び、ゆっくり細って消える
     const grow = easeOut(u * 3.2), fade = (1 - u) ** 1.4;
     const L = S * big * (0.3 + 2.1 * grow) * (0.55 + 0.45 * fade);
-    const w = S * big * 0.045 * fade + 0.6;
+    const w = S * big * 0.04 * fade + 0.5;
     const A = fade;
     g.save();
     g.translate(x, y);
     g.rotate(rot);
-    for (const [dx, dy, k] of [[0, -1, 1.25], [0, 1, 1.25], [-1, 0, 1], [1, 0, 1]]) ray(0, 0, dx, dy, L * k, w, A, white);
+    for (const [dx, dy, k] of [[0, -1, 1], [0, 1, 1], [-1, 0, 1.3], [1, 0, 1.3]]) ray(0, 0, dx, dy, L * k, w, A, ink);
     const d2 = Math.SQRT1_2;
-    for (const [dx, dy] of [[d2, d2], [-d2, d2], [d2, -d2], [-d2, -d2]]) ray(0, 0, dx, dy, L * 0.34, w * 0.6, A * 0.7, warm);
-    // 明るい芯
-    const R = S * big * (0.18 + 0.55 * (1 - u) ** 2);
+    for (const [dx, dy] of [[d2, d2], [-d2, d2], [d2, -d2], [-d2, -d2]]) ray(0, 0, dx, dy, L * 0.32, w * 0.55, A * 0.6, smoke);
+    // 黒い芯
+    const R = S * big * (0.12 + 0.4 * (1 - u) ** 2);
     const rg = g.createRadialGradient(0, 0, 0, 0, 0, R);
-    rg.addColorStop(0, white(Math.min(1, 1.2 * fade)));
-    rg.addColorStop(0.25, warm(0.75 * fade));
-    rg.addColorStop(1, warm(0));
+    rg.addColorStop(0, ink(Math.min(1, 1.1 * fade)));
+    rg.addColorStop(0.3, ink(0.55 * fade));
+    rg.addColorStop(1, ink(0));
     g.fillStyle = rg;
     g.beginPath(); g.arc(0, 0, R, 0, Math.PI * 2); g.fill();
     g.restore();
@@ -156,32 +160,134 @@ export function createIntroOverlay(root = document.body) {
   // 文字ごとの小さな星（決まった位置・時刻）
   const sparks = [...INTRO.title.text].map((_, i) => {
     const rng = createRng(0x5eed + i * 31);
-    return Array.from({ length: 6 }, () => ({ a: rng() * Math.PI * 2, r: 0.55 + 0.95 * rng(), delay: 0.04 + 0.26 * rng(), size: 0.1 + 0.17 * rng(), drift: 0.15 + 0.3 * rng(), life: 0.32 + 0.2 * rng() }));
+    return Array.from({ length: 6 }, () => ({ a: rng() * Math.PI * 2, r: 0.55 + 0.95 * rng(), delay: 0.04 + 0.26 * rng(), size: 0.08 + 0.13 * rng(), drift: 0.15 + 0.3 * rng(), life: 0.32 + 0.2 * rng() }));
   });
 
-  // 題字の配置（縦書き。「の」は小さく）
+  // 題字の配置（横書き。「の」は小さく、少し下げる）
+  const NO = 2; // 「の」の番号
   function titleLayout() {
-    const S = Math.min((H * 0.6) / 4.55, W * 0.34, 150);
-    const sizes = [1, 1, 0.6, 1, 1.04].map((k) => k * S);
-    const gaps = sizes.map((s) => s * 0.97);
-    const total = gaps.reduce((a, b) => a + b, 0);
-    let y = H * 0.44 - total / 2;
-    return sizes.map((s, i) => { const cy = y + gaps[i] / 2; y += gaps[i]; return { x: W / 2, y: cy, S: s }; });
+    const S = Math.min(W * 0.185, H * 0.13, 150);
+    const sizes = [1, 1, 0.7, 1, 1.05].map((k) => k * S);
+    const adv = sizes.map((sz, i) => sz * (i === NO ? 1.12 : 1.0));
+    const total = adv.reduce((a, b2) => a + b2, 0);
+    let x = W / 2 - total / 2;
+    const y = H * 0.42;
+    return sizes.map((sz, i) => { const cx = x + adv[i] / 2; x += adv[i]; return { x: cx, y: y + (i === NO ? S * 0.08 : 0), S: sz, base: S }; });
   }
 
-  function title(state) {
-    g.fillStyle = '#000';
-    g.fillRect(0, 0, W, H);
-    // うしろにごく弱い暖かい光（題字が浮く）
-    const lit = state.chars.reduce((a, c) => a + c.k, 0) / state.chars.length;
-    if (lit > 0) {
-      const rg = g.createRadialGradient(W / 2, H * 0.44, 0, W / 2, H * 0.44, H * 0.55);
-      rg.addColorStop(0, `rgba(90,40,22,${0.55 * lit})`);
+  // ---- 「の」の後ろのブラックホール（持ち主 18:02）: 暗い芯、細い光子の輪、まわりの白い地と粒を曲げる重力レンズ。
+  // 「の」が吸い込まれていくように見せる（「の」は読めるまま）。ゆっくり渦を巻き続ける（ゲームの時間切れのブラックホールの予告）。
+  // high: 地（白と粒、となりの文字）を小さな画面に描いて画素ごとにレンズで曲げる。mid / low: 曲げずに、影と輪と渦の筋だけ
+  const lensSrc = document.createElement('canvas'), lensDst = document.createElement('canvas');
+  const ls = lensSrc.getContext('2d', { willReadFrequently: true }), ld = lensDst.getContext('2d');
+  let lensImg = null;
+  function blackHole(L, state, alive) {
+    const c = L[NO], S = c.base;
+    const age = state.chars[NO].age;
+    if (age < 0) return;
+    const grow = easeOut(age / 0.55);
+    const cx = c.x, cy = c.y - S * 0.02;
+    const thE = S * 0.46 * grow, rc = S * 0.25 * grow, R = S * 1.45 * grow;
+    if (R < 2) return;
+    const spin = alive * 0.35; // ゆっくりした渦
+    if (blurK === 1) {
+      // 地をレンズで曲げる（画素比の 0.75 倍の細かさ）
+      const q = Math.max(1, dpr * 0.75), n = Math.ceil(2 * R * q);
+      if (lensSrc.width !== n) { lensSrc.width = lensSrc.height = lensDst.width = lensDst.height = n; lensImg = null; }
+      ls.setTransform(q, 0, 0, q, -(cx - R) * q, -(cy - R) * q);
+      ls.fillStyle = '#fff';
+      ls.fillRect(cx - R, cy - R, 2 * R, 2 * R);
+      paintGrain(ls, cx - R, cy - R, 2 * R, 2 * R, 0.16, alive);
+      // となりの文字（後・一）も薄く曲がる（曲げられた像が墨の渦のように回り込む。うるさくしない）
+      ls.textAlign = 'center'; ls.textBaseline = 'middle';
+      for (const i of [NO - 1, NO + 1]) { const k = state.chars[i].k; if (k <= 0) continue; ls.globalAlpha = 0.3 * k; ls.fillStyle = '#000'; ls.font = font(L[i].S); ls.fillText(state.chars[i].ch, L[i].x, L[i].y); }
+      ls.globalAlpha = 1;
+      const src = ls.getImageData(0, 0, n, n).data;
+      lensImg ??= ld.createImageData(n, n);
+      const out = lensImg.data, h = n / 2, te = thE * q, rcq = rc * q, Rq = R * q;
+      for (let py = 0; py < n; py++) {
+        for (let px = 0; px < n; px++) {
+          const dx = px + 0.5 - h, dy = py + 0.5 - h, r = Math.hypot(dx, dy), o = (py * n + px) * 4;
+          if (r >= Rq) { out[o] = src[o]; out[o + 1] = src[o + 1]; out[o + 2] = src[o + 2]; out[o + 3] = 0; continue; }
+          // 点の重さのレンズ: 見える角 θ の光は β = θ − θE²/θ から来る。縁へ向けて曲げを弱める。中ほどほど強く渦を巻く
+          const wgt = 1 - smoothstepJs(Rq * 0.55, Rq, r);
+          const beta = r - (te * te / Math.max(r, 1e-3)) * wgt;
+          const ang = Math.atan2(dy, dx) + spin * 0.9 * (te / Math.max(r, te)) ** 2 + 0.6 * wgt * (te / Math.max(r, te)) ** 2;
+          let sx = h + Math.cos(ang) * beta, sy = h + Math.sin(ang) * beta;
+          sx = Math.min(n - 1, Math.max(0, sx | 0)); sy = Math.min(n - 1, Math.max(0, sy | 0));
+          const so = (sy * n + sx) * 4;
+          // 芯へ近いほど暗く（光が戻ってこない）、芯は真っ黒
+          const dark = r < rcq ? 1 : Math.exp(-(((r - rcq) / (te * 0.55)) ** 2)) * 0.85;
+          const k = 1 - dark;
+          out[o] = src[so] * k; out[o + 1] = src[so + 1] * k; out[o + 2] = src[so + 2] * k;
+          out[o + 3] = 255 * (1 - smoothstepJs(Rq * 0.92, Rq, r));
+        }
+      }
+      ld.putImageData(lensImg, 0, 0);
+      g.drawImage(lensDst, cx - R, cy - R, 2 * R, 2 * R);
+    } else {
+      // 軽い版: 影の広がり（灰）と黒い芯
+      const rg = g.createRadialGradient(cx, cy, rc * 0.9, cx, cy, R);
+      rg.addColorStop(0, 'rgba(0,0,0,1)');
+      rg.addColorStop(0.12, 'rgba(10,8,12,0.85)');
+      rg.addColorStop(0.45, 'rgba(40,34,40,0.25)');
       rg.addColorStop(1, 'rgba(0,0,0,0)');
       g.fillStyle = rg;
-      g.fillRect(0, 0, W, H);
+      g.beginPath(); g.arc(cx, cy, R, 0, Math.PI * 2); g.fill();
+      // 渦の筋（ゆっくり回る）
+      g.save();
+      g.translate(cx, cy);
+      g.strokeStyle = 'rgba(30,24,30,0.35)';
+      g.lineWidth = 1;
+      for (let i = 0; i < 6; i++) { const a0 = spin * 1.6 + i * 1.047; g.beginPath(); g.arc(0, 0, thE * (1.3 + 0.18 * i), a0, a0 + 1.2); g.stroke(); }
+      g.restore();
     }
+    // 降着円盤（細く傾いた、暖かい白の帯。手前の半分は芯の前を横切り、向こうの半分は曲げられて芯の上に弧を描く）と光子の輪
+    g.save();
+    g.translate(cx, cy);
+    g.globalCompositeOperation = 'source-over';
+    const hot = (a) => `rgba(255,214,150,${a})`;
+    if (blurK > 0) { g.shadowColor = 'rgba(255,170,80,0.9)'; g.shadowBlur = 8 * blurK; }
+    g.lineCap = 'round';
+    // 向こう側の弧（重力で持ち上がって芯の上を回る）
+    g.strokeStyle = hot(0.85 * grow); g.lineWidth = Math.max(1, S * 0.022);
+    g.beginPath(); g.ellipse(0, -thE * 0.12, thE * 1.02, thE * 0.98, 0, Math.PI * 1.05, Math.PI * 1.95); g.stroke();
+    // 光子の輪
+    g.strokeStyle = hot(0.95 * grow); g.lineWidth = Math.max(0.8, S * 0.012);
+    g.beginPath(); g.arc(0, 0, rc * 1.12, 0, Math.PI * 2); g.stroke();
+    // 手前の円盤（傾き、ゆっくり明るさが回る）
+    g.rotate(-0.22);
+    const sweep = 0.75 + 0.25 * Math.sin(spin * 3);
+    g.strokeStyle = hot(0.9 * grow * sweep); g.lineWidth = Math.max(1, S * 0.03);
+    g.beginPath(); g.ellipse(0, 0, thE * 2.0, thE * 0.26, 0, 0, Math.PI); g.stroke();
+    g.strokeStyle = hot(0.45 * grow * sweep); g.lineWidth = Math.max(0.8, S * 0.014);
+    g.beginPath(); g.ellipse(0, 0, thE * 2.0, thE * 0.26, 0, Math.PI, Math.PI * 2); g.stroke();
+    g.restore();
+  }
+  const smoothstepJs = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+  function paintGrain(ctx, x, y, w, h, alpha, t) {
+    ctx.save();
+    ctx.globalCompositeOperation = 'multiply';
+    ctx.globalAlpha = alpha;
+    ctx.translate(-((t * 233) % 192), -((t * 157) % 192));
+    ctx.fillStyle = grainPat;
+    ctx.fillRect(x - 192, y - 192, w + 384, h + 384);
+    ctx.restore();
+  }
+
+  function title(state, alive) {
+    // 白い地（ごく弱い粒と、端の淡い影）
+    g.fillStyle = '#fff';
+    g.fillRect(0, 0, W, H);
+    paintGrain(g, 0, 0, W, H, 0.07, alive);
+    const vg = g.createRadialGradient(W / 2, H * 0.42, Math.min(W, H) * 0.3, W / 2, H * 0.42, Math.hypot(W, H) * 0.65);
+    vg.addColorStop(0, 'rgba(0,0,0,0)');
+    vg.addColorStop(1, 'rgba(40,30,40,0.16)');
+    g.fillStyle = vg;
+    g.fillRect(0, 0, W, H);
     const L = titleLayout();
+    // 「の」の後ろのブラックホール（文字より先に描く。「の」は手前で読めるまま）
+    blackHole(L, state, alive);
     g.textAlign = 'center';
     g.textBaseline = 'middle';
     state.chars.forEach((c, i) => {
@@ -192,22 +298,28 @@ export function createIntroOverlay(root = document.body) {
       g.translate(x, y);
       g.scale(sc, sc);
       g.globalAlpha = c.k;
-      g.shadowColor = `rgba(255,190,120,${0.55 + 0.45 * (1 - c.k)})`;
-      g.shadowBlur = 10 + 40 * (1 - c.k);
-      g.fillStyle = c.k < 1 ? `rgb(255,${Math.round(236 + 19 * c.k)},${Math.round(205 + 50 * c.k)})` : '#fff';
       g.font = font(S);
+      if (i === NO) {
+        // 吸い込まれていく「の」: 渦の向きへ少しずれた薄い影を重ね、芯の黒の上でも読めるよう白い縁どり
+        const sw = 0.06 * Math.sin(alive * 0.35 * 2);
+        g.save(); g.rotate(sw + 0.12); g.scale(0.9, 0.9); g.globalAlpha = 0.18 * c.k; g.fillStyle = '#000'; g.fillText(c.ch, 0, 0); g.restore();
+        g.lineJoin = 'round';
+        g.strokeStyle = 'rgba(255,255,255,0.95)';
+        g.lineWidth = S * 0.075;
+        g.rotate(sw * 0.4);
+        g.strokeText(c.ch, 0, 0);
+      }
+      if (blurK > 0) { g.shadowColor = `rgba(0,0,0,${0.45 * (1 - c.k)})`; g.shadowBlur = 30 * (1 - c.k) * blurK; }
+      g.fillStyle = '#0a080c';
       g.fillText(c.ch, 0, 0);
-      g.shadowBlur = 0;
       g.restore();
     });
     g.globalAlpha = 1;
-    // 星（加算）
-    g.save();
-    g.globalCompositeOperation = 'lighter';
+    // 黒い十字の星
     state.chars.forEach((c, i) => {
       if (c.burst < 0 || c.age > 1.2) return;
       const { x, y, S } = L[i];
-      if (c.burst < 1) star(x, y, S, c.burst, i === 4 ? 1.25 : 1);
+      if (c.burst < 1) star(x, y, S, c.burst, i === 4 ? 1.2 : 1);
       for (const sp of sparks[i]) {
         const d = c.age - sp.delay;
         if (d < 0 || d > sp.life) continue;
@@ -216,8 +328,6 @@ export function createIntroOverlay(root = document.body) {
         star(x + Math.cos(sp.a) * r, y + Math.sin(sp.a) * r, S * sp.size, u, 1, 0);
       }
     });
-    g.restore();
-    if (state.flash > 0.003) { g.fillStyle = `rgba(255,255,255,${state.flash})`; g.fillRect(0, 0, W, H); }
   }
 
   // 1: 速さの線（消失点から外へ。速いほど濃い）
@@ -250,13 +360,18 @@ export function createIntroOverlay(root = document.body) {
     // 最初の読み込みの「TAP」
     showGate(on) { gate.classList.toggle('on', !!on); },
     // 時刻 t の絵。tl: introTimeline、b: tl.beatAt(t)、view3d: { speed, vanish }（3D の拍の速さの線）
-    draw(tl, t, b, view3d = null) {
+    // alive: 題字が出たあとも動き続けるもの（ブラックホールの渦）の時刻（省けば t）
+    draw(tl, t, b, view3d = null, alive = null) {
       if (!visible) return;
-      g.clearRect(0, 0, W, H);
       const n = b.name;
+      // 何も描かない拍（ライト・隠れる・手）は、空にしたら次からは触らない
+      const empty = !(n === 'cardA' || n === 'cardB' || n === 'white' || n === 'title' || (n === 'bikes' && view3d));
+      if (empty && lastEmpty) return;
+      lastEmpty = empty;
+      g.clearRect(0, 0, W, H);
       if (n === 'cardA' || n === 'cardB') card(b.beat.text, b.local, n === 'cardA' ? 0 : 2.1);
       else if (n === 'white') { g.fillStyle = '#fff'; g.fillRect(0, 0, W, H); }
-      else if (n === 'title') title(tl.titleState(t));
+      else if (n === 'title') title(tl.titleState(t), alive ?? t);
       else if (n === 'bikes' && view3d) speedLines(t, view3d.speed, view3d.vanish[0], view3d.vanish[1]);
       // ボタン: 題字の終わりへ向けて浮かぶ
       const bt = n === 'title' ? tl.titleState(t).button : 0;

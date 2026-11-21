@@ -38,7 +38,7 @@ test('最大溜めの一発は、どの種・どの時刻に放っても必ず�
       expect(log).toEqual([['over', { reason: 'released', total: g.score.total, outcome: g.outcome }]]);
     }
   }
-});
+}, 20000); // 16 の種 × 3 の時刻を最後まで進める重いテスト（全体を並べて走らせると 5 秒の既定を超えることがある）
 
 test('届かない一発は撃退失敗: 生き残りは、放った瞬間に生きていて前線の外にいた者（数と位置）', () => {
   const amount = 30;

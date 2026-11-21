@@ -238,10 +238,11 @@ const HOLD_MIN_BEATS = 2;
 
 // 先読みのスケジューラ。advance(until, cond) で、until より前に始まる拍をすべて作り、その音を時刻順に返す。
 // cond(t) は { elapsed, power, holding }（その拍を作るときに読む）。小節の頭で強さ・テンポ・フィルを決める。
-export function createSequencer({ start = 0, mode = 'play' } = {}) {
+// tempo: 決まったテンポで鳴らす（S6 の導入: 小節の頭を画面の出来事にそろえる。省けば強さで動く）
+export function createSequencer({ start = 0, mode = 'play', tempo: fixedTempo = null } = {}) {
   let pos = start; // 次の拍の頭（曲の中の時刻）
   let bar = 0, beat = 0;
-  let tempo = mode === 'quiet' ? QUIET_TEMPO : tempoFor(0);
+  let tempo = fixedTempo ?? (mode === 'quiet' ? QUIET_TEMPO : tempoFor(0));
   let cur = null; // 今の小節の取り決め
   let warp = null; // 引き伸ばし { at, w }
   let done = false;
@@ -256,7 +257,8 @@ export function createSequencer({ start = 0, mode = 'play' } = {}) {
     if (mode === 'quiet') { tempo = QUIET_TEMPO; level = 0; gainScale = 0.5; intensity = 0; }
     else {
       intensity = intensityAt(c.elapsed, c.power);
-      if (history.length && history.at(-1).mode === mode) tempo = nextTempo(tempo, tempoFor(intensity));
+      if (fixedTempo) tempo = fixedTempo;
+      else if (history.length && history.at(-1).mode === mode) tempo = nextTempo(tempo, tempoFor(intensity));
       level = levelFor({ ...c, holding: false });
       gainScale = 0.62 + 0.38 * (c.elapsed >= ROUND - 10 ? 1 : intensity);
     }

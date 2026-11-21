@@ -188,6 +188,15 @@ function normalize(a) {
   return a;
 }
 
+// 作った楽器の音を覚えておく（BGM と導入の音楽で使い回す。標本化周波数ごと）
+const voiceCache = new Map();
+export function cachedVoice(name, sr) {
+  const key = name + '@' + sr;
+  if (!voiceCache.has(key)) voiceCache.set(key, renderVoice(name, sr));
+  return voiceCache.get(key);
+}
+export const hasCachedVoice = (name, sr) => voiceCache.has(name + '@' + sr);
+
 // 名前の楽器を、標本化周波数 sr で一回ぶん作る（最大の振幅は 0.9）
 export function renderVoice(name, sr) {
   return normalize(build(name, sr));

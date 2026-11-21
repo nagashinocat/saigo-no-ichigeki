@@ -152,7 +152,9 @@ test('楽器の音は、AudioContext ができる前から 1 つずつ作って�
   const bgm = createBgm(() => null);
   let n = 0;
   while (!bgm.prepare()) n++;
-  expect(n).toBe(9); // 10 の楽器、10 回目で全部
+  // 10 の楽器、1 回に 1 つずつ（多くても 10 回目で全部）。S6 fix1 から楽器の音は BGM と導入の音楽で共有の覚え
+  // （bgmVoices.cachedVoice）なので、前のテストで作ってあれば早く済む
+  expect(n).toBeLessThanOrEqual(9);
   expect(bgm.prepare()).toBe(true);
 });
 

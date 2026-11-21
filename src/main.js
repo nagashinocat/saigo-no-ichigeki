@@ -36,6 +36,7 @@ import { createIntro } from './render/intro.js';
 import { createIntroOverlay } from './ui/introOverlay.js';
 import { createIntroFlow, introMode, markRetry } from './ui/introFlow.js';
 import { scheduleIntroSfx, renderIntroAudio } from './audio/introSfx.js';
+import { prepareIntroMusic } from './audio/introMusic.js';
 
 const MAX_FRAME_DT = 0.1;
 const GRABBED_STEADY = 0.15; // 掴まれている間の手の画面の光の安定（弱く瞬く）
@@ -129,7 +130,11 @@ window.addEventListener('blur', () => press.reset());
 window.addEventListener('keydown', (e) => {
   // 導入の間: Space / Enter は画面のタップと同じ（TAP START が出ていれば始める）
   if (introFlow.blocksInput) {
-    if (['Space', 'Enter'].includes(e.code)) { e.preventDefault(); if (!e.repeat && !introFlow.start()) introFlow.consumePointer(); }
+    if (['Space', 'Enter'].includes(e.code)) {
+      e.preventDefault();
+      if (!audio.running) audio.unlock(); // キーでも音を鳴らせるように（画面のタップと同じ）
+      if (!e.repeat && !introFlow.start()) introFlow.consumePointer();
+    }
     return;
   }
   // リプレイの間は Space / Enter / Esc で飛ばす
@@ -244,10 +249,12 @@ cityScene.add(heroAura.group);
 // 「最後の一撃」が 1 文字ずつ十字の星から生まれる → TAP START でゲーム。導入の途中のタップは題字の終わりへ飛ばす（音はすぐ切る）。
 // TAP START までゲームは動かさない（タイマーは 60 のまま、軍勢も湧かない）。リトライは短い題字から
 const intro = createIntro({ views, scene: cityScene, cityView, enemyView, heroAura, patrolGlow, hand, city: game.city, tier, getTier: () => tier, seed });
-const overlay = createIntroOverlay(document.body);
+// 2D の層の画素比は画質の段の上限まで（録画の ?pr はそれを上書き）。文字の光のにじみは段ごとに軽く
+const overlay = createIntroOverlay(document.body, { dprMax: Number.isFinite(prParam) ? prParam : TIERS[tier].pixelRatioMax, glow: tier === 'high' ? 'full' : tier === 'mid' ? 'cheap' : 'none' });
 let introSfx = null, introT0 = null, introWait = 0, liftT = 0;
 const INTRO_AUDIO_LEAD = 0.12; // 導入の 0 秒を、音の時計のこれだけ先に置く（最初の音が欠けない）
-const HERO_LIFT = { from: -0.7, sec: 0.9 }; // TAP START: 主人公が下から浮き上がる
+// TAP START: 主人公がふわりと浮き上がって（最大 up m）、いつもの宙の高さへ戻る。足は地面より下へ沈まない（y ≥ 0）
+const HERO_LIFT = { up: 0.45, sec: 0.9 };
 const introFlow = createIntroFlow({
   mode: startMode,
   onBegin() {
@@ -255,6 +262,7 @@ const introFlow = createIntroFlow({
     introWait = 0;
     const out = audio.introOutput;
     if (out) { introT0 = out.ctx.currentTime + INTRO_AUDIO_LEAD; introSfx = scheduleIntroSfx(out.ctx, out.dest, introT0, introFlow.timeline); }
+    else introClock = 'dt'; // 音を鳴らせない（Web Audio がない）: 絵はフレームの dt で
   },
   onSkip() { introSfx?.cut(); },
   onStart() {
@@ -272,23 +280,40 @@ if (introFlow.blocksInput) hud.setVisible(false); // HUD はゲームが始ま�
 if (introFlow.state === 'gate') overlay.showGate(true);
 if (introFlow.state === 'game') { overlay.fadeOut(0); }
 else startHint.hidden = true;
+// 浮き上がり: 0 から上がって（前半）ゆっくり宙の高さ 0 へ降りる。どの時刻も ≥ 0
+const heroLiftAt = (u) => HERO_LIFT.up * Math.sin(Math.PI * Math.min(1, Math.max(0, u))) ** 2;
 let overlayT = -1;
+// 音の時計: 'audio'（音の時計に合わせる）か 'dt'（音が鳴らせないあいだ、フレームの dt で進めた）
+let introClock = 'audio';
 // 導入の時刻 t の絵（3D の拍は画面全体、カード・白・題字は 2D が覆う）
-function renderIntroAt(t, { force = false } = {}) {
+// alive: 題字が出きったあとも動き続けるもの（「の」の後ろのブラックホールの渦）の時刻。撮影は t をそのまま渡す
+let introAlive = 0;
+function renderIntroAt(t, { force = false, alive = t } = {}) {
   const tl = introFlow.timeline, b = tl.beatAt(t);
   intro.update(t, b);
   if (!overlay.covers(b)) intro.draw();
-  if (force || t !== overlayT) { overlay.draw(tl, t, b, { speed: intro.speed, vanish: intro.vanish }); overlayT = t; }
+  // 題字の画面は渦が動き続けるので毎フレーム描く（それ以外は時刻が変わったときだけ）
+  if (force || t !== overlayT || b.name === 'title') { overlay.draw(tl, t, b, { speed: intro.speed, vanish: intro.vanish }, alive); overlayT = t; }
   return b;
 }
 function introTick(dt) {
-  if (introFlow.state === 'gate') { if (!intro.prepared) intro.prepareStep(); return; }
+  // TAP を待つ間に、主人公の導入の体と、導入の音楽の楽器の音を少しずつ作っておく
+  if (introFlow.state === 'gate') { if (!intro.prepared) intro.prepareStep(); else prepareIntroMusic(); return; }
   const out = audio.introOutput;
-  if (introFlow.state === 'intro' && introT0 !== null && out?.ctx.state === 'running') introFlow.syncTo(out.ctx.currentTime - introT0);
-  else if (introFlow.state === 'intro' && introT0 !== null && (introWait += dt) < 0.5) { /* 音の時計が動き出すのを待つ */ }
-  else introFlow.update(dt);
+  const running = out?.ctx.state === 'running';
+  if (introFlow.state === 'intro' && running && introClock === 'dt') {
+    // dt で先へ進んだ絵を止めて待たせない: 音のほうを今の絵の時刻へ合わせ直し、ここから先の音だけを組み直す
+    introSfx?.cut();
+    introT0 = out.ctx.currentTime - introFlow.time;
+    introSfx = scheduleIntroSfx(out.ctx, out.dest, introT0, introFlow.timeline, { from: introFlow.time + 0.05 });
+    introClock = 'audio';
+  }
+  if (introFlow.state === 'intro' && introT0 !== null && running && introClock === 'audio') introFlow.syncTo(out.ctx.currentTime - introT0);
+  else if (introFlow.state === 'intro' && introClock === 'audio' && (introWait += dt) < 0.5) { /* 音の時計が動き出すのを少しだけ待つ */ }
+  else { introFlow.update(dt); if (introFlow.state === 'intro') introClock = 'dt'; }
   if (bgm.state === 'off' && audio.running) bgm.prepare(); // 題字の間に楽器の音を作っておく
-  renderIntroAt(introFlow.time);
+  introAlive = introFlow.time >= introFlow.timeline.total ? introAlive + dt : introFlow.time;
+  renderIntroAt(introFlow.time, { alive: introAlive });
 }
 
 // 最後の一発の演出（画面全体、仕様 12 章の絵コンテ 1〜5）: 白 → 軍勢の一人の肩越しのガラスの一拍（飛んでくるガラスに映った目と
@@ -514,7 +539,7 @@ function stepWorld(wdt, live, enemies, cam, focus, glowScale = 1) {
 function simulate(dt) {
   if (introFlow.blocksInput) return; // 導入の間はゲームを進めない（描くのは introTick）
   // TAP START のあと: 主人公が下から浮き上がる
-  if (liftT > 0) { liftT = Math.max(0, liftT - dt); const k = liftT / HERO_LIFT.sec; enemyView.setHeroLift(HERO_LIFT.from * k * k * k); }
+  if (liftT > 0) { liftT = Math.max(0, liftT - dt); enemyView.setHeroLift(heroLiftAt(1 - liftT / HERO_LIFT.sec)); }
   if (replay.active) {
     // リプレイの間: 世界はリプレイの刻みで進む（onTick）。ゲームは終わっている
     replay.update(dt);
@@ -672,7 +697,7 @@ const debugHooks = {
     if (introFlow.state === 'game') return null;
     if (introFlow.state === 'gate') overlay.showGate(false);
     introFlow.seek(t);
-    const b = renderIntroAt(introFlow.time, { force: true });
+    const b = renderIntroAt(introFlow.time, { force: true, alive: t });
     return { state: introFlow.state, beat: b.name, local: +b.local.toFixed(3), total: introFlow.timeline.total };
   },
   get introFlow() { return introFlow; },

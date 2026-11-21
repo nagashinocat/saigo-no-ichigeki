@@ -59,6 +59,9 @@ const FLASH_SEC = 0.14;
 // 鷲掴みの寄り方: 先に大きく進む（指が早く交差して光を埋め、途中で光る内側を手が囲む形を作らない）
 const JOIN_EASE_P = 3;
 const joinEase = (k) => 1 - Math.pow(1 - k, JOIN_EASE_P);
+// 左右へ寄る動きの速さ: 1/60 秒で 94%（JOIN_SEC の 1/15 で 1 − (14/15)^40）
+export const LAT_EASE_P = 40;
+const latEase = (k) => 1 - Math.pow(1 - Math.min(1, Math.max(0, k)), LAT_EASE_P);
 const joinEaseInv = (j) => 1 - Math.pow(1 - Math.min(1, Math.max(0, j)), 1 / JOIN_EASE_P);
 
 const srgb = (r, g, b, k = 1) => new THREE.Color().setRGB(r, g, b, THREE.SRGBColorSpace).multiplyScalar(k);
@@ -372,9 +375,11 @@ export function createHandView(models, tierName) {
   let fizzT = Infinity; // 足りずに離してからの秒（びくっと震えて光がしぼむ）
   const FIZZ_SEC = 0.55;
   let joined = 0, pushed = 0, flashK = 0;
+  let flashScale = 1; // 光が弾ける閃光の強さの倍率（S6 の導入: 握り込んだ鉤爪を白く飛ばさず見せる）
   // 時間切れの結末: 球が内側へつぶれ、両手が引き込まれる（0〜1。blackhole.js が毎フレーム決める）
   let collapse = 0;
   const hash = (x) => { const s = Math.sin(x * 127.1) * 43758.5453; return s - Math.floor(s); };
+  const _jd = new THREE.Vector3();
   const _c = new THREE.Vector3(), _q = new THREE.Quaternion(), _e = new THREE.Euler(), _mid = new THREE.Vector3(), _away = new THREE.Vector3();
 
   return {
@@ -412,7 +417,7 @@ export function createHandView(models, tierName) {
         const t = r.t, k = Math.min(1, t / inSec), after = t - inSec;
         const back = THREE.MathUtils.smoothstep(t, inSec + r.hold, inSec + r.hold + r.back);
         const act = ease(k) * (1 - back);
-        flashK = Math.max(flashK, (after < 0 ? Math.pow(k, 6) : Math.exp(-after / FLASH_SEC)) * (0.5 + 0.7 * r.strength));
+        flashK = Math.max(flashK, (after < 0 ? Math.pow(k, 6) : Math.exp(-after / FLASH_SEC)) * (0.5 + 0.7 * r.strength) * flashScale);
         recoil += after < 0 ? 0 : Math.exp(-after / 0.07) * (0.03 + 0.06 * r.strength);
         const reformAt = inSec + r.hold + r.back * 0.5;
         const orbBack = THREE.MathUtils.smoothstep(t, reformAt, reformAt + REFORM_SEC);
@@ -420,9 +425,14 @@ export function createHandView(models, tierName) {
         return { act, k, after, orbBack, gone, held: 1 - back, done: t > reformAt + REFORM_SEC };
       };
       joined = 0; pushed = 0;
+      let joinLat = 0;
       if (grip) {
         const e = env(grip, JOIN_SEC, joinEase);
         joined = e.act;
+        // S6 fix1（持ち主 15:24 ハートに見せない）: 左右へ寄る動きだけは放った最初のフレームでほぼ済ませる（叩きつけるように挟む）。
+        // 指先は最初のフレームからもう交差して重なり、寄る途中で指先どうしが頂で点で触れ合う瞬間を作らない。
+        // 下がる・ひねる・指を曲げる動きは今までどおり約 0.25 秒（joinEase）
+        joinLat = latEase(e.k) * e.held;
         // 締めつける間は押し縮められ（半分ほど）、弾けると外側の殻は消えて、手の中に小さな芯（ember）が燃え残る
         orbScale = Math.min(orbScale, Math.max((1 - 0.55 * e.k * e.k) * (1 - e.gone), e.orbBack));
         orbFade = Math.min(orbFade, Math.max(1 - e.gone, e.orbBack));
@@ -461,7 +471,13 @@ export function createHandView(models, tierName) {
           trem * 0.6 * Math.sin(k * 1.3 + 2.1),
         );
         // 構えの位置（球の中心から手のひらの向きの逆へ D）と、合わせた位置の間
-        _c.copy(ORB_C).addScaledVector(h.n, -D).add(h.lift).lerp(h.joinAt, joined).addScaledVector(h.pushMove, pushed).add(h.trem);
+        _c.copy(ORB_C).addScaledVector(h.n, -D).add(h.lift);
+        _jd.copy(h.joinAt).sub(_c);
+        const lat = _jd.x;
+        _jd.x = 0;
+        _c.addScaledVector(_jd, joined);
+        _c.x += lat * Math.max(joined, joinLat);
+        _c.addScaledVector(h.pushMove, pushed).add(h.trem);
         _c.x += h.mirror * recoil; // 合わさった反動で、わずかに弾かれる
         // 引き込まれる: 球（黒い球）のほうへ寄りながら、渦の向きへねじれる
         if (collapse > 0) _c.lerp(ORB_C, 0.5 * pull);
@@ -535,6 +551,7 @@ export function createHandView(models, tierName) {
     // 足りずに離した: 放たず、両手がびくっと震えて球の光が一瞬しぼむ
     fizzle() { fizzT = 0; },
     // 構えへ戻す（S6: 導入の手のアップのあと、ゲームを始める前と、撮影で時刻を戻すとき）。貯め 0・放ったあとの動きなし
+    setFlashScale(k) { flashScale = Number.isFinite(k) ? Math.max(0, k) : 1; },
     reset() { grip = null; push = null; fizzT = Infinity; lvl = 0; clock = 0; collapse = 0; joined = 0; pushed = 0; flashK = 0; },
     // 時間切れの結末のつぶれ具合（0〜1）
     setCollapse(k) { collapse = Number.isFinite(k) ? Math.min(1, Math.max(0, k)) : 0; },

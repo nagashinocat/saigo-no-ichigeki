@@ -3,7 +3,7 @@
 // 先読みのスケジューラ: 毎フレーム update を呼ぶと、LOOKAHEAD 秒先までに始まる拍の音を、正確な時刻に予約する。
 // 状態: off → play（遊んでいる 60 秒）→ stopped（最後の一発を放った瞬間にぴたりと止める）→ quiet（リプレイ・結果画面）
 //       play / quiet → stretch（ブラックホール: 音程が下がりながら引き伸ばされ、渦のように消える）→ stopped / quiet
-import { renderVoice, VOICES } from './bgmVoices.js';
+import { cachedVoice, hasCachedVoice, VOICES } from './bgmVoices.js';
 import { createSequencer, stretchWarp } from './bgmScore.js';
 
 // 音の出口のつくり（オフラインの書き出しも同じ値を使う）。効果音より一段下の音量
@@ -22,7 +22,7 @@ const LATE = 0.05; // これより遅れた音は鳴らさない（タブが隠�
 const R_MIN = 0.12; // 引き伸ばしの終わりの再生の速さ
 // 楽器の音はこの標本化周波数で作る（AudioContext の周波数が違っても、再生のときに合わせてくれる）。
 // AudioContext ができる前（最初のタップの前）から、1 フレームに 1 つずつ作っておける（prepare）
-const VOICE_SR = 48000;
+export const VOICE_SR = 48000;
 // 引き伸ばしの出口の音量: sec × FADE_HOLD まで保ち、sec × FADE_END で 0（オフラインの書き出しも同じ）
 export const FADE_HOLD = 0.85, FADE_END = 1.05;
 
@@ -46,8 +46,8 @@ export function createBgm(getOutput) {
   let pendingQuiet = null; // 引き伸ばしが終わってから始める静かな変奏 { at, fadeIn }
   let stretchEnd = Infinity; // 引き伸ばしで出口の音量が 0 になる時刻（それより後まで鳴らさない）
   let lastHolding = false;
-  const rendered = new Map(); // 楽器の名前 → Float32Array
-  const voiceData = (name) => { if (!rendered.has(name)) rendered.set(name, renderVoice(name, VOICE_SR)); return rendered.get(name); };
+  // 楽器の音（Float32Array）は bgmVoices の覚え（導入の音楽と同じもの）
+  const voiceData = (name) => cachedVoice(name, VOICE_SR);
 
   function ensure() {
     if (ctx) return true;
@@ -140,9 +140,9 @@ export function createBgm(getOutput) {
     // 最初のタップの前に、楽器の音を 1 つずつ作っておく（1 回の呼び出しで 1 つ。全部できたら true）。
     // 遊びが始まった瞬間にまとめて作ると、中くらいの Android では長押しの始まりが一瞬止まる
     prepare() {
-      const name = VOICES.find((v) => !rendered.has(v));
+      const name = VOICES.find((v) => !hasCachedVoice(v, VOICE_SR));
       if (name) voiceData(name);
-      return rendered.size === VOICES.length;
+      return VOICES.every((v) => hasCachedVoice(v, VOICE_SR));
     },
     // 遊びが始まった（音を鳴らせるようになってから呼ぶ）。一度だけ始まる
     start() {

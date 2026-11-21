@@ -1,6 +1,7 @@
 import { createRng } from '../rng.js';
 import { LIMITER } from './audio.js';
-import { INTRO, introBikes, whooshAt, introStreaks, streakAt, introCues, introHands } from '../render/introTimeline.js';
+import { INTRO, introBikes, whooshAt, introStreaks, streakAt, introCues, introHands, heroPan, LIGHT_BIKES, lightBikeAt, lightBikePan, LIGHT_SHOT } from '../render/introTimeline.js';
+import { scheduleIntroMusic } from './introMusic.js';
 
 // 導入の音（S6）。音は画面に合わせる（持ち主 13:06）: どの音も導入の時刻表（introTimeline.js）の同じ時刻・同じ位置から決める。
 //   バイク: 一台ごとの風切り（ノイズ）と推進の唸り。左右は画面の位置、大きさは近さ、高さはドップラー（whooshAt を 1/60 秒ごとに写す）
@@ -10,7 +11,8 @@ import { INTRO, introBikes, whooshAt, introStreaks, streakAt, introCues, introHa
 //   3D の拍の間だけ街の低いざわめき（カードの黒では切る）
 // ライブ（AudioContext）と録画（OfflineAudioContext）で同じものを組む。ノイズは決まった種で作る（録画が毎回同じ音になる）。
 // ctx: BaseAudioContext、dest: つなぐ先、t0: 導入の 0 秒の ctx の時刻、tl: introTimeline。戻り値の cut() で全部すぐ止める（飛ばしたとき）
-export const INTRO_SFX = { bus: 0.72, bike: 0.55, engine: 0.07, streak: 0.32, bed: 0.06 };
+// bus: 効果音のまとめ（導入の音楽の下に置く。S6 fix1 で 0.72 → 0.55）
+export const INTRO_SFX = { bus: 0.55, bike: 0.55, engine: 0.07, streak: 0.32, bed: 0.06, lock: 0.5, hum: 0.05 };
 
 function noiseBuffers(ctx) {
   const sr = ctx.sampleRate, n = Math.floor(sr * 2);
@@ -23,7 +25,8 @@ function noiseBuffers(ctx) {
   return { white, brown };
 }
 
-export function scheduleIntroSfx(ctx, dest, t0, tl) {
+// from: この導入の秒より前に始まる音は組まない（音の時計を合わせ直して途中から鳴らすとき。過去の時刻の音がまとめて鳴らない）
+export function scheduleIntroSfx(ctx, dest, t0, tl, { from = 0 } = {}) {
   const { white, brown } = noiseBuffers(ctx);
   const bus = ctx.createGain();
   bus.gain.value = INTRO_SFX.bus;
@@ -31,6 +34,7 @@ export function scheduleIntroSfx(ctx, dest, t0, tl) {
   const sources = [];
   const rng = createRng(0x5f0);
   const at = (t) => t0 + t;
+  const past = (t) => t < from - 1e-9;
 
   // 音のもと
   const noise = (buf, when, dur, offset = 0) => {
@@ -92,8 +96,9 @@ export function scheduleIntroSfx(ctx, dest, t0, tl) {
   // ---- バイク: 一台ごと ----
   const bikes = tl.beat('bikes') ? introBikes() : [];
   for (const b of bikes) {
-    const from = Math.max(0, b.tp - 0.95), to = b.tp + 0.75, dur = to - from, when = at(from);
-    const w = (u) => whooshAt(b, from + u);
+    const start = Math.max(0, b.tp - 0.95), to = b.tp + 0.75, dur = to - start, when = at(start);
+    if (past(start)) continue;
+    const w = (u) => whooshAt(b, start + u);
     // 風切り: 帯域ノイズ。近いほど開いて明るく、ドップラーで帯域も動く
     const s = noise(white, when, dur, b.id * 0.31);
     const bp = filt('bandpass', 900, 0.6);
@@ -117,7 +122,7 @@ export function scheduleIntroSfx(ctx, dest, t0, tl) {
   // ---- 3D の拍の街の低いざわめき（カード・手の拍では止める）----
   for (const n of ['bikes', 'light', 'hide']) {
     const B = tl.beat(n);
-    if (!B) continue;
+    if (!B || past(B.start)) continue;
     const s = noise(brown, at(B.start), B.end - B.start, B.start * 0.17);
     const lp = filt('lowpass', 260, 0.5);
     const g = gainNode();
@@ -128,43 +133,43 @@ export function scheduleIntroSfx(ctx, dest, t0, tl) {
     s.connect(lp); lp.connect(g); g.connect(bus);
   }
 
-  // ---- 3: すくんだあと頭上を抜けるバイク（ライトの拍）----
+  // ---- 3: スポットライト（持ち主 18:04）: バイクごとの推進の唸り（位置で左右・近さ）と、ライトが主人公を捉える瞬間の鋭い一打 ----
   const light = tl.beat('light');
-  if (light) {
-    const pass = light.start + 1.42;
-    burst(at(pass - 0.35), 0.7, 0.28, 'bandpass', 700, 2600, 0.7, 0.2, 0.3);
-    thump(at(pass), 85, 40, 0.35, 0.3, 0.1);
-    // ライトが向いてくる低い唸り
-    const o = osc('sawtooth', at(light.start), 1.5);
-    o.frequency.setValueAtTime(110, at(light.start));
-    o.frequency.linearRampToValueAtTime(140, at(pass));
-    const lp = filt('lowpass', 700, 1);
-    const g = gainNode();
-    g.gain.setValueAtTime(0, at(light.start));
-    g.gain.linearRampToValueAtTime(0.05, at(light.start + 0.6));
-    g.gain.linearRampToValueAtTime(0.0, at(light.start + 1.5));
-    o.connect(lp); lp.connect(g); g.connect(bus);
+  if (light && !past(light.start)) {
+    for (const b of LIGHT_BIKES) {
+      const s0 = Math.max(0, b.lockAt - 0.4), dur = light.end - light.start - s0, when = at(light.start + s0);
+      const dist = (u) => { const p = lightBikeAt(b, s0 + u); const c = LIGHT_SHOT.cam.pos; return Math.hypot(p.x - c[0], p.y - c[1], p.z - c[2]); };
+      const o = osc('sawtooth', when, dur);
+      o.frequency.setValueAtTime(96 + 9 * b.id, when);
+      const lp = filt('lowpass', 520, 1.1);
+      const g = gainNode();
+      curve(g.gain, when, dur, (u) => INTRO_SFX.hum * Math.min(1, u / 0.25) * Math.min(1, (dur - u) / 0.1) / (1 + (dist(u) / 14) ** 2) * 4);
+      const pn = pan();
+      curve(pn.pan, when, dur, (u) => lightBikePan(b, s0 + u));
+      o.connect(lp); lp.connect(g); g.connect(pn); pn.connect(bus);
+    }
   }
 
   // ---- 5: すき間の光の筋 ----
   const hide = tl.beat('hide');
   if (hide) {
     for (const st of introStreaks()) {
-      const from = st.t - st.dur * 0.75, dur = st.dur * 1.5, when = at(hide.start + from);
+      const s0 = st.t - st.dur * 0.75, dur = st.dur * 1.5, when = at(hide.start + s0);
+      if (past(hide.start + s0)) continue;
       const s = noise(white, when, dur, st.id * 0.41);
       const bp = filt('bandpass', 1500, 1.1);
       curve(bp.frequency, when, dur, (u) => 2400 - 1200 * Math.min(1, Math.max(0, (u - dur * 0.4) / (dur * 0.6))));
       const g = gainNode();
-      curve(g.gain, when, dur, (u) => { const a = streakAt(st, from + u); return INTRO_SFX.streak * (1 - st.depth * 0.5) * Math.exp(-(a.u * a.u) * 1.6); });
+      curve(g.gain, when, dur, (u) => { const a = streakAt(st, s0 + u); return INTRO_SFX.streak * (1 - st.depth * 0.5) * Math.exp(-(a.u * a.u) * 1.6); });
       const pn = pan();
-      curve(pn.pan, when, dur, (u) => streakAt(st, from + u).pan);
+      curve(pn.pan, when, dur, (u) => streakAt(st, s0 + u).pan);
       s.connect(bp); bp.connect(g); g.connect(pn); pn.connect(bus);
     }
   }
 
   // ---- 6: 手の貯め（唸りとせり上がり）----
   const hands = tl.beat('hands');
-  if (hands) {
+  if (hands && !past(hands.start)) {
     const dur = INTRO.hands.releaseAt, when = at(hands.start);
     const o1 = osc('sine', when, dur), o2 = osc('sine', when, dur);
     curve(o1.frequency, when, dur, (u) => 55 + 150 * introHands(u).level);
@@ -188,18 +193,20 @@ export function scheduleIntroSfx(ctx, dest, t0, tl) {
 
   // ---- 当たる音 ----
   for (const c of introCues(tl)) {
+    if (past(c.t)) continue;
     const w = at(c.t);
-    if (c.name === 'slam') {
-      thump(w, 92, 30, 1.15, 0.85, 0, 0.002);
-      burst(w, 0.28, 0.45, 'lowpass', 5200, 260, 0.6);
-      burst(w + 0.09, 0.5, 0.1, 'lowpass', 2400, 200, 0.6, -0.5);
-      burst(w + 0.17, 0.55, 0.07, 'lowpass', 1800, 160, 0.6, 0.5);
+    if (c.name === 'lock') {
+      // ライトが主人公を捉えた: 鋭い金属的な一打（そのバイクの左右）と低い圧
+      const b = LIGHT_BIKES[c.arg], p = lightBikePan(b, b.lockAt);
+      burst(w, 0.09, INTRO_SFX.lock * 0.6, 'highpass', 4200, 2600, 0.9, p);
+      ring(w, 2350 + 140 * c.arg, 0.35, 0.05, p);
+      thump(w, 160, 70, 0.22, INTRO_SFX.lock * 0.7, p * 0.6, 0.002);
     } else if (c.name === 'flinch') {
       burst(w, 0.14, 0.4, 'highpass', 2600, 1500, 0.8);
       thump(w, 150, 55, 0.4, 0.55);
       ring(w, 1180, 0.5, 0.05, 0);
     } else if (c.name === 'step') {
-      const p = (Math.round(c.t * 10) % 2 ? 0.25 : -0.25);
+      const p = heroPan(tl, c.t); // 主人公の画面の左右（走り去る・駆け込む向きに足音が流れる）
       thump(w, 130, 70, 0.1, 0.24, p, 0.002);
       burst(w, 0.05, 0.1, 'lowpass', 1600, 400, 0.7, p);
     } else if (c.name === 'grip') {
@@ -211,26 +218,21 @@ export function scheduleIntroSfx(ctx, dest, t0, tl) {
       const g = gainNode();
       g.gain.setValueAtTime(0, w); g.gain.linearRampToValueAtTime(0.16, w + 0.08); g.gain.setValueAtTime(0.16, w + 0.65); g.gain.linearRampToValueAtTime(0, w + 0.75);
       o.connect(g); g.connect(bus);
-    } else if (c.name === 'white') {
-      thump(w, 70, 26, 1.9, 0.85, 0, 0.003);
-      burst(w, 1.6, 0.42, 'lowpass', 7000, 140, 0.5, 0, 0.004);
-      burst(w, 0.06, 0.3, 'highpass', 5000, 4000, 0.7);
-    } else if (c.name === 'char') {
-      const i = c.arg, last = i === tl.chars.length - 1;
-      const p = 0;
-      ring(w, [1568, 1760, 1318, 2093, 1046][i] ?? 1568, last ? 1.6 : 1.0, last ? 0.11 : 0.08, p);
-      burst(w, 0.25, 0.07, 'highpass', 7000, 5000, 0.7, p);
-      thump(w, last ? 110 : 85, last ? 30 : 45, last ? 1.1 : 0.4, last ? 0.75 : 0.42, p, 0.002);
     }
+    // 白と「最後の一撃」の文字は無音（持ち主 18:02 / 18:07）
   }
+
+  // 導入の音楽（BGM の最高潮。力を放つ瞬間で止まる）。効果音のまとめとは別の道で同じ出口へ
+  const music = scheduleIntroMusic(ctx, dest, t0, tl, { from });
 
   let cutDone = false;
   return {
-    bus,
+    bus, music,
     // 飛ばした: すぐ（30 ms で）消して、鳴る予定の音も止める
     cut() {
       if (cutDone) return;
       cutDone = true;
+      music.cut(0.25);
       const now = ctx.currentTime;
       bus.gain.cancelScheduledValues(now);
       bus.gain.setValueAtTime(bus.gain.value, now);

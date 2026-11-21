@@ -39,7 +39,10 @@ try {
   if (opt.perf) {
     const res = await page.evaluate(() => {
       const out = {};
-      for (const [name, a, b] of [['bikes', 0.2, 2.1], ['light', 2.3 + 1.3, 5.2], ['hide', 6.7, 8.7], ['hands', 8.9, 11.2], ['title', 11.8, 13.5]]) {
+      const tl = window.__debug.introFlow.timeline;
+      // 拍ごとの区間（題字は出きったあとの渦も含め、終わりの 1 秒先まで）
+      const spans = ['bikes', 'light', 'hide', 'hands', 'title'].map((n) => { const B = tl.beat(n); return [n, B.start + 0.05, n === 'title' ? B.end + 1 : B.end - 0.05]; });
+      for (const [name, a, b] of spans) {
         const ms = [];
         const gl = window.__renderer.getContext(), px = new Uint8Array(4);
         for (let t = a; t < b; t += 1 / 30) {

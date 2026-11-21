@@ -4,6 +4,7 @@ import { CONFIG } from '../../src/config.js';
 import * as THREE from 'three';
 import { buildHandModel } from '../../src/render/handModel.js';
 import { HAND_JOINTS } from '../../src/render/handPose.js';
+import { heartFrames } from './heartProxy.js';
 
 const DT = 1 / 60;
 const run = (view, sec, ...args) => { for (let t = 0; t < sec - 1e-9; t += DT) view.update(DT, ...args); };
@@ -452,4 +453,28 @@ test('fizzle（足りずに離した）: 両手がびくっと震え、球の光
   run(calm, 0.6, 0.06, false, 1); run(fz, 0.6, 0.06, false, 1);
   expect(fz.palms.right.distanceTo(calm.palms.right)).toBeLessThan(0.002);
   expectFinite(fz);
+});
+
+// S6 fix1（持ち主 15:24「ハートには見えないように」、点で触れ合わない）: 放った直後の 0〜0.25 秒を 1/60 秒ごとに見る。
+// どの瞬間も、左右の指先の群れが頂の真ん中で点で触れ合う形にならない: 指先どうしが届く近さ（手の幅の 0.1 以内）なら
+// もう横に手の幅の 0.33 以上重なって交差している。上はひとつの尖った頂にならない（上 15% の帯が手の幅の 0.38 より広い）。
+// 親指は上へ巻き上げない
+test('S6 fix1: 放った直後の 0〜0.25 秒、1/60 秒ごとのどの瞬間も、指先が頂の真ん中で点で触れ合わない（最初のフレームから交差している）', () => {
+  for (const detail of ['low', 'high']) {
+    const m = hands(detail);
+    const view = createHandView(m, detail);
+    const aspect = 390 / 295;
+    view.resize(aspect);
+    run(view, 1, 0.9, true, 1);
+    view.release({ amount: CONFIG.power.max, isBig: true });
+    for (let i = 1; i <= 15; i++) {
+      view.update(DT, 0, false, 1);
+      const f = heartFrames(m, view, aspect, HAND_JOINTS);
+      const label = `${detail} +${i}/60`;
+      if (f.near < 0.1) expect(f.overlap, `${label} tips within reach must already cross`).toBeGreaterThan(0.33);
+      expect(f.overlap, `${label} crossed from the first frame`).toBeGreaterThan(0.33);
+      expect(f.apex, `${label} apex`).toBeGreaterThan(0.38);
+      expect(f.thumb, `${label} thumb`).toBeLessThan(-0.03);
+    }
+  }
 });
