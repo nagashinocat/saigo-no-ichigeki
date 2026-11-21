@@ -1,5 +1,6 @@
 import { test, expect } from 'vitest';
-import { planFinale, planRetreat, PLAN, RIDER_MAX_ANG, retreatPoint, nearDist, segHitsBox, retreatMargin } from '../../src/render/finalePlan.js';
+import { planFinale, planRetreat, PLAN, RIDER_MAX_ANG, retreatPoint, segHitsBox, retreatMargin } from '../../src/render/finalePlan.js';
+import { FINALE } from '../../src/render/finaleTimeline.js';
 import { facadeWindows } from '../../src/render/facadeWindows.js';
 import { generateCity } from '../../src/world/cityGen.js';
 import { radiusFor } from '../../src/game/charge.js';
@@ -24,50 +25,87 @@ function cases() {
   return out;
 }
 
-test('カメラは広場を囲むビルの横の壁に沿った通りの、ビルより外側（ビルの外・地面の上）にいて、壁と広場の中心（迫る光の壁）を見通せる', () => {
-  for (const { city, plan } of cases()) {
-    const b = city.buildings.find((x) => x.id === plan.buildingId);
-    expect(b).toBeDefined();
-    expect(b.dist).toBeLessThanOrEqual(PLAN.innerDist);
-    const p = plan.camPos;
-    expect(p[1]).toBeGreaterThan(1);
-    expect(city.buildings.filter((o) => inside(p, o, PLAN.clearance - 0.01))).toEqual([]);
-    // カメラは窓の並ぶ壁の外側（法線の向き）で、爆心よりビルの向こう
-    const n = plan.normal;
-    const half = Math.abs(n[0]) > 0.5 ? b.w / 2 : b.d / 2;
-    expect((p[0] - b.x) * n[0] + (p[2] - b.z) * n[2]).toBeGreaterThan(half + 2);
-    expect(Math.hypot(p[0], p[2])).toBeGreaterThan(b.dist);
-    // 見る先・広場の中心（迫る光の壁）への見通しを、ビルがふさがない
-    for (const q of [plan.look, [0, PLAN.centerY, 0]]) {
-      expect(city.buildings.filter((o) => segHitsBox(p, q, o)).map((o) => o.id)).toEqual([]);
-    }
-    // 前線がビルに届く距離は、ビルの中心より近い
-    expect(plan.hitDist).toBeCloseTo(nearDist(b), 9);
-    expect(plan.hitDist).toBeLessThan(b.dist);
+// 絵コンテ 2（持ち主 2026-11-21 09:40）: 軍勢の一人（浮遊バイクの乗り手）の背後・肩越しのカメラ
+const horiz = (p) => Math.hypot(p[0], p[2]);
+const farDist = (b) => Math.hypot(Math.abs(b.x) + b.w / 2, Math.abs(b.z) + b.d / 2);
+
+test('乗り手の場所: 光の壁が届く範囲（半径の riderFrac 以内）で、地面から浮き、ビルの外にいて、爆心（光の壁）の方を向く', () => {
+  for (const { city, shot, plan } of cases()) {
+    const r = plan.rider;
+    const d = horiz(r.pos);
+    expect(d).toBeGreaterThanOrEqual(PLAN.riderRange[0] - 1e-9);
+    expect(d).toBeLessThanOrEqual(Math.min(PLAN.riderRange[1], shot.radius * PLAN.riderFrac) + 1e-9);
+    expect(r.pos[1]).toBeGreaterThan(1.5);
+    expect(city.buildings.filter((o) => inside(r.pos, o, PLAN.riderClear)).map((o) => o.id)).toEqual([]);
+    // バイクの前（+z を yaw で回した向き）が爆心の方（faceOff だけそれた向き）を向く
+    const f = [Math.sin(r.yaw), Math.cos(r.yaw)];
+    expect(f[0]).toBeCloseTo(r.fwd[0], 9); expect(f[1]).toBeCloseTo(r.fwd[2], 9);
+    expect(f[0] * -r.pos[0] / d + f[1] * -r.pos[2] / d).toBeCloseTo(Math.cos(PLAN.faceOff), 6);
+    expect(r.out[0]).toBeCloseTo(r.pos[0] / d, 9); expect(r.out[2]).toBeCloseTo(r.pos[2] / d, 9);
+    // 一拍のはじめの前線は乗り手の riderGap + crawl m 手前
+    expect(plan.hitDist).toBeCloseTo(d - FINALE.riderGap - FINALE.crawl, 6);
+    expect(plan.riderDist).toBeCloseTo(Math.hypot(d, r.pos[1] + 1), 6);
   }
 });
 
-test('目が映る一人は、生きた軍勢の中から選ばれ、ビルはその一人の向きにある', () => {
+test('カメラは乗り手の背後・肩越し（乗り手の向きの後ろに camBack m、横に camSide m、頭より少し上）で、ビルの外。乗り手の頭と、その向こうの光の壁を見通せる', () => {
+  for (const { city, plan } of cases()) {
+    const r = plan.rider, c = plan.camPos, d = horiz(r.pos);
+    const out = [r.pos[0] / d, r.pos[2] / d], back = [-r.fwd[0], -r.fwd[2]], right = [-r.fwd[2], r.fwd[0]];
+    const rel = [c[0] - r.pos[0], c[2] - r.pos[2]];
+    expect(rel[0] * back[0] + rel[1] * back[1]).toBeCloseTo(PLAN.camBack, 6);
+    expect(Math.abs(rel[0] * right[0] + rel[1] * right[1])).toBeCloseTo(PLAN.camSide, 6);
+    expect(c[1] - r.pos[1]).toBeCloseTo(PLAN.camY, 6);
+    expect(plan.camDist).toBeCloseTo(Math.hypot(...c), 6);
+    expect(city.buildings.filter((o) => inside(c, o, PLAN.camClear - 0.01)).map((o) => o.id)).toEqual([]);
+    // 見通し: 乗り手の頭・見る先・その向こうの光の壁（一拍の前線）を、まだ飲まれていないビルがふさがない
+    const head = [r.pos[0], r.pos[1] + 1.55, r.pos[2]];
+    const wall = plan.hitDist + FINALE.crawl;
+    // 頭の向こう（画面の真ん中の列）の光の壁: カメラから乗り手の頭を通って光の壁まで
+    const toHead = [head[0] - c[0], head[1] - c[1], head[2] - c[2]];
+    const n = Math.hypot(...toHead);
+    const pts = [head, plan.look, ...[1.5, 3, 4.5, 6].map((k) => c.map((v, i) => v + toHead[i] / n * (n + k)))];
+    for (const q of pts) expect(city.buildings.filter((o) => farDist(o) > wall - 0.5 && segHitsBox(c, q, o, 0.2)).map((o) => o.id)).toEqual([]);
+    // 見る先は乗り手の向こう（爆心の方）
+    expect(horiz(plan.look)).toBeLessThan(d);
+    expect(out[0] * -r.fwd[0] + out[1] * -r.fwd[2]).toBeGreaterThan(0.5);
+  }
+});
+
+test('時間が戻ってから追うカットまでに光の壁が触れるビルは、カメラから sweptClear m、カメラから乗り手の頭への線から sweptLine m より離れている（押されてゆがむ壁がレンズの前をふさがない）', () => {
+  const near = (b) => Math.hypot(Math.max(0, Math.abs(b.x) - b.w / 2), Math.max(0, Math.abs(b.z) - b.d / 2));
+  for (const { city, plan } of cases()) {
+    const c = plan.camPos, head = [plan.rider.pos[0], plan.rider.pos[1] + 1.55, plan.rider.pos[2]];
+    for (const o of city.buildings.filter((b) => near(b) < plan.camDist + FINALE.passBeyond)) {
+      expect(Math.hypot(Math.max(0, Math.abs(c[0] - o.x) - o.w / 2), Math.max(0, Math.abs(c[2] - o.z) - o.d / 2)), `building ${o.id}`).toBeGreaterThanOrEqual(PLAN.sweptClear);
+      expect(segHitsBox(c, head, o, PLAN.sweptLine), `building ${o.id}`).toBe(false);
+    }
+  }
+});
+
+test('目が映る一人は、生きた軍勢の中から、乗り手の場所の向き（RIDER_MAX_ANG 以内）にいる者のうち乗り手の場所にいちばん近い一人', () => {
+  const pos = (e) => [Math.cos(e.angle) * e.dist, Math.sin(e.angle) * e.dist];
   for (const { plan } of cases()) {
     expect([1, 2, 3, 4]).toContain(plan.riderId);
-    const e = ARMY.find((x) => x.id === plan.riderId);
-    const a = Math.atan2(plan.building.z, plan.building.x);
-    expect(Math.abs(Math.atan2(Math.sin(a - e.angle), Math.cos(a - e.angle)))).toBeLessThan(1.2);
+    const a = Math.atan2(plan.rider.pos[2], plan.rider.pos[0]);
+    const near = (e) => e.state !== 'dead' && Math.abs(Math.atan2(Math.sin(e.angle - a), Math.cos(e.angle - a))) < RIDER_MAX_ANG;
+    const d = (e) => { const p = pos(e); return Math.hypot(p[0] - plan.rider.pos[0], p[1] - plan.rider.pos[2]); };
+    const best = ARMY.filter(near).sort((x, y) => d(x) - d(y))[0];
+    if (best) expect(plan.riderId).toBe(best.id);
   }
   const city = generateCity(3);
   const p = planFinale({ shot: SHOTS[1], buildings: city.buildings, enemies: [], rng: createRng(1) });
   expect(p.riderId).toBeNull();
-  expect(p.buildingId).not.toBeNull();
+  expect(p.rider.pos.every(Number.isFinite)).toBe(true); // 軍勢がいなくても、名もない乗り手の背後から撮る
 });
 
-test('目が映る一人は、ビルの向きにいる生きた軍勢のうち、カメラにいちばん近い一人', () => {
-  const pos = (e) => [Math.cos(e.angle) * e.dist, Math.sin(e.angle) * e.dist];
+test('ほかの軍勢がカメラのすぐ前・乗り手のすぐそばにいない', () => {
   for (const { plan } of cases()) {
-    const a = Math.atan2(plan.building.z, plan.building.x);
-    const near = (e) => e.state !== 'dead' && Math.abs(Math.atan2(Math.sin(e.angle - a), Math.cos(e.angle - a))) < RIDER_MAX_ANG;
-    const d = (e) => { const p = pos(e); return Math.hypot(p[0] - plan.camPos[0], p[1] - plan.camPos[2]); };
-    const best = ARMY.filter(near).sort((x, y) => d(x) - d(y))[0];
-    if (best) expect(plan.riderId).toBe(best.id);
+    for (const e of ARMY.filter((x) => x.state !== 'dead' && x.id !== plan.riderId)) {
+      const p = [Math.cos(e.angle) * e.dist, 3, Math.sin(e.angle) * e.dist];
+      expect(Math.hypot(p[0] - plan.camPos[0], p[2] - plan.camPos[2])).toBeGreaterThan(PLAN.othersClear - 1e-9);
+      expect(Math.hypot(p[0] - plan.rider.pos[0], p[2] - plan.rider.pos[2])).toBeGreaterThan(PLAN.othersClear - 1e-9);
+    }
   }
 });
 
@@ -82,28 +120,6 @@ test('逃げる道を後回しにできる: retreat: false なら null で、あ
       expect({ ...lazy, retreat: full.retreat }).toEqual(full);
       expect(planRetreat(lazy, { buildings: city.buildings, radius: shot.radius, lead: lead(shot.radius) })).toEqual(full.retreat);
     }
-  }
-});
-
-test('窓: 選んだ壁の上に並び、カメラの方を向いた壁のもの。ガラス片はカメラの前 1.5〜4 m', () => {
-  for (const { plan } of cases()) {
-    const b = plan.building, n = plan.normal;
-    expect(plan.windows.length).toBeGreaterThan(0);
-    for (const w of plan.windows) {
-      const c = w.center;
-      // 壁の面の上
-      const off = (c[0] - b.x) * n[0] + (c[2] - b.z) * n[2];
-      expect(off).toBeCloseTo(Math.abs(n[0]) > 0.5 ? b.w / 2 : b.d / 2, 6);
-      const across = Math.abs((c[0] - b.x) * -n[2] + (c[2] - b.z) * n[0]);
-      expect(across).toBeLessThan((Math.abs(n[0]) > 0.5 ? b.d : b.w) / 2);
-      expect(c[1]).toBeGreaterThan(0);
-      expect(c[1]).toBeLessThan(b.h);
-      expect(w.w).toBeGreaterThan(0);
-      expect(w.h).toBeGreaterThan(0);
-    }
-    const d = Math.hypot(...plan.shardPos.map((v, i) => v - plan.camPos[i]));
-    expect(d).toBeGreaterThan(1.5);
-    expect(d).toBeLessThan(4);
   }
 });
 
@@ -131,9 +147,8 @@ test('同じシードで同じ結果。ビルが一つもなくても撮れる',
   const run = (s) => planFinale({ shot: SHOTS[2], buildings: city.buildings, enemies: ARMY, rng: createRng(s) });
   expect(run(4)).toEqual(run(4));
   const p = planFinale({ shot: SHOTS[0], buildings: [], enemies: [], rng: createRng(2) });
-  expect(p.building).toBeNull();
-  expect(p.windows).toEqual([]);
   expect(p.camPos[1]).toBeGreaterThan(1);
+  expect(p.rider.pos[1]).toBeGreaterThan(1);
   expect(Number.isFinite(p.hitDist)).toBe(true);
 });
 

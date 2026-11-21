@@ -1,23 +1,35 @@
 import { groundHeight } from './sphereDeform.js';
-import { facadeWindows } from './facadeWindows.js';
+import { FINALE } from './finaleTimeline.js';
 
 // 最後の一発の演出の「どこで撮るか」を決める純粋な関数（描画は知らない）。
-// 軍勢の一人の目線: 広場を囲むビルのうち、その一人の向きのビルを選び、爆心と反対側の壁の前の通りにカメラを置く。
-// 前線がそのビルに届くと、こちら側の窓ガラスが光に押されてカメラの方へ砕け、その一片がカメラの前で止まる。
-// 時間が戻ると、カメラはその通りから上へ・外へ、追ってくる爆発から逃げる（retreat の道）。
+// ガラスの一拍（持ち主の絵コンテ 2026-11-21 09:40）: 軍勢の一人（浮遊バイクの乗り手）が通りの上に浮いて爆心（迫る光の壁）を
+// 向いている。カメラはその背後・肩越し。光の壁は乗り手の数 m 前で止まりかけ、瓦礫とガラスが飛んでくる。時間が戻ると、
+// 乗り手が飲まれて吹き飛び、カメラも飲まれる。そのあとカメラはそこから上へ・外へ、追ってくる爆発から逃げる（retreat の道）。
+// 乗り手は実際の位置ではなく、ここで決めた場所に描く（白の間に置き直す。ゲームの軍勢の状態は変えない）。
 
 export const PLAN = {
-  innerDist: 48,         // 広場を囲むビル: 中心までの距離がこれより近いもの
-  enemyNear: 120,        // この距離までの生きた軍勢から、目が映る一人を選ぶ
-  camAlong: [5, 7, 9, 11, 14, 17, 21], // ビルの外の端から、通りに沿って外へ（m）
-  camOff: [6, 7.5, 5, 9, 4], // 横の壁から通りの中へ（m）
-  centerY: 6,            // 広場の中心のこの高さへの見通し（迫る光の壁が見える）
-  lookY: 6.5,
-  camHeight: 2.4,        // カメラの高さ（地面から。浮遊バイクの乗り手の目の高さ）
-  clearance: 2.2,        // カメラはビルからこの距離より離れる
-  riderClear: 3.0,       // カメラのすぐ前に軍勢がいない
-  shardAhead: 2.3,       // 目が映るガラス片は、カメラのこの距離の前で止まる（m）
+  enemyNear: 120,        // この距離までの生きた軍勢から、撮る一人を選ぶ
+  riderRange: [24, 60],  // 乗り手を置く爆心からの水平の距離（m）
+  riderFrac: 0.72,       // かつ、その一発の半径のこの割合まで（かならず光の壁に飲まれる）
+  riderHover: 2.6,       // バイクの底の、地面からの高さ（m）
+  riderClear: 1.6,       // 乗り手（バイク）はビルからこの距離より離れる
+  camBack: 4.4,          // カメラは乗り手の背後（乗り手の向きの後ろ）にこの距離（m）。バイクの尾の推進の光が手前に入る
+  camSide: 0.4,          // 横（肩越し。乗り手の頭と肩が画面の片側に入る）
+  camY: 1.6,             // バイクの底からの高さ（乗り手の頭は約 1.55）
+  camClear: 1.6,         // カメラはビルからこの距離より離れる
+  othersClear: 3.0,      // ほかの軍勢はカメラ・乗り手からこの距離より離れている
+  // 時間が戻って追うカットへ切り替わるまでに前線が触れるビル（球の面へ押されて形が大きく動く）は、カメラからこの距離（m）、
+  // カメラから乗り手の頭への線から sweptLine m より離れている（ゆがんだ壁がレンズの前をふさがない）
+  sweptClear: 10,
+  sweptLine: 3,
+  faceOff: 0.6,          // 乗り手は爆心から少しそれた向き（rad）に光の壁を見る（画面に壁の面の模様が斜めに入り、白熱の芯は頭の側へ）
+  lookAhead: 14,         // 見る先: 乗り手の頭から前へ（m）
+  view: { u: [-0.4, -0.2, 0, 0.2, 0.4], v: [-0.22, 0, 0.16, 0.32], blocked: 6 }, // 見通しを確かめる画面の向き（tan）と、ふさがれてよい数
+  lookUp: -1.86,         // わずかに見下ろす（約 6°。下の縁に推進の光、真ん中に頭と肩、その上と横に迫る光の壁）
+  azSteps: [0, 0.1, -0.1, 0.2, -0.2, 0.32, -0.32, 0.45, -0.45, 0.6, -0.6, 0.8, -0.8, 1.0, -1.0, 1.25, -1.25, 1.55, -1.55, 1.9, -1.9, 2.3, -2.3, 2.75, -2.75, Math.PI],
+  dStep: 2,
   // 逃げる道: 横に x 引いたときの高さ = 始めの高さ + rise·(1 − e^(−x/riseLen)) + slope·x
+  clearance: 2.2,
   rises: [8, 14, 22, 32, 45, 60, 80, 105, 135, 170, 210],
   flats: [110, 70, 40, 20, 0], // 通りの高さのまま飛ぶ長さ（m）の候補。長いほどよい
   riseLen: 7,
@@ -26,7 +38,6 @@ export const PLAN = {
   azOffsets: [0, 0.3, -0.3, 0.6, -0.6, 0.9, -0.9],
 };
 
-const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 const len2 = (a) => Math.hypot(a[0], a[2]);
 const inBox = (p, b, m) => Math.abs(p[0] - b.x) < b.w / 2 + m && Math.abs(p[2] - b.z) < b.d / 2 + m && p[1] < b.h + m;
 const angDiff = (a, b) => Math.abs(Math.atan2(Math.sin(a - b), Math.cos(a - b)));
@@ -70,59 +81,7 @@ function pickRider(enemies, rng) {
   return alive.length ? alive[Math.floor(rng() * alive.length)] : null;
 }
 
-// 候補のビル: 広場を囲むビルを、その一人の向きに近い順に（撮れる場所が見つかるまで順に試す）
-function rankBuildings(buildings, angle) {
-  const inner = buildings.filter((b) => b.dist <= PLAN.innerDist && b.h > 6);
-  const pool = inner.length ? inner : buildings.slice().sort((a, b) => a.dist - b.dist).slice(0, 8);
-  const score = (b) => angDiff(Math.atan2(b.z, b.x), angle) + b.dist * 0.004;
-  return pool.map((b) => [score(b), b]).sort((a, b) => a[0] - b[0]).map(([, b]) => b);
-}
-
-function camClear(p, buildings, ground, riders) {
-  if (p[1] <= ground(p) + 1) return false;
-  if (buildings.some((o) => inBox(p, o, PLAN.clearance))) return false;
-  if (riders.some((r) => Math.hypot(r[0] - p[0], r[2] - p[2]) < PLAN.riderClear)) return false;
-  return true;
-}
-
-// カメラ: ビルの横の壁に沿った通りの、ビルより外側。通りの先（広場）に迫る光の壁が見え、横の壁の窓が手前へ並ぶ。
-// 壁ごと・離れ方ごとに候補を作り、ビルの中でなく、広場の中心と壁への見通しがあるものから選ぶ
-function findCamera(b, buildings, ground, riders) {
-  const others = buildings.filter((o) => o !== b && o.id !== b.id);
-  const faces = [[1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1]];
-  const center = [0, PLAN.centerY, 0];
-  let best = null;
-  for (const n of faces) {
-    const alongX = Math.abs(n[0]) > 0.5;
-    const half = alongX ? b.w / 2 : b.d / 2;      // 壁までの距離（中心から法線の向き）
-    const faceW = alongX ? b.d : b.w;
-    const fc = [b.x + n[0] * half, 0, b.z + n[2] * half];
-    // 壁に沿った向きのうち、爆心から離れる向き（通りの外側）
-    let t = [-n[2], 0, n[0]];
-    if (t[0] * b.x + t[2] * b.z < 0) t = [-t[0], 0, -t[2]];
-    // 外へ向かう壁でないと、通りの先に広場が見えない
-    const outward = (t[0] * b.x + t[2] * b.z) / (Math.hypot(b.x, b.z) || 1);
-    if (outward < 0.5) continue;
-    const end = [fc[0] + t[0] * faceW / 2, 0, fc[2] + t[2] * faceW / 2]; // 壁の外の端
-    for (const offR of PLAN.camAlong) {
-      for (const offN of PLAN.camOff) {
-        const p = [end[0] + t[0] * offR + n[0] * offN, 0, end[2] + t[2] * offR + n[2] * offN];
-        p[1] = ground(p) + PLAN.camHeight;
-        if (!camClear(p, buildings, ground, riders)) continue;
-        const wallMid = [fc[0], b.h * 0.6, fc[2]];
-        const look = [fc[0] + (center[0] - fc[0]) * 0.45 - t[0] * faceW * 0.1, PLAN.lookY, fc[2] + (center[2] - fc[2]) * 0.45 - t[2] * faceW * 0.1];
-        const pts = [center, wallMid, look];
-        if (pts.some((q) => others.some((o) => segHitsBox(p, q, o)))) continue;
-        if (segHitsBox(p, center, b, 0.5)) continue;
-        const score = Math.abs(offR - 9) * 0.6 + Math.abs(offN - 7.5) + (1 - outward) * 8;
-        if (!best || score < best.score) best = { pos: p, look, wall: wallMid, normal: n, score };
-      }
-    }
-  }
-  return best;
-}
-
-// 逃げる道: 見ている向きと反対（通りに沿って外へ）を基準に、低い順に、ビルを通らない道を探す。
+// 逃げる道: 爆心から離れる向きを基準に、低い順に、ビルを通らない道を探す。
 // 向きと「低く飛ぶ長さ」ごとに、道の上の各点で越えなければならない高さを先に求めておく（放つ瞬間に止まらないように）
 const STEP = 0.75;
 function findRetreat(origin, base, buildings, ground, radius, lead) {
@@ -172,20 +131,91 @@ const groundFor = (crater) => (p) => groundHeight(Math.hypot(p[0], p[2]), crater
 // 逃げる道だけを探す（planFinale の retreat: false で後回しにしたとき、演出の白〜一拍の間に呼ぶ）。
 // plan: planFinale の戻り値、ほかは planFinale に渡したものと同じ（radius は shot.radius）
 export function planRetreat(plan, { buildings, crater = 0, radius, lead = 0 }) {
-  const { camPos: c, look: l } = plan;
-  return findRetreat(c, Math.atan2(c[2] - l[2], c[0] - l[0]), buildings, groundFor(crater), radius, lead);
+  // 基準の向きは爆心から離れる向き（カメラは光の壁から逃げる）
+  const c = plan.camPos;
+  return findRetreat(c, Math.atan2(c[2], c[0]), buildings, groundFor(crater), radius, lead);
 }
 
-// 目が映る一人: ビルの向き（angle から maxAng 以内）にいる生きた軍勢のうち、カメラにいちばん近い一人（カメラはその一人の目線）
+// 目が映る一人: 乗り手の場所の向き（angle から RIDER_MAX_ANG 以内）にいる生きた軍勢のうち、その場所にいちばん近い一人
+// （その一人を、白の間にこの場所へ置き直して描く）
 export const RIDER_MAX_ANG = 1.2;
 function nearestRider(enemies, pos, angle) {
   let best = null, bd = Infinity;
   for (const e of enemies) {
-    if (e.state === 'dead' || angDiff(e.angle, angle) >= RIDER_MAX_ANG) continue;
+    if (e.state === 'dead' || e.dist > PLAN.enemyNear || angDiff(e.angle, angle) >= RIDER_MAX_ANG) continue;
     const p = enemyPos(e), d = Math.hypot(p[0] - pos[0], p[2] - pos[2]);
     if (d < bd) { bd = d; best = e; }
   }
   return best;
+}
+
+// 箱の、原点から最も遠い点までの水平の距離（前線がこれを越えると、そのビルは光の壁の中）
+const farDist = (b) => Math.hypot(Math.abs(b.x) + b.w / 2, Math.abs(b.z) + b.d / 2);
+
+// 爆心からの向き az・水平の距離 d に乗り手を置いたときの、乗り手とカメラ（side: 右肩 1 / 左肩 −1）。
+// 乗り手は爆心の向きから faceOff だけカメラの側へそれた向き（fwd）にバイクの前（+z）を向ける。
+// right(f) はその向きの右（乗り手の右手側）。out は爆心から離れる向き（光の壁に押されて吹き飛ぶ向き）
+const rightOf = (f) => [-f[2], 0, f[0]];
+function shoulderAt(az, d, side, ground, lift = 0) {
+  const out = [Math.cos(az), 0, Math.sin(az)];
+  const inw = [-out[0], 0, -out[2]], ri = rightOf(inw);
+  const c = Math.cos(PLAN.faceOff), s = Math.sin(PLAN.faceOff) * side;
+  const fwd = [inw[0] * c + ri[0] * s, 0, inw[2] * c + ri[2] * s];
+  const right = rightOf(fwd);
+  const pos = [out[0] * d, 0, out[2] * d];
+  pos[1] = ground(pos) + PLAN.riderHover + lift;
+  const cam = [pos[0] - fwd[0] * PLAN.camBack + right[0] * PLAN.camSide * side, pos[1] + PLAN.camY, pos[2] - fwd[2] * PLAN.camBack + right[2] * PLAN.camSide * side];
+  const head = [pos[0], pos[1] + 1.55, pos[2]];
+  const look = [head[0] + fwd[0] * PLAN.lookAhead, head[1] + PLAN.lookUp, head[2] + fwd[2] * PLAN.lookAhead];
+  return { pos, cam, head, look, out, fwd, yaw: Math.atan2(fwd[0], fwd[2]) };
+}
+
+// カメラから見る向きに並べた光線が光の壁（半径 wall の球）に届く点（届かなければ 40 m 先）
+function viewRays(s) {
+  const F = [s.look[0] - s.cam[0], s.look[1] - s.cam[1], s.look[2] - s.cam[2]];
+  const fl = Math.hypot(...F);
+  for (let i = 0; i < 3; i++) F[i] /= fl;
+  const R = rightOf(F), rl = Math.hypot(R[0], R[2]);
+  R[0] /= rl; R[2] /= rl;
+  const U = [R[1] * F[2] - R[2] * F[1], R[2] * F[0] - R[0] * F[2], R[0] * F[1] - R[1] * F[0]];
+  const rays = [];
+  for (const v of PLAN.view.v) for (const u of PLAN.view.u) rays.push({ u, v, d: [F[0] + R[0] * u + U[0] * v, F[1] + R[1] * u + U[1] * v, F[2] + R[2] * u + U[2] * v] });
+  return rays;
+}
+function rayToWall(c, d, w) {
+  const a = d[0] * d[0] + d[1] * d[1] + d[2] * d[2], b = c[0] * d[0] + c[1] * d[1] + c[2] * d[2], cc = c[0] * c[0] + c[1] * c[1] + c[2] * c[2] - w * w;
+  const disc = b * b - a * cc;
+  const t = disc > 0 ? (-b - Math.sqrt(disc)) / a : 40 / Math.sqrt(a);
+  const k = t > 0 ? t : 40 / Math.sqrt(a);
+  return [c[0] + d[0] * k, c[1] + d[1] * k, c[2] + d[2] * k];
+}
+
+// 撮れるか: 乗り手とカメラがビルの外、ほかの軍勢がそばにいない、カメラから乗り手の頭・見る先を、まだ飲まれていない
+// ビルがふさがない。画面の向きに並べた光線のうち、光の壁（一拍の前線 wall）まで届かずビルに当たるものが blocked 以下で、
+// 真ん中の列（乗り手の頭とガラス片の背）はふさがれない（乗り手の影が光の壁を背に浮かぶ）。戻り値: ふさがれた数（撮れなければ −1）
+function shoulderClear(s, near, ground, others, wall) {
+  if (near.some((o) => inBox(s.pos, o, PLAN.riderClear) || inBox(s.cam, o, PLAN.camClear))) return -1;
+  if (s.cam[1] <= ground(s.cam) + 1) return -1;
+  for (const p of others) {
+    if (Math.hypot(p[0] - s.cam[0], p[2] - s.cam[2]) <= PLAN.othersClear || Math.hypot(p[0] - s.pos[0], p[2] - s.pos[2]) <= PLAN.othersClear) return -1;
+  }
+  const camD = Math.hypot(...s.cam);
+  for (const o of near) {
+    if (nearDist(o) >= camD + FINALE.passBeyond) continue;
+    if (Math.hypot(Math.max(0, Math.abs(s.cam[0] - o.x) - o.w / 2), Math.max(0, Math.abs(s.cam[2] - o.z) - o.d / 2)) < PLAN.sweptClear) return -1;
+    if (segHitsBox(s.cam, s.head, o, PLAN.sweptLine)) return -1;
+  }
+  const live = near.filter((o) => farDist(o) > wall - 0.5);
+  if (live.some((o) => segHitsBox(s.cam, s.head, o, 0.2) || segHitsBox(s.cam, s.look, o, 0.2))) return -1;
+  let blocked = 0;
+  for (const r of viewRays(s)) {
+    const q = rayToWall(s.cam, r.d, wall - 1);
+    if (live.some((o) => segHitsBox(s.cam, q, o, 0.2))) {
+      if (Math.abs(r.u) < 0.25) return -1;
+      blocked++;
+    }
+  }
+  return blocked <= PLAN.view.blocked ? blocked : -1;
 }
 
 // shot: 最後の一発（radius）、buildings: 残っているビル、enemies: 軍勢、crater: 地面のえぐれ
@@ -193,51 +223,59 @@ function nearestRider(enemies, pos, angle) {
 // retreat: false なら逃げる道は探さず null（放つ瞬間を軽くする。あとで planRetreat で求める）
 export function planFinale({ shot, buildings, enemies = [], rng, crater = 0, lead = 0, retreat = true }) {
   const ground = groundFor(crater);
-  const rider = pickRider(enemies, rng);
-  const angle = rider ? rider.angle : rng() * Math.PI * 2;
-  const riders = enemies.filter((e) => e.state !== 'dead').map(enemyPos);
-  let cam = null, n = null, b = null;
-  for (const c of rankBuildings(buildings, angle)) {
-    cam = findCamera(c, buildings, ground, riders);
-    if (cam) { b = c; n = cam.normal; break; }
+  const picked = pickRider(enemies, rng);
+  const a0 = picked ? picked.angle : rng() * Math.PI * 2;
+  const dMax = Math.max(PLAN.riderRange[0], Math.min(PLAN.riderRange[1], shot.radius * PLAN.riderFrac));
+  const dMin = Math.min(PLAN.riderRange[0], dMax);
+  const dPref = Math.min(dMax, Math.max(dMin, picked ? picked.dist : (dMin + dMax) / 2));
+  const reach = dMax + PLAN.camBack + 30;
+  const near = buildings.filter((b) => b.dist - Math.hypot(b.w, b.d) / 2 < reach);
+  const dists = [dPref];
+  for (let k = PLAN.dStep; dPref - k >= dMin || dPref + k <= dMax; k += PLAN.dStep) {
+    if (dPref - k >= dMin) dists.push(dPref - k);
+    if (dPref + k <= dMax) dists.push(dPref + k);
   }
-  let building = b, windows = [];
-  if (!cam) {
-    // ビルがない・撮れる場所がない: 何もない通りの上で、光の壁を見上げる
-    building = null;
-    n = [Math.cos(angle), 0, Math.sin(angle)];
-    const p = [n[0] * 40, 0, n[2] * 40];
-    p[1] = ground(p) + PLAN.camHeight + 6;
-    cam = { pos: p, look: [n[0] * 20, 10, n[2] * 20] };
-  } else {
-    windows = facadeWindows(b, n);
+  // 撮る一人は、ほかの軍勢の邪魔の確かめから外す（その一人はこの場所へ置き直す）
+  const others = (az, d) => {
+    const pos = [Math.cos(az) * d, 0, Math.sin(az) * d];
+    const who = nearestRider(enemies, pos, az) ?? picked;
+    return { who, pts: enemies.filter((e) => e.state !== 'dead' && e !== who).map(enemyPos) };
+  };
+  // 向きのずれが小さい順に、近い距離から、右肩・左肩の順に試す。ふさがれた光線のない所が見つかればそこ、
+  // なければ、ふさがれた数とずれの少ないもの
+  let best = null;
+  for (const off of PLAN.azSteps) {
+    const az = a0 + off;
+    for (const d of dists) {
+      const wall = d - FINALE.riderGap;
+      const o = others(az, d);
+      for (const side of [1, -1]) {
+        const s = shoulderAt(az, d, side, ground);
+        const bl = shoulderClear(s, near, ground, o.pts, wall);
+        if (bl < 0) continue;
+        const score = bl * 3 + Math.abs(off) * 4 + Math.abs(d - dPref) * 0.05;
+        if (!best || score < best.score) best = { ...s, side, d, who: o.who, score };
+      }
+      if (best && best.score < 1e-9) break;
+    }
+    if (best && best.score - Math.abs(off) * 4 < 1e-9) break;
   }
-  const hitDist = building ? nearDist(building) : 20;
-  // 目が映るガラス片はカメラの前。背に光の壁ではなく、ビルの暗い壁が来る向き（映った目が読める）
-  const wall = cam.wall ?? cam.look;
-  const toLook = sub(cam.look, cam.pos), toWall = sub(wall, cam.pos);
-  const nl = Math.hypot(...toLook), nw = Math.hypot(...toWall);
-  const f = [toLook[0] / nl * 0.35 + toWall[0] / nw * 0.65, toLook[1] / nl * 0.35 + toWall[1] / nw * 0.65, toLook[2] / nl * 0.35 + toWall[2] / nw * 0.65];
-  const fl = Math.hypot(f[0], f[1], f[2]);
-  const fwd = [f[0] / fl, f[1] / fl, f[2] / fl];
-  const right = [-fwd[2], 0, fwd[0]], rl = Math.hypot(right[0], right[2]) || 1;
-  const side = rng() < 0.5 ? -1 : 1;
-  const shardPos = [
-    cam.pos[0] + fwd[0] * PLAN.shardAhead + right[0] / rl * 0.08 * side,
-    cam.pos[1] + fwd[1] * PLAN.shardAhead + 0.1,
-    cam.pos[2] + fwd[2] * PLAN.shardAhead + right[2] / rl * 0.08 * side,
-  ];
-  const eyeOf = rider ? (building ? nearestRider(enemies, cam.pos, Math.atan2(building.z, building.x)) : null) ?? rider : null;
+  if (!best) {
+    // 撮れる通りがない: 好みの向き・距離で、まわりのビルより高く浮かせる
+    const s0 = shoulderAt(a0, dPref, 1, ground);
+    const top = near.filter((o) => [s0.pos, s0.cam].some((p) => inBox([p[0], 0, p[2]], o, 4))).reduce((m, o) => Math.max(m, o.h), 0);
+    const lift = Math.max(0, top + 2 - s0.pos[1]);
+    best = { ...shoulderAt(a0, dPref, 1, ground, lift), side: 1, d: dPref, who: others(a0, dPref).who };
+  }
+  const hitDist = best.d - FINALE.riderGap - FINALE.crawl;
   const plan = {
-    riderId: eyeOf ? eyeOf.id : null,
-    buildingId: building ? building.id : null,
-    building: building ? { x: building.x, z: building.z, w: building.w, d: building.d, h: building.h, kind: building.kind, dist: building.dist } : null,
-    normal: n,
+    riderId: best.who ? best.who.id : null,
+    rider: { pos: best.pos, yaw: best.yaw, out: best.out, fwd: best.fwd, side: best.side },
     hitDist,
-    camPos: cam.pos,
-    look: cam.look,
-    shardPos,
-    windows,
+    riderDist: Math.hypot(best.d, best.pos[1] + 1),
+    camPos: best.cam,
+    camDist: Math.hypot(...best.cam),
+    look: best.look,
     retreat: null,
   };
   if (retreat) plan.retreat = planRetreat(plan, { buildings, crater, radius: shot.radius, lead });

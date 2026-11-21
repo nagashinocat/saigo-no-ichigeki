@@ -81,10 +81,10 @@ export function boomRecipe(size, { hold = 0, open = 0, rng = Math.random } = {})
   return { size: s, level: 0.85 + 0.15 * s, crack, punch, roar, air, sub, taps, debris: { grains } };
 }
 
-// 最後の一発の爆発の音の取り決め（演出の時刻表 tl から）: 「弾ける」（snap）から宇宙へ切り替わる（chaseEnd）まで
-// うなりと地響きが鳴り続け、時間が戻って現実の速さになるまで（burstRamp 秒）こもった音から開く
+// 最後の一発の爆発の音の取り決め（演出の時刻表 tl から）: 時間が戻る瞬間（resume。ガラスの一拍の終わり、肩越しの乗り手が
+// 光の壁に飲まれる直前）から宇宙へ切り替わる（chaseEnd）までうなりと地響きが鳴り続け、burstRamp 秒でこもった音から開く
 export function finaleBoomOpts(tl, burstRamp) {
-  return { hold: Math.max(0, tl.chaseEnd - tl.snap), open: Math.max(0, burstRamp) };
+  return { hold: Math.max(0, tl.chaseEnd - (tl.resume ?? tl.snap)), open: Math.max(0, burstRamp) };
 }
 
 // 爆発の衝撃と地響きを軽く歪ませる曲線（tanh。k が大きいほど強く）

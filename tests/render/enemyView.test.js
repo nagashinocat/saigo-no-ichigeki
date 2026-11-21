@@ -121,3 +121,24 @@ test('主人公の体の差し替え: 粗い体で始め、細かい体ができ
   view.hero.getMatrixAt(0, m); p.setFromMatrixPosition(m);
   expect(p.y).toBe(0);
 });
+
+test('演出の一人（setFocus）: 本当の場所ではなく演出の決めた姿勢で一度だけ描かれ（同じ人の色）、頭の向きを持ち、keep 0 で消える。null で元に戻る', () => {
+  const view = createEnemyView(new THREE.Scene(), 'mid', { sunDir: new THREE.Vector3(0.3, 1, 0.2).normalize() });
+  const list = [{ id: 1, angle: 0.3, dist: 40, state: 'approach' }, { id: 2, angle: 2.0, dist: 30, state: 'dead', deadTime: 0 }];
+  const pose = { x: 10, y: 3, z: -20, yaw: 0.5, pitch: 0, roll: 0, reach: 0, thrust: 1, keep: 1, head: 0.3 };
+  view.setFocus({ id: 2, pose });
+  view.sync(list, {});
+  expect(view.mesh.count).toBe(2);
+  const m = new THREE.Matrix4(), p = new THREE.Vector3();
+  const found = [0, 1].map((i) => { view.mesh.getMatrixAt(i, m); return p.setFromMatrixPosition(m).toArray(); });
+  expect(found.filter((q) => Math.abs(q[0] - 10) < 1e-5 && Math.abs(q[1] - 3) < 1e-5 && Math.abs(q[2] + 20) < 1e-5)).toHaveLength(1);
+  const pa = view.mesh.geometry.attributes.aPose;
+  expect(pa.itemSize).toBe(3);
+  expect(Math.max(...[0, 1].map((i) => pa.getZ(i)))).toBeCloseTo(0.3, 6);
+  pose.keep = 0;
+  view.sync(list, {});
+  expect(view.mesh.count).toBe(1);
+  view.setFocus(null);
+  view.sync(list, {});
+  expect(view.mesh.count).toBe(2);
+});

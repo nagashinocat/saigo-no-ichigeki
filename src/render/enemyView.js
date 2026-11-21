@@ -34,12 +34,13 @@ attribute float aPart;
 attribute vec3 aPivot;
 attribute vec3 aCol;
 attribute vec4 aAnim; // x: 揺れの位相, y: 手を伸ばす 0〜1, z: 大きさ, w: 残り（倒れて消える）
-attribute vec2 aPose; // x: 大きく描く中心を主人公へ寄せる 0〜1, y: 推進の光 0〜1
+attribute vec3 aPose; // x: 大きく描く中心を主人公へ寄せる 0〜1, y: 推進の光 0〜1, z: 頭の向き（首まわり、rad。演出の一人だけ）
 uniform float uTime, uPx, uMinPx, uMaxBoost, uHeight;
 varying vec3 vN, vW, vCol;
 varying float vPart, vFar, vThrust;
 vec3 rotX(vec3 v, float a) { float c = cos(a), s = sin(a); return vec3(v.x, v.y * c - v.z * s, v.y * s + v.z * c); }
 vec3 rotZ(vec3 v, float a) { float c = cos(a), s = sin(a); return vec3(v.x * c - v.y * s, v.x * s + v.y * c, v.z); }
+vec3 rotY(vec3 v, float a) { float c = cos(a), s = sin(a); return vec3(v.x * c + v.z * s, v.y, -v.x * s + v.z * c); }
 ${BOOST_GLSL}
 void main() {
   vec3 p = position, n = normal;
@@ -47,6 +48,8 @@ void main() {
   // 乗り手の上半身と腕（脚・バイク・主人公は動かない）
   bool upper = aPart < 3.5 || (aPart > 5.5 && aPart < 6.5);
   if (upper) {
+    // 頭（と目）は首を軸に横を向く
+    if (aPose.z != 0.0 && ((aPart > 0.5 && aPart < 1.5) || (aPart > 5.5 && aPart < 6.5))) { p = aPivot + rotY(p - aPivot, aPose.z); n = rotY(n, aPose.z); }
     float a = 0.0, b = 0.0;
     if (aPart > 1.5 && aPart < 2.5) a = ${RIDER.armRide.toFixed(4)} + 0.04 * sin(uTime * 3.0 + aAnim.x);        // 左手は握りのまま
     if (aPart > 2.5 && aPart < 3.5) {                                                         // 右手: 握り → 主人公へ伸ばす
@@ -366,7 +369,7 @@ export function createEnemyView(scene, tier, { sunDir = new THREE.Vector3(0.8, 0
   const anim = new THREE.InstancedBufferAttribute(new Float32Array(CAPACITY * 4), 4);
   anim.setUsage(THREE.DynamicDrawUsage);
   geo.setAttribute('aAnim', anim);
-  const pose = new THREE.InstancedBufferAttribute(new Float32Array(CAPACITY * 2), 2);
+  const pose = new THREE.InstancedBufferAttribute(new Float32Array(CAPACITY * 3), 3);
   pose.setUsage(THREE.DynamicDrawUsage);
   geo.setAttribute('aPose', pose);
   const mat = new THREE.ShaderMaterial({ uniforms, vertexShader: FIGURE_VERT, fragmentShader: FIGURE_FRAG });
@@ -440,6 +443,8 @@ export function createEnemyView(scene, tier, { sunDir = new THREE.Vector3(0.8, 0
   const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _p = new THREE.Vector3(), _s = new THREE.Vector3(1, 1, 1), _e = new THREE.Euler();
   const closeups = new Map();
   let time = 0, heroYaw = 0;
+  // 演出の一人（最後の一発の肩越しのカット）: { id, pose }。その一人は本当の場所ではなく pose で描く（cinematic.js が決める）
+  let focus = null;
 
   return {
     group, hero, mesh, shadows, tier, // 形は画質の段では変えない（透かしの重ねだけ high のみ）
@@ -472,10 +477,7 @@ export function createEnemyView(scene, tier, { sunDir = new THREE.Vector3(0.8, 0
       uniforms.uGlow.value = glow;
       let n = 0;
       const a = anim.array, po = pose.array, sh = shadowAttr.array;
-      for (const e of enemies) {
-        if (n >= CAPACITY) break;
-        const b = bikePose(e, fronts, time);
-        if (!b) continue; // 吹き飛んで消えた
+      const place = (b, id, fade) => {
         _p.set(b.x, b.y, b.z);
         _q.setFromEuler(_e.set(b.pitch, b.yaw, b.roll, 'YXZ'));
         mesh.setMatrixAt(n, _m.compose(_p, _q, _s));
@@ -483,19 +485,28 @@ export function createEnemyView(scene, tier, { sunDir = new THREE.Vector3(0.8, 0
         const ground = groundHeight(Math.hypot(b.x, b.z), fronts);
         _p.set(b.x, ground + 0.06, b.z);
         shadows.setMatrixAt(n, _m.compose(_p, _q.setFromEuler(_e.set(0, b.yaw, 0)), _s));
-        const h = hash(e.id);
+        const h = hash(id);
         a[n * 4] = h * 6.283;
         a[n * 4 + 1] = b.reach;
-        a[n * 4 + 2] = 0.95 + 0.1 * hash(e.id + 17);
+        a[n * 4 + 2] = 0.95 + 0.1 * hash(id + 17);
         a[n * 4 + 3] = b.keep;
-        po[n * 2] = b.anchor;
-        po[n * 2 + 1] = b.thrust;
+        po[n * 3] = b.anchor;
+        po[n * 3 + 1] = b.thrust;
+        po[n * 3 + 2] = b.head ?? 0;
         sh[n * 4] = Math.max(0, b.y - ground);
         sh[n * 4 + 1] = b.anchor;
         sh[n * 4 + 2] = b.thrust;
-        sh[n * 4 + 3] = b.keep * (e.state === 'dead' ? 1 - (e.deadTime ?? 0) / BIKE.deadFling : 1);
+        sh[n * 4 + 3] = b.keep * fade;
         n++;
+      };
+      for (const e of enemies) {
+        if (n >= CAPACITY) break;
+        if (focus && e.id === focus.id) continue; // 演出の一人は下で、演出の姿勢で描く
+        const b = bikePose(e, fronts, time);
+        if (!b) continue; // 吹き飛んで消えた
+        place(b, e.id, e.state === 'dead' ? 1 - (e.deadTime ?? 0) / BIKE.deadFling : 1);
       }
+      if (focus && focus.pose.keep > 0 && n < CAPACITY) place({ anchor: 0, ...focus.pose }, focus.id ?? 0.5, 1);
       mesh.count = xray.count = shadows.count = n;
       markerGeo.setDrawRange(0, n);
       markerPos.needsUpdate = true;
@@ -506,6 +517,10 @@ export function createEnemyView(scene, tier, { sunDir = new THREE.Vector3(0.8, 0
       hero.setMatrixAt(0, _m.compose(_p, _q.setFromEuler(_e.set(0, heroYaw, 0)), _s));
       hero.instanceMatrix.needsUpdate = true;
     },
+    // 演出の一人: { id, pose: { x, y, z, yaw, pitch, roll, reach, thrust, keep, head } }（pose は毎フレーム読む）。null でやめる。
+    // id が null（軍勢がいない）でも、名もない一人を描く
+    setFocus(f) { focus = f; },
+    get focus() { return focus; },
     // 主人公の向き（y 軸まわり。0 で +z を向く）
     setHeroYaw(yaw) { heroYaw = yaw; },
     get heroYaw() { return heroYaw; },

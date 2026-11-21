@@ -97,7 +97,7 @@ async function stepped(page) {
   }
   const info = await page.evaluate(() => ({ phase: window.__game.phase, blasts: window.__game.blasts.map((b) => ({ r: +b.shot.radius.toFixed(1), front: +b.front.toFixed(1) })), tier: window.__tier }));
   console.log('released', JSON.stringify(info));
-  const plan = await page.evaluate(() => { const p = window.__cinematic?.plan; return p ? { building: p.buildingId, rider: p.riderId, cam: p.camPos.map((v) => +v.toFixed(1)), retreat: { ...p.retreat, origin: undefined }, end: +window.__cinematic.timeline.end.toFixed(2) } : null; });
+  const plan = await page.evaluate(() => { const p = window.__cinematic?.plan; if (!p) return null; const tl = window.__cinematic.timeline; return { rider: p.riderId, at: p.rider?.pos.map((v) => +v.toFixed(1)), cam: p.camPos.map((v) => +v.toFixed(1)), retreat: { ...p.retreat, origin: undefined }, beat: ['contact', 'eye', 'resume', 'engulf', 'camHit', 'snap', 'end'].map((k) => k + '=' + [].concat(tl[k]).map((v) => +v.toFixed(2)).join('-')).join(' ') }; });
   if (plan) console.log('finale plan', JSON.stringify(plan));
   if (args.perf > 0) {
     const t = await page.evaluate((n) => window.__debug.timeFrames(n), args.perf);

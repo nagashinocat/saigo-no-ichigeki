@@ -139,3 +139,43 @@ test('宇宙の半球はゆっくりふくらむ: domeAt は chaseEnd で 0・do
     expect(t90).toBeGreaterThanOrEqual(1.4);
   }
 });
+
+// 絵コンテ 2（持ち主 2026-11-21 09:40）: 軍勢の一人の肩越し。時間が戻ると、その乗り手、続いてカメラが光の壁に飲まれる
+const shoulder = (radius, riderDist = 34) => createTimeline({ radius, hitDist: riderDist - FINALE.riderGap - FINALE.crawl, riderDist, camDist: riderDist + 3.7 });
+
+test('ガラスの一拍: 一拍の間、光の壁は乗り手の riderGap m 前にあり、時間が戻る（resume = beatEnd）と加速しながら乗り手を、続いてカメラを飲む', () => {
+  for (const radius of RADII) {
+    const tl = shoulder(radius);
+    expect(tl.resume).toBe(tl.beatEnd);
+    expect(tl.riderDist - tl.front(tl.beatEnd)).toBeCloseTo(FINALE.riderGap, 3);
+    expect(tl.stage(tl.resume + 0.01)).toBe('snap');
+    // 乗り手が飲まれるのは時間が戻ってから 0.12〜0.3 秒、カメラはそのあと 0.12 秒以上（飲まれて吹き飛ぶのが見える）
+    expect(tl.engulf - tl.resume).toBeGreaterThan(0.12);
+    expect(tl.engulf - tl.resume).toBeLessThan(0.3);
+    expect(tl.front(tl.engulf)).toBeCloseTo(tl.riderDist, 3);
+    expect(tl.camHit - tl.engulf).toBeGreaterThanOrEqual(0.12);
+    expect(tl.camHit).toBeLessThan(tl.snap);
+    expect(tl.front(tl.camHit)).toBeCloseTo(tl.camDist, 3);
+    // 光の壁は戻らず、乗り手までの間は速くなり続ける（時間が一気に戻る）
+    const dt = 1 / 240, v = (t) => (tl.front(t + dt) - tl.front(t)) / dt;
+    let prev = -Infinity;
+    for (let t = tl.resume; t < tl.engulf; t += dt) { const s = v(t); expect(s).toBeGreaterThanOrEqual(prev - 1e-6); prev = s; }
+    expect(v(tl.engulf)).toBeGreaterThan(10);
+    // 追うカットへ切り替わる（snap）ときには光の壁はカメラより先
+    expect(tl.front(tl.snap)).toBeGreaterThan(tl.camDist);
+  }
+});
+
+test('目が合う一瞬は一拍の中で 0.4〜0.7 秒。心臓の鼓動のひとつが目が合う瞬間に重なり、最後の鼓動のあと時間が戻る', () => {
+  const [a, b] = FINALE.eye;
+  expect(b - a).toBeGreaterThanOrEqual(0.4);
+  expect(b - a).toBeLessThanOrEqual(0.7);
+  expect(a).toBeGreaterThan(FINALE.contact + 0.8); // ガラスが飛んでくるのを見せてから
+  expect(b).toBeLessThan(FINALE.beatEnd - 0.3);
+  expect(FINALE.beats.some((x) => x >= a && x <= a + 0.15)).toBe(true);
+  expect(Math.max(...FINALE.beats)).toBeLessThan(FINALE.beatEnd);
+});
+
+test('全体の長さは前（約 11.9 秒）から 1 秒以上は伸ばさない', () => {
+  for (const radius of RADII) expect(shoulder(radius).end).toBeLessThanOrEqual(11.88 + 1);
+});

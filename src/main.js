@@ -201,10 +201,10 @@ game.on('over', ensureHeroBody);
 const heroAura = createHeroAura(tier); // 浮いている主人公のまわりの力のゆらぎ
 cityScene.add(heroAura.group);
 
-// 最後の一発の演出（画面全体、仕様 12 章の絵コンテ 1〜5）: 白 → 軍勢の一人の体感時間（砕けた窓ガラスに映る目）→
-// 時間が戻り弾ける爆発から逃げる → 宇宙から見た光の半球と衝撃波の輪 → 横一線の光 → 無音と地鳴り（cinematic.js）
+// 最後の一発の演出（画面全体、仕様 12 章の絵コンテ 1〜5）: 白 → 軍勢の一人の肩越しのガラスの一拍（飛んでくるガラスに映った目と
+// 目が合う）→ 時間が戻りその一人が飲まれる → 弾ける爆発から逃げる → 宇宙から見た光の半球と衝撃波の輪 → 横一線の光 → 無音と地鳴り（cinematic.js）
 // 画質の段は演出を始めるたびに読む（途中で段が下がっていれば、その段の重さで演じる）
-const cinematic = createCinematic(views, enemyView, explosionView, { renderer, scene: cityScene, sunDir: style.sunDir, tier, getTier: () => tier, lights: { sun: style.lights[0], fill: style.lights[2] } });
+const cinematic = createCinematic(views, enemyView, explosionView, { renderer, scene: cityScene, sunDir: style.sunDir, tier, getTier: () => tier, lights: { sun: style.lights[0], fill: style.lights[2] }, hideBuilding: (id) => cityView.hideBuilding(id) });
 warmBoth(() => cinematic.warmup(renderer, views.cityCamera));
 
 // 時間切れの結末（仕様 12 章「時間切れの結末」）: 手の中の球がつぶれて両手が引き込まれ、画面全体で重力レンズが育ち、
@@ -236,7 +236,7 @@ game.on('cinematicStart', (shot) => {
   const buildings = game.city.buildings.filter((b) => standing.has(b.id)), crater = fronts.crater, lead = leadFor(shot.radius);
   const plan = planFinale({ shot, rng: shotRng, crater, lead, buildings, enemies: game.enemies.list, retreat: false });
   finalBlastSize = Math.sqrt(shot.radius / CONFIG.radius.max);
-  cinematic.play(plan, shot, { retreat: () => planRetreat(plan, { buildings, crater, radius: shot.radius, lead }) });
+  cinematic.play(plan, shot, { buildings, retreat: () => planRetreat(plan, { buildings, crater, radius: shot.radius, lead }) });
 });
 game.on('cinematicEnd', () => cinematic.end());
 // 演出の音の段取り

@@ -169,16 +169,16 @@ test('boom: 演出の無音の間は鳴らさず、無音が明けたら hold / 
   expect(Math.max(...srcs.map((x) => x.stopT))).toBeGreaterThan(10 + 2 + 4);
 });
 
-test('最後の一発の取り決め: 時刻表の「弾ける」から宇宙へ切り替わるまで鳴り続け、時間が戻る間に開く', async () => {
+test('最後の一発の取り決め: 時刻表の「時間が戻る」（resume）から宇宙へ切り替わるまで鳴り続け、時間が戻る間に開く', async () => {
   const { finaleBoomOpts } = await import('../../src/audio/audio.js');
   const { createTimeline, FINALE } = await import('../../src/render/finaleTimeline.js');
   const tl = createTimeline({ radius: CONFIG.radius.max, hitDist: 40 });
   const o = finaleBoomOpts(tl, FINALE.burstRamp);
-  expect(o.hold).toBeCloseTo(tl.chaseEnd - tl.snap);
+  expect(o.hold).toBeCloseTo(tl.chaseEnd - tl.resume);
   expect(o.hold).toBeGreaterThan(1);
   expect(o.open).toBe(FINALE.burstRamp);
   const r = boomRecipe(1, { ...o, rng: seeded() });
-  expect(r.roar.dur).toBeGreaterThan(tl.chaseEnd - tl.snap); // 宇宙のこもり（muffle）まで途切れない
+  expect(r.roar.dur).toBeGreaterThan(tl.chaseEnd - tl.resume); // 宇宙のこもり（muffle）まで途切れない
 });
 
 test('爆発の音のまとめの天井: knee までは素通し、その上はなめらかに ceil を超えない（重なった衝撃がリミッターをすり抜けない）', async () => {
