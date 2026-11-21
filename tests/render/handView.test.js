@@ -67,40 +67,68 @@ test('両手のモデルを渡すと、両方が場面に入り、手のひら�
   expect(sx(left)).toBeLessThan(-0.1);
   const mid = right.clone().add(left).multiplyScalar(0.5);
   expect(Math.abs(sx(center) - sx(mid))).toBeLessThan(0.05);
-  // 手のひら（甲の反対の向き）が球を向く
+  // 手のひら（甲の反対の向き）が球を向く。手首を反らすので、手のひらの向きは中手骨で測る
   for (const [side, model] of Object.entries(m)) {
-    const q = model.bones.wrist.getWorldQuaternion(new THREE.Quaternion());
+    const q = model.bones['middle-finger-metacarpal'].getWorldQuaternion(new THREE.Quaternion());
     const palmDir = new THREE.Vector3(0, -1, 0).applyQuaternion(q);
     const toOrb = center.clone().sub(view.palms[side]).normalize();
     expect(palmDir.dot(toOrb), side).toBeGreaterThan(0.8);
   }
 });
 
-test('構えでは、手のひらがほぼ垂直に立って左右から真横に球へ向き、親指が上・小指が下、目からは手の甲が少しだけ見える', () => {
-  for (const level of [0, 0.5, 0.9]) {
-    const m = hands('low');
-    const view = createHandView(m, 'low');
-    view.resize(390 / 295);
-    run(view, 1.2, level, level > 0, 1);
-    const cam = view.camera.position;
-    const p = new THREE.Vector3();
-    for (const [side, model] of Object.entries(m)) {
-      const label = `${level} ${side}`;
-      const q = model.bones.wrist.getWorldQuaternion(new THREE.Quaternion());
-      const palmDir = new THREE.Vector3(0, -1, 0).applyQuaternion(q);
-      // ほぼ真横（水平）に、内側（球の側）へ向く
-      const inward = side === 'right' ? -1 : 1;
-      expect(palmDir.x * inward, label).toBeGreaterThan(0.9);
-      expect(Math.abs(palmDir.y), label).toBeLessThan(0.35);
-      // 親指は上、小指は下
-      const y = (n) => model.bones[n].getWorldPosition(p).y;
-      expect(y('thumb-metacarpal'), label).toBeGreaterThan(y('pinky-finger-metacarpal'));
-      expect(y('index-finger-metacarpal'), label).toBeGreaterThan(y('pinky-finger-metacarpal'));
-      // 目から手の甲が少しだけ見える（手の甲が目へ少し向くが、正面ではない。指の側面が主に見える）
-      const toEye = cam.clone().sub(view.palms[side]).normalize();
-      const backDot = palmDir.clone().negate().dot(toEye);
-      expect(backDot, label).toBeGreaterThan(0.02);
-      expect(backDot, label).toBeLessThan(0.5);
+// 持ち主のスケッチ（owner-hands-sketch.jpg）: 両手が球を左右から包む。前腕は左右の下・外から低く入り、
+// 指は上へ立って球の上へ丸くかぶさり、親指は球の下で内へ伸びて先が近づく。全体で球を囲む菱形・輪になる
+const FINGER_TIPS = ['index-finger-tip', 'middle-finger-tip', 'ring-finger-tip', 'pinky-finger-tip'];
+test('構え: 手のひらは球を向き、指先は球の中心より上、親指の先は下、前腕は左右の下・外から低く入る（持ち主のスケッチ）', () => {
+  for (const [detail, aspect] of [['low', 390 / 295], ['high', 390 / 295], ['low', 1280 / 252]]) {
+    for (const level of [0, 0.5, 1]) {
+      const m = hands(detail);
+      const view = createHandView(m, detail);
+      view.resize(aspect);
+      run(view, 1.2, level, level > 0, 1);
+      const { center } = view.orbSphere;
+      const scr = (p) => p.clone().project(view.camera);
+      const c = scr(center);
+      const wp = (model, n) => model.bones[n].getWorldPosition(new THREE.Vector3());
+      const tips = {};
+      for (const [side, model] of Object.entries(m)) {
+        const label = `${detail} ${aspect.toFixed(2)} ${level} ${side}`;
+        const out = side === 'right' ? 1 : -1; // 画面の外側の向き（x）
+        // 手のひら（中手骨の -Y）が球を向く
+        const q = model.bones['middle-finger-metacarpal'].getWorldQuaternion(new THREE.Quaternion());
+        const palmDir = new THREE.Vector3(0, -1, 0).applyQuaternion(q);
+        expect(palmDir.dot(center.clone().sub(view.palms[side]).normalize()), label).toBeGreaterThan(0.8);
+        // 指先は球の中心より上（場面でも画面でも）、指先は手のひらより内側（球の上へかぶさる）
+        for (const n of FINGER_TIPS) {
+          const p = wp(model, n);
+          expect(p.y, `${label} ${n}`).toBeGreaterThan(center.y);
+          expect(scr(p).y, `${label} ${n}`).toBeGreaterThan(c.y);
+          expect((scr(p).x - scr(view.palms[side]).x) * out, `${label} ${n}`).toBeLessThan(0);
+        }
+        // 親指の先は球の中心より下で、付け根より内側（球の下で内へ伸びる）
+        const tt = wp(model, 'thumb-tip'), tb = wp(model, 'thumb-metacarpal');
+        expect(tt.y, `${label} thumb`).toBeLessThan(center.y);
+        expect(scr(tt).y, `${label} thumb`).toBeLessThan(c.y);
+        expect((scr(tt).x - scr(tb).x) * out, `${label} thumb`).toBeLessThan(0);
+        // 前腕は手首から左右の外・下へ、低く（水平から 45° より寝て）伸びる
+        const w = scr(wp(model, 'wrist'));
+        const arm = scr(new THREE.Vector3(0, 0, 0.12).applyMatrix4(model.bones.wrist.matrixWorld));
+        const dx = (arm.x - w.x) * out * aspect, dy = arm.y - w.y; // 画面の縦横の比をそろえる
+        expect(dx, `${label} forearm outward`).toBeGreaterThan(0);
+        expect(dy, `${label} forearm downward`).toBeLessThan(0);
+        expect(Math.abs(dy), `${label} forearm flat`).toBeLessThan(dx);
+        tips[side] = { fingers: FINGER_TIPS.map((n) => wp(model, n)), thumb: tt };
+      }
+      // 左右の指先は球の上で近づくが触れない。親指の先も球の下で近づく
+      const gap = palmGap(view);
+      let fingerGap = Infinity;
+      for (const a of tips.right.fingers) for (const b of tips.left.fingers) fingerGap = Math.min(fingerGap, a.distanceTo(b));
+      const label = `${detail} ${aspect.toFixed(2)} ${level}`;
+      expect(fingerGap, label).toBeGreaterThan(0.08);
+      expect(fingerGap, label).toBeLessThan(gap * 0.6);
+      const thumbGap = tips.right.thumb.distanceTo(tips.left.thumb);
+      expect(thumbGap, label).toBeGreaterThan(0.08);
+      expect(thumbGap, label).toBeLessThan(gap * 0.75);
     }
   }
 });
@@ -155,18 +183,35 @@ test('貯めるほど両手の間が少し広がる', () => {
   expect(g9).toBeLessThan(g0 * 2);
 });
 
-test('release の約0.25秒後、左右の手のひらの中心の距離が構えのときの 1/3 未満', () => {
+test('release の約0.25秒後、両手が寄って輪を閉じる: 指先どうし・親指の先どうしが合わさり、手のひらの間は構えより狭い', () => {
+  const tipGaps = (view, m) => {
+    const wp = (s, n) => m[s].bones[n].getWorldPosition(new THREE.Vector3());
+    let fingers = Infinity;
+    for (const a of FINGER_TIPS) for (const b of FINGER_TIPS) fingers = Math.min(fingers, wp('right', a).distanceTo(wp('left', b)));
+    return { fingers, thumbs: wp('right', 'thumb-tip').distanceTo(wp('left', 'thumb-tip')) };
+  };
   for (const isBig of [true, false]) {
-    const view = createHandView(hands('low'), 'low');
+    const m = hands('low');
+    const view = createHandView(m, 'low');
     run(view, 1, 0.9, true, 0.6);
-    const stance = palmGap(view);
+    const stance = palmGap(view), open = tipGaps(view, m);
     view.release({ amount: isBig ? CONFIG.power.max : 10, isBig });
     run(view, 0.1, 0, false, 0.6);
     // 0.1 秒ではまだ寄っている途中
+    const mid = tipGaps(view, m);
     expect(palmGap(view)).toBeLessThan(stance);
-    expect(palmGap(view)).toBeGreaterThan(stance / 3);
+    expect(mid.fingers).toBeLessThan(open.fingers);
+    expect(mid.fingers).toBeGreaterThan(0.2);
     run(view, 0.15, 0, false, 0.6);
-    expect(palmGap(view), isBig ? 'big' : 'small').toBeLessThan(stance / 3);
+    const label = isBig ? 'big' : 'small', shut = tipGaps(view, m);
+    expect(palmGap(view), label).toBeLessThan(stance * 0.7);
+    expect(shut.fingers, label).toBeLessThan(0.2);
+    expect(shut.thumbs, label).toBeLessThan(0.2);
+    // 球は閉じた輪の中（指先より下、親指の先より上）
+    const { center } = view.orbSphere;
+    const y = (s, n) => m[s].bones[n].getWorldPosition(new THREE.Vector3()).y;
+    expect(y('right', 'middle-finger-tip'), label).toBeGreaterThan(center.y);
+    expect(y('right', 'thumb-tip'), label).toBeLessThan(center.y);
     expect(view.joined).toBeCloseTo(1, 2);
   }
 });

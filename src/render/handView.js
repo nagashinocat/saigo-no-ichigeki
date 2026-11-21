@@ -2,32 +2,34 @@ import * as THREE from 'three';
 import { CONFIG } from '../config.js';
 import { NOISE_GLSL } from './glslNoise.js';
 import { TOON_RAMP, TOON_LIGHTS } from './style.js';
-import { poseFor, HAND_JOINTS, CLASP_POSE, TREMOR_FROM } from './handPose.js';
+import { poseFor, HAND_JOINTS, JOIN_POSE, TREMOR_FROM } from './handPose.js';
 
 // 手の画面: 主人公自身の目から見た両手（handModel.js で組み立てた右手と、それを鏡に映した左手）と、その間に浮かぶ力の球。
-// 両手は向かい合わせで、手のひらを球に向ける。貯めるほど指を開いてこわばらせ、両手の間も少し広がる。
-// 放つと両手が中央へ寄って手のひらを合わせ、指を互い違いに組む。組み合わさった瞬間に光が弾ける。
+// 両手は球を左右から包む（持ち主のスケッチ）: 前腕は左右の下・外から低く入り、手首を反らして手を立て、
+// 指は球の上へ丸くかぶさり、親指は球の下で内へ伸びる。両手で球を囲む輪になる。貯めるほど指がこわばり、両手の間も少し広がる。
+// 放つと両手が寄って輪を閉じ（指先どうし・親指どうしが合わさる）、閉じた瞬間に光が弾ける。
 // 光は球が主役（球の色の点光源）で、夕暮れの淡い縁の光と、手の形を見せる光を足す。肌には街と同じ暗い紫の輪郭線。
 // 背景は暗いグラデーション。
 // 球は爆発（explosionView.js）と同じ力: 白い芯 → 淡い金 → 琥珀、縁だけ冷たい青紫〜水色。
 
 const HAND_SCALE = 10;           // 手のモデル（メートル。手首から中指の先まで約 20cm）を、この場面の単位で約 2 にする
 const ORB_R = [0.13, 0.4];       // level 0 と 1 の球の半径
-const PALM_D = [1.0, 1.5];     // 球の中心から各手のひらの中心まで（貯めるほど両手の間が広がる）
+const PALM_D = [1.15, 1.5];     // 球の中心から各手のひらの中心まで（貯めるほど両手の間が広がる）
 const ORB_C = new THREE.Vector3(0, 0, 0);
-// 構え（右手で書く。左手は x を鏡に映す）: 手のひらから球への向きと、指先の向き。
-// 手のひらはほぼ垂直に立て、左右から真横に球へ向ける（親指が上、小指が下）。わずかに下・奥へ傾けて、
-// 見下ろす目から手の甲の側が少しだけ見え、指の側面がはっきり見えるようにする。指先は前（少し上）で、前腕は画面の下から入る
-const STANCE_N = new THREE.Vector3(-1, -0.3, -0.3);
-const STANCE_F = new THREE.Vector3(-0.2, 0.15, -1);
-// 組み合わさった形: 手のひらをまっすぐ向かい合わせ、指先は前へ（少し上）。右手の手のひらの中心の位置（少し手前へ引き寄せる）。
-// 指を互い違いに組むため、両手を親指〜小指の向きへ指の間隔の半分だけずらす（右手は小指の側へ、左手も自分の小指の側へ）
-const JOIN_N = new THREE.Vector3(-1, 0, 0);
-const JOIN_F = new THREE.Vector3(0, 0.25, -1);
-const JOIN_AT = new THREE.Vector3(0.06, -0.3, 0.45);
+// 構え（右手で書く。左手は x を鏡に映す）: 手のひらから球への向き（STANCE_N）と、手のひらの指先の向き（STANCE_F）。
+// 手のひらは球へ向け、少し下へ傾ける。指先は上（少し奥）で、球の側へ 20° ほど倒す。親指の側は目の側（画面の下）に来る。
+// 前腕の向きは手首の反らし（handPose の wrist）で決まり、球の左右の下・外から低く入る。
+// 手のひらの中心は球の中心から STANCE_N の逆へ D、さらに STANCE_LIFT だけずらす（指が球の上、親指が球の下に来る高さ）
+const STANCE_N = new THREE.Vector3(-1, -0.45, 0);
+const STANCE_F = new THREE.Vector3(-0.35, 1, -0.3);
+const STANCE_LIFT = new THREE.Vector3(0, -0.3, 0);
+// 閉じた形: 構えのまま両手が寄り、指先どうし・親指どうしが合わさって球を閉じ込める輪になる。
+// 向きは構えから少しだけ内へ倒す。手のひらの中心は球の中心から JOIN_D（構えと同じ高さ）
+const JOIN_N = new THREE.Vector3(-1, -0.5, 0);
+const JOIN_F = new THREE.Vector3(-0.45, 1, -0.3);
+const JOIN_D = 0.85;
 const HALO_BACK = 1.0;           // 組み合わさったとき、光の板を手の向こうへ下げる距離
 const LIGHT_OUT = new THREE.Vector3(0, 0.5, 0.6); // 組み合わさったときの光源の逃がし先
-const JOIN_STAGGER = 0.0053 * HAND_SCALE; // 手の空間の X（小指の側）へ。指の間隔（約 2.1cm）の 1/4 ずつ、合わせて半分
 // 目の位置と見る所。手のひらを真横に向けても手の甲の側が目へ向くよう、目は少し高く・後ろに置く
 const EYE = new THREE.Vector3(0, 3.0, 3.9);
 const LOOK = new THREE.Vector3(0, 0.2, 0);
@@ -278,10 +280,11 @@ export function createHandView(models, tierName) {
     }
     rig.position.copy(palmLocal).multiplyScalar(-HAND_SCALE); // 手のひらの中心を holder の原点へ
     return {
-      side, mirror, model, holder,
+      side, mirror, model, holder, rig, palmLocal,
       n: STANCE_N.clone().setX(STANCE_N.x * mirror).normalize(),
+      lift: STANCE_LIFT.clone().setX(STANCE_LIFT.x * mirror),
       qStance: handQuat(STANCE_N, STANCE_F, mirror), qJoin: handQuat(JOIN_N, JOIN_F, mirror),
-      joinAt: JOIN_AT.clone().setX(JOIN_AT.x * mirror).add(new THREE.Vector3(JOIN_STAGGER, 0, 0).applyQuaternion(handQuat(JOIN_N, JOIN_F, mirror))),
+      joinAt: ORB_C.clone().addScaledVector(JOIN_N.clone().setX(JOIN_N.x * mirror).normalize(), -JOIN_D).add(STANCE_LIFT),
       phase: mirror > 0 ? 0 : 2.3, // 震えを左右でそろえない
       trem: new THREE.Vector3(), pose: {},
     };
@@ -408,19 +411,24 @@ export function createHandView(models, tierName) {
           trem * 0.6 * Math.sin(k * 1.3 + 2.1),
         );
         // 構えの位置（球の中心から手のひらの向きの逆へ D）と、合わせた位置の間
-        _c.copy(ORB_C).addScaledVector(h.n, -D).lerp(h.joinAt, joined).add(h.trem);
+        _c.copy(ORB_C).addScaledVector(h.n, -D).add(h.lift).lerp(h.joinAt, joined).add(h.trem);
         _c.x += h.mirror * recoil; // 合わさった反動で、わずかに弾かれる
         // 引き込まれる: 球（黒い球）のほうへ寄りながら、渦の向きへねじれる
         if (collapse > 0) _c.lerp(ORB_C, 0.5 * pull);
         h.holder.position.copy(_c);
         _mid.addScaledVector(h.trem, 0.5);
+        // 手のひらの向き（構え → 組み合わさった形）
         h.holder.quaternion.slerpQuaternions(h.qStance, h.qJoin, joined)
           .multiply(_q.setFromEuler(_e.set(trem * 0.5 * Math.sin(k * 0.9 + 0.3), pull * 0.5 * h.mirror, trem * 0.5 * Math.sin(k * 1.1 + 1.3) + pull * 0.35)));
         if (h.model) {
           // 寄っていく間は、放った瞬間のこわばった指のまま組む形へ移る（いったん力の抜けた手に戻らない）
           // 引き込まれる間は、指をこわばらせて開いたまま（あらがう手）
           const base = poseFor(Math.max(collapse, rel ? Math.max(lvl, rel.lvl * (1 - squeeze)) : lvl), clock + h.phase);
-          h.model.setPose(joined > 0 ? blendPose(base, CLASP_POSE, joined, h.pose) : base);
+          h.model.setPose(joined > 0 ? blendPose(base, JOIN_POSE, joined, h.pose) : base);
+          // 手首の曲げ: 手のひらは上の向きのまま、前腕（模型の全体）を曲げの逆へ回す。手のひらの中心は holder の原点のまま
+          const bend = h.model.wristBend;
+          h.holder.quaternion.multiply(_q.copy(bend).invert());
+          h.model.bendPoint(h.palmLocal, h.rig.position).multiplyScalar(-HAND_SCALE);
         }
       }
 

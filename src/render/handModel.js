@@ -12,12 +12,26 @@ import { surfaceNets } from './surfaceNets.js';
 // 形は力の抜けた、指を少し開いた右手（handPose の open がこれに少し丸みを足す）。
 
 const DETAIL = {
-  high: { cell: 0.0035, tendons: true },
-  low: { cell: 0.0055, tendons: false },
+  high: { cell: 0.0035, tendons: true, armSeg: 20 },
+  low: { cell: 0.0055, tendons: false, armSeg: 14 },
 };
 
-const ARM_LEN = 0.17;     // 手首から先に伸ばす前腕の長さ（画面の外まで）
-const WRIST_BLEND = [-0.05, -0.008]; // この z の間で、肌の重みを手のひらの骨から手首の骨へ移す（手首の関節は z = 0）
+// 前腕: 手首から ARM_SDF までは距離の場で作り、その先は単純な楕円の筒（頂点が少ない）を ARM_END まで足す。
+// 前腕を左右の外から低く入れるので、横長の画面でも腕の先が見えない長さにする
+const ARM_SDF = 0.12;
+const ARM_END = 0.42;
+// 前腕の太さ（中心からの半径）と、甲と手のひらの向きの平たさ: z ごとに [z, 半径, 平たさ]
+const ARM_PROFILE = [[0.035, 0.0268, 0.76], [0.17, 0.034, 0.82], [ARM_END, 0.037, 0.84]];
+const armAt = (z) => {
+  const P = ARM_PROFILE;
+  let i = 0;
+  while (i < P.length - 2 && z > P[i + 1][0]) i++;
+  const t = Math.min(1, Math.max(0, (z - P[i][0]) / (P[i + 1][0] - P[i][0])));
+  return [P[i][1] + (P[i + 1][1] - P[i][1]) * t, P[i][2] + (P[i + 1][2] - P[i][2]) * t];
+};
+const WRIST_BLEND = [-0.06, -0.008]; // この z の間で、肌の重みを手のひらの骨から手首の骨へ移す（手首の関節は z = 0）
+// 手首を曲げるときの軸の通る点。手の甲の面の近くに置き、甲の側へ反らしても甲の肌が折り重ならない（手のひらの側がなだらかに伸びる）
+const WRIST_PIVOT = new THREE.Vector3(0, 0.02, -0.04);
 const v3 = (x, y, z) => new THREE.Vector3(x, y, z);
 const DEG = Math.PI / 180;
 
@@ -30,13 +44,15 @@ const FINGERS = {
   pinky: { cmc: v3(0.019, 0.0, -0.021), mcp: v3(0.0305, -0.004, -0.085), fan: -18, len: [0.036, 0.022, 0.02], r: [0.0092, 0.0084, 0.0075, 0.0065] },
 };
 const PARTS = ['metacarpal', 'phalanx-proximal', 'phalanx-intermediate', 'phalanx-distal', 'tip'];
-// 親指: 付け根、各骨の向き、長さ、半径（付け根・MCP・IP・指先）。甲の向きは手のひらから外へ大きくひねる
+// 親指: 付け根、各骨の向き、長さ、半径（付け根・MCP・IP・指先）。甲の向きは手のひらから外へ大きくひねる。
+// 球を包む構えでは親指を手のひらの側へ大きく開くので、休みの形でも半分以上開いておく（構えで回す角度が小さく、
+// 親指の付け根のふくらみが手首の近くで折れない）
 const THUMB = {
   cmc: v3(-0.019, -0.007, -0.02),
-  dirs: [v3(-0.6, -0.26, -0.76), v3(-0.46, -0.22, -0.86), v3(-0.36, -0.2, -0.91)],
+  dirs: [v3(-0.639, -0.584, -0.501), v3(-0.611, -0.758, -0.229), v3(-0.527, -0.797, -0.295)],
   len: [0.047, 0.033, 0.027],
   r: [0.0125, 0.0108, 0.0098, 0.0082],
-  roll: -62, // 親指の甲（爪の側）を、手の甲の向きから親指の軸まわりにこれだけ回す
+  roll: [-32, -16, -21], // 骨ごとに、親指の甲（爪の側）を手の甲の向きから親指の軸まわりにこれだけ回す
 };
 
 // ---- 距離の場の部品（どれも手の空間の点 → おおよその距離。負が内側） ----
@@ -129,8 +145,8 @@ function layout(opt) {
     const dirs = s.dirs.map((d) => d.clone().normalize());
     const ups = dirs.map((d) => {
       const u = up0.clone().addScaledVector(d, -up0.dot(d)).normalize();
-      return u.applyAxisAngle(d, s.roll * DEG);
-    });
+      return u;
+    }).map((u, i) => u.applyAxisAngle(dirs[i], s.roll[i] * DEG));
     const pts = [s.cmc];
     for (let i = 0; i < 3; i++) pts.push(pts[i].clone().addScaledVector(dirs[i], s.len[i]));
     const names = ['thumb-metacarpal', 'thumb-phalanx-proximal', 'thumb-phalanx-distal', 'thumb-tip'];
@@ -149,7 +165,10 @@ function layout(opt) {
 
   // 手首から前腕へ: 楕円の断面で細くなり、また太くなって画面の外へ
   parts.push({ bone: 'wrist', group: 'arm', d: capsule(v3(0, -0.0045, -0.014), v3(0, -0.003, 0.035), 0.028, 0.0268, up0, [0.76, 0.76]) });
-  parts.push({ bone: 'wrist', group: 'arm', d: capsule(v3(0, -0.003, 0.035), v3(0, 0.0, ARM_LEN), 0.0268, 0.034, up0, [0.76, 0.82]) });
+  {
+    const [ra, fa] = armAt(0.035), [rb, fb] = armAt(ARM_SDF);
+    parts.push({ bone: 'wrist', group: 'arm', d: capsule(v3(0, -0.003, 0.035), v3(0, 0.0, ARM_SDF), ra, rb, up0, [fa, fb]) });
+  }
   // 手首の手のひらの側: 手のひらの付け根のふくらみから前腕へ、くびれずになだらかに下りる
   parts.push({ bone: 'wrist', group: 'arm', d: capsule(v3(0.001, -0.012, -0.03), v3(0, -0.01, 0.045), 0.02, 0.019, up0, 0.74) });
 
@@ -222,8 +241,8 @@ function buildRight(opt) {
 
   // ---- 面を作る ----
   // 指の所は細かく、平たい手のひらと、まっすぐな前腕の向き（z）は粗く
-  const xs = axis(-0.088, [[0.064, h]]), ys = axis(-0.043, [[0.033, h]]);
-  const zs = axis(-0.215, [[-0.085, h], [-0.03, h * 1.45], [0.03, h * 1.6], [ARM_LEN + 0.045, 0.03]]);
+  const xs = axis(-0.1, [[0.064, h]]), ys = axis(-0.088, [[0.033, h]]);
+  const zs = axis(-0.215, [[-0.085, h], [-0.03, h * 1.45], [0.03, h * 1.6], [ARM_SDF + 0.045, 0.03]]);
   const { positions, indices } = surfaceNets(field, xs, ys, zs);
   const nv = positions.length / 3;
   // 場の傾き（四面体の 4 点で）。返すのは正規化した向き
@@ -342,11 +361,42 @@ function buildRight(opt) {
     }
   }
 
+  // ---- 前腕の先: 距離の場の前腕の端（ARM_SDF）から、楕円の筒を ARM_END まで。端は閉じる ----
+  // 筒は前腕の距離の場の端の丸みを覆い、手首の骨だけに付く（前腕は手首の骨と一緒に動く）
+  const tubePos = [], tubeNrm = [], tubeIdx = [];
+  {
+    const base = nv + nailPos.length / 3, seg = opt.armSeg;
+    const rings = [ARM_SDF, 0.17, 0.3, ARM_END];
+    for (const z of rings) {
+      const [r, f] = armAt(z); // 中心は距離の場の前腕の端と同じ y = 0
+      for (let k = 0; k < seg; k++) {
+        const a = (k / seg) * Math.PI * 2, c = Math.cos(a), sn = Math.sin(a);
+        tubePos.push(r * c, r * f * sn, z);
+        const n = v3(c * f, sn, 0).normalize(); // 楕円の法線
+        tubeNrm.push(n.x, n.y, n.z);
+      }
+    }
+    for (let i = 0; i < rings.length - 1; i++) for (let k = 0; k < seg; k++) {
+      const a = base + i * seg + k, b = base + i * seg + (k + 1) % seg, c = a + seg, d = b + seg;
+      tubeIdx.push(a, b, d, a, d, c);
+    }
+    // 先の蓋（画面の外）
+    const cap = base + rings.length * seg, last = base + (rings.length - 1) * seg;
+    tubePos.push(0, 0, ARM_END + 0.01); tubeNrm.push(0, 0, 1);
+    for (let k = 0; k < seg; k++) tubeIdx.push(last + k, last + (k + 1) % seg, cap);
+    // 外向きの巻きにそろえる（面の向きが頂点の法線と逆なら逆に）
+    const P = (k) => v3(...tubePos.slice((k - base) * 3, (k - base) * 3 + 3)), N = (k) => v3(...tubeNrm.slice((k - base) * 3, (k - base) * 3 + 3));
+    for (let t = 0; t < tubeIdx.length; t += 3) {
+      const A = P(tubeIdx[t]), fn = P(tubeIdx[t + 1]).sub(A).cross(P(tubeIdx[t + 2]).sub(A));
+      if (fn.dot(N(tubeIdx[t]).add(N(tubeIdx[t + 1])).add(N(tubeIdx[t + 2]))) < 0) { const k = tubeIdx[t + 1]; tubeIdx[t + 1] = tubeIdx[t + 2]; tubeIdx[t + 2] = k; }
+    }
+  }
+
   // ---- まとめて、重みと色 ----
-  const total = nv + nailPos.length / 3;
+  const nNail = nailPos.length / 3, total = nv + nNail + tubePos.length / 3;
   const pos = new Float32Array(total * 3), nrm = new Float32Array(total * 3), col = new Float32Array(total * 3);
-  pos.set(positions); pos.set(nailPos, nv * 3);
-  nrm.set(normals); nrm.set(nailNrm, nv * 3);
+  pos.set(positions); pos.set(nailPos, nv * 3); pos.set(tubePos, (nv + nNail) * 3);
+  nrm.set(normals); nrm.set(nailNrm, nv * 3); nrm.set(tubeNrm, (nv + nNail) * 3);
   const skinIndex = new Uint16Array(total * 4), skinWeight = new Float32Array(total * 4);
   const boneIdx = Object.fromEntries(HAND_JOINTS.map((n, i) => [n, i]));
   const byBone = new Map();
@@ -362,7 +412,9 @@ function buildRight(opt) {
     const x = pos[i * 3], y = pos[i * 3 + 1], z = pos[i * 3 + 2];
     // 最も近い 2 本の骨（その骨の部品の面までの距離）
     let b1 = -1, d1 = Infinity, b2 = -1, d2 = Infinity;
+    const s = smooth(WRIST_BLEND[0], WRIST_BLEND[1], z);
     for (let k = 0; k < boneList.length; k++) {
+      if (k === wristK) continue; // 手首の骨（前腕）の重みは下で z から決める
       let d = Infinity;
       for (const fn of byBone.get(boneList[k])) {
         if (len3(x - fn.cx, y - fn.cy, z - fn.cz) - fn.r >= Math.min(d, d2)) continue; // 届かない部品は省く
@@ -373,19 +425,13 @@ function buildRight(opt) {
     // 指の関節は境目をくっきり（曲げると角が立つ）、手のひらと手首の間はなだらかに
     const k = phalanx[b1] && phalanx[b2] ? K : K_PALM;
     let w1 = 1 / (Math.max(d1, 0) + k) ** 4, w2 = 1 / (Math.max(d2, 0) + k) ** 4;
-    // 手首の切れ目を出さない: 手のひらの付け根から手首へ、手首の骨（前腕）の重みをなめらかに増やす。
-    // 中手骨は手首の少し先を軸に回るので、それより腕側の肌が中手骨（とくに母指球）について行くと、手首に折れ目ができる
-    const s = smooth(WRIST_BLEND[0], WRIST_BLEND[1], z);
-    if (s > 0) {
-      let dw = Infinity;
-      for (const fn of byBone.get('wrist')) dw = Math.min(dw, fn(x, y, z));
-      const ww = (1 / (Math.max(dw, 0) + K_PALM) ** 4) * (1 + 300 * s * s);
-      // 重みの大きい 2 本を使う（手首が 3 番目なら、ほかの骨と同じく、重みで上回ったときに軽いほうと入れ替える）
-      if (b1 === wristK) w1 = ww; else if (b2 === wristK) w2 = ww;
-      else if (ww > Math.min(w1, w2)) { if (w1 >= w2) { b2 = wristK; w2 = ww; } else { b1 = wristK; w1 = ww; } }
-    }
+    // 手首の切れ目を出さない: 手首の骨（前腕）の重みは z だけで決め、手首の関節を横切る帯で手の骨からなめらかに移す。
+    // 手首の骨は 2 本の枠を取り合わず 3 本目の枠に入れる。面までの距離の比で決めたり枠を入れ替えたりすると、
+    // 手のひらと母指球の間の溝で隣どうしの重みが跳び、手首を反らしたときにそこが折れる
+    const hand = 1 - s;
     skinIndex[i * 4] = boneIdx[boneList[b1]]; skinIndex[i * 4 + 1] = boneIdx[boneList[b2]];
-    skinWeight[i * 4] = w1 / (w1 + w2); skinWeight[i * 4 + 1] = 1 - skinWeight[i * 4];
+    skinWeight[i * 4] = (w1 / (w1 + w2)) * hand; skinWeight[i * 4 + 1] = (w2 / (w1 + w2)) * hand;
+    if (s > 0) { skinIndex[i * 4 + 2] = boneIdx.wrist; skinWeight[i * 4 + 2] = s; }
     // 肌の色むら: 指先と関節の甲は少し赤く、手のひらは少し明るい
     const p = _p.set(x, y, z);
     let red = 0;
@@ -398,18 +444,21 @@ function buildRight(opt) {
     col[i * 3 + 2] = SKIN[2] * (1 - 0.12 * red + 0.02 * palmSide);
   }
   for (let i = nv; i < total; i++) {
-    skinIndex[i * 4] = boneIdx[nailBone[i - nv]]; skinIndex[i * 4 + 1] = skinIndex[i * 4];
+    // 爪は末節の骨、前腕の筒は手首の骨だけに付く
+    skinIndex[i * 4] = i < nv + nNail ? boneIdx[nailBone[i - nv]] : boneIdx.wrist; skinIndex[i * 4 + 1] = skinIndex[i * 4];
     skinWeight[i * 4] = 1;
     col.set(SKIN, i * 3); // 爪の色は爪の材質で
   }
 
-  const allIdx = new Uint32Array(indices.length + nailIdx.length);
-  allIdx.set(indices); allIdx.set(nailIdx, indices.length);
+  // 三角形: 肌（距離の場の面と前腕の筒）、爪の順
+  const skinCount = indices.length + tubeIdx.length;
+  const allIdx = new Uint32Array(skinCount + nailIdx.length);
+  allIdx.set(indices); allIdx.set(tubeIdx, indices.length); allIdx.set(nailIdx, skinCount);
   return {
     attrs: { position: pos, normal: nrm, color: col, skinIndex, skinWeight },
     index: total > 65535 ? allIdx : new Uint16Array(allIdx),
     // 描き分けのまとまり: 0 が肌、1 が爪（輪郭線は肌だけに付ける）
-    groups: [[0, indices.length, 0], [indices.length, nailIdx.length, 1]],
+    groups: [[0, skinCount, 0], [skinCount, nailIdx.length, 1]],
     joints,
   };
 }
@@ -485,15 +534,29 @@ export function buildHandModel({ detail = 'high', side = 'right' } = {}) {
   root.updateMatrixWorld(true);
   mesh.bind(new THREE.Skeleton(HAND_JOINTS.map((n) => bones[n])));
 
-  // 構え: 骨ごとに、休みの向きへ構えの回転を重ねる。左手は鏡に映した骨なので、開き（ry）とひねり（rz）の符号を逆にする
+  // 構え: 骨ごとに、休みの向きへ構えの回転を重ねる。左手は鏡に映した骨なので、開き（ry）とひねり（rz）の符号を逆にする。
+  // 手首（wrist）の構えは「前腕に対する手の曲げ」: 手首の骨（前腕）は動かさず、手首の子（中手骨）を手首の関節のまわりに
+  // まとめて回す。rx が正で手のひらの側、負で手の甲の側へ反らす。前腕の肌は動かず、手首の重みの移りでなめらかに曲がる
   const rest = HAND_JOINTS.map((n) => bones[n].quaternion.clone());
+  const restPos = HAND_JOINTS.map((n) => bones[n].position.clone());
   const sign = s === 'left' ? -1 : 1, e = new THREE.Euler(0, 0, 0, 'YXZ'), q = new THREE.Quaternion();
+  // 今の手首の曲げ（手の空間）。手の画面が手のひらの向きから前腕の向きを決めるのに使う
+  const wristBend = new THREE.Quaternion();
+  const pivot = WRIST_PIVOT.clone().setX(WRIST_PIVOT.x * sign);
+  const bendOf = (r, out = new THREE.Quaternion()) => out.setFromEuler(e.set(-r[0], sign * r[1], sign * r[2]));
+  // 手の空間の点を、今の手首の曲げで動かす（手の画面が手のひらの中心を求めるのに使う）
+  const bendPoint = (p, out = new THREE.Vector3()) => out.copy(p).sub(pivot).applyQuaternion(wristBend).add(pivot);
   function setPose(pose) {
+    bendOf(pose.wrist ?? [0, 0, 0], wristBend);
     HAND_JOINTS.forEach((n, i) => {
-      const r = pose[n];
-      e.set(-r[0], sign * r[1], sign * r[2]);
-      bones[n].quaternion.copy(rest[i]).multiply(q.setFromEuler(e));
+      if (n === 'wrist') return;
+      const r = pose[n], b = bones[n];
+      b.quaternion.copy(rest[i]).multiply(bendOf(r, q));
+      if (b.parent === bones.wrist) {
+        bendPoint(restPos[i], b.position);
+        b.quaternion.premultiply(wristBend);
+      }
     });
   }
-  return { root, mesh, bones, side: s, setPose };
+  return { root, mesh, bones, side: s, setPose, wristBend, bendPoint };
 }
