@@ -59,12 +59,12 @@ export function chaseHoldDist(fCut, aspect, fovV, H = CHASE_HOLD) {
   return Math.max(fCut * (1 + H.gap) + H.add, fCut / Math.sin(H.fit * half));
 }
 // 引いたとき（wide）の、前線からの先の距離: add + k·front（前は 24 + 1.25·front）
-export const CHASE_WIDE = { add: 30, k: 1.7, rise: 0.2 }; // rise: 引ききったときの高さ（爆心からの距離に対する割合）
+export const CHASE_WIDE = { add: 30, k: 1.7, rise: 0.2, sec: 1.45 }; // rise: 引ききったときの高さ（爆心からの距離に対する割合）
 
 // 画面の縦横比ごとのレンズ（縦の画角、度）。縦長の画面は横が狭いので広め
 export const LENS = {
   // 2: 遠くの軍勢の後ろ。始めは少し長いレンズで地平の爆心を大きく、光の壁が迫るにつれて広がる
-  beat: { portrait: [30, 62], landscape: [22, 44] },
+  beat: { portrait: [20, 42], landscape: [14, 30] },
   chase: { portrait: 78, landscape: 56 },      // 3: 追われて引く
   chaseWide: { portrait: 8, landscape: 0 },    // 3: 引ききったときに足す画角（縦長は横が狭いので広げる）
 };
@@ -104,10 +104,29 @@ export function spaceSparkTime(tl, dist, radius, dome0 = DOME0) {
 const SPACE_FOV = { h: 54, v: 36 };
 // カメラのそばのビル（水平にこの距離 m 以内）は、光の壁が触れた瞬間に隠す（球の面へ半分だけ押されて引き伸ばされた壁が
 // レンズの前を横切らない。光の壁の面がその場所をおおう）。遠くのビルは今までどおり飲まれてつぶれていくのを見せる
-export const VEIL_NEAR = 120;
+export const VEIL_NEAR = 80;
+export const VEIL_K = 2.5;
+export const OCCLUDE = 1.6; // finalePlan の PLAN.open.occlude と同じ
+// 線分 a→c（THREE.Vector3）がビルの箱（地面から b.h）を通るか
+const _sb = new THREE.Box3(), _sr = new THREE.Ray(), _sv = new THREE.Vector3();
+function segBox(a, c, b) {
+  _sb.min.set(b.x - b.w / 2, -1, b.z - b.d / 2); _sb.max.set(b.x + b.w / 2, b.h, b.z + b.d / 2);
+  _sr.origin.copy(a); _sr.direction.copy(c).sub(a);
+  const L = _sr.direction.length(); _sr.direction.multiplyScalar(1 / L);
+  const hit = _sr.intersectBox(_sb, _sv);
+  return !!hit && hit.distanceTo(a) <= L;
+}
+export const VEIL_ADD = 60;
 // 光の壁がカメラのこの距離（m。カメラの爆心からの距離の 8% まで）手前に来たところから白へ（球の面へ押されたビルが板になって
 // レンズの前を横切る前に）
-export const WHITE_AHEAD = 28;
+export const WHITE_AHEAD = 9;
+// 弾けてから画角が広がるまで（秒）と、弾けたあとに下げる露出
+export const BEAT_WIDEN = 0.25;
+export const BEAT_RACE_DARK = 0.25;
+// 弾けたら見る向きを乗り手の列の真ん中の方へこの割合だけ寄せる
+export const BEAT_LOOK_RIDERS = 0.75;
+// 軍勢の後ろのカットの間の、爆発の球の白い芯の強さの倍率
+export const BLAST_CORE_SCALE = 0.3;
 // 軍勢の後ろのカットの間の、爆心の光の強さの上限（弾けたあとは光の届く距離が街の広くへ伸びるので、強さはじわじわ期の光（およそ 30）より下に抑える）
 export const BLAST_LIGHT_CAP = 5;
 export const BLAST_BIRTH_SCALE = 0.2;
@@ -116,7 +135,7 @@ export const BLAST_BIRTH_SCALE = 0.2;
 // opts.renderer: 宇宙の場面の温め、opts.scene: 街の場面、opts.tier: 画質の段
 // opts.lights: { sun, fill }（街の光。遠くの爆発の光が際立つよう、軍勢の後ろのカットの間は少し弱める）
 // opts.getTier: 今の画質の段（演出を始めるたびに読み、雲の細かさ・星の数を合わせる）
-// opts.veilBuilding(id, on): 軍勢の後ろのカットの間だけ、カメラのそば（VEIL_NEAR 以内）のビルを光の壁が触れたら一時的に隠す。
+// opts.veilBuilding(id, on): 軍勢の後ろのカットの間だけ、光の壁が触れたビルのうちカメラのそば・画面の中の近いものを一時的に隠す（veilTouched）。
 // 追うカットへ切り替わると戻す（そこから先は今までどおり、光の壁に飲まれてつぶれていく）
 export function createCinematic(views, enemyView, explosionView, { renderer, scene, sunDir, tier = 'high', getTier = () => tier, cfg = CONFIG, lights = null, veilBuilding = null } = {}) {
   const listeners = {};
@@ -133,19 +152,37 @@ export function createCinematic(views, enemyView, explosionView, { renderer, sce
   // 逃げる道（planFinale の retreat: false で後回しにしたもの）を求める関数。スローの間に一度だけ呼ぶ
   let resolveRetreat = null;
   // 光の壁が近い縁に届いたら隠すビル（近い順）と、次に見る番号
-  let touch = [], touchAt = 0;
-  // 一時的に隠したビルを戻す（隠したのは touch の先頭から touchAt まで）
+  let touch = [], touchAt = 0, veiled = [], occluders = [];
+  // 一時的に隠したビルを戻す
   function unveilAll() {
-    for (let i = 0; i < touchAt; i++) veilBuilding(touch[i][1], false);
-    touch = []; touchAt = 0;
+    for (const id of veiled) veilBuilding(id, false);
+    touch = []; touchAt = 0; veiled = []; occluders = [];
+  }
+  // 光の壁が触れたビルを、隠すか決める（fix1: カメラのそば VEIL_NEAR m 以内か、画面に入っていてカメラからの距離が
+  // 壁の残りの道のり（カメラまで）の VEIL_K 倍 + VEIL_ADD m 以内なら隠す。球の面へ押されて引き伸ばされた板がレンズの前・画面の縁に出ない。
+  // 遠くで飲まれていくビルはつぶれていくのを見せる）
+  function veilTouched(front) {
+    let frus = null;
+    while (touchAt < touch.length && touch[touchAt].near <= front) {
+      const b = touch[touchAt++];
+      const dCam = Math.hypot(Math.max(0, Math.abs(b.x - P.cam.x) - b.w / 2), Math.max(0, Math.abs(b.z - P.cam.z) - b.d / 2));
+      let on = dCam < VEIL_NEAR;
+      if (!on && dCam < VEIL_K * Math.max(0, tl.camDist - b.near) + VEIL_ADD) {
+        frus ??= _frus.setFromProjectionMatrix(_pm.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse));
+        _box.min.set(b.x - b.w / 2, 0, b.z - b.d / 2); _box.max.set(b.x + b.w / 2, b.h, b.z + b.d / 2);
+        on = frus.intersectsBox(_box);
+      }
+      if (on) { veilBuilding(b.id, true); veiled.push(b.id); }
+    }
   }
   function ensureRetreat() {
     if (!plan.retreat && resolveRetreat) plan.retreat = resolveRetreat();
     resolveRetreat = null;
     return plan.retreat;
   }
-  const P = { cam: new THREE.Vector3(), look: new THREE.Vector3(), radial: new THREE.Vector3(), fwd: new THREE.Vector3(), right: new THREE.Vector3() };
+  const P = { cam: new THREE.Vector3(), look: new THREE.Vector3(), radial: new THREE.Vector3(), fwd: new THREE.Vector3(), right: new THREE.Vector3(), riderMid: new THREE.Vector3() };
   const _pos = new THREE.Vector3(), _look = new THREE.Vector3(), _q = new THREE.Quaternion(), _e = new THREE.Euler();
+  const _a = new THREE.Vector3(), _b = new THREE.Vector3(), _box = new THREE.Box3(), _frus = new THREE.Frustum(), _pm = new THREE.Matrix4();
   const screen = { flash: 0, time: 0, heat: null, grade: { bars: 0, ca: 0, vig: 0, sat: 1, grain: 0, streak: 0, exposure: 1, fade: 0, warm: 0, contrast: 1, bloom: 1 } };
   let rMax = 20, spaceDist = 260, wideK = 0;
 
@@ -156,8 +193,8 @@ export function createCinematic(views, enemyView, explosionView, { renderer, sce
     if (lights.fill) lights.fill.intensity = baseLight.fill * (1 - 0.7 * k);
   }
 
-  // 光の壁がカメラへ迫る間（race）に隠す、街の側の物: 爆発の粉の板と、壊れたビルから飛ぶ物理の破片（カメラのそばに来て
-  // 画面全体を白い膜でおおい、壁を背にした軍勢の影が見えなくなる）。遠くで飲まれていくビルと光の壁はそのまま
+  // 軍勢の後ろのカット（swell・race）の間に隠す、街の側の物: 爆発の粉の板（スローの間は爆心の光の玉を雲でおおい、迫ると画面全体を
+  // 白い膜でおおう）と、壊れたビルから飛ぶ物理の破片。遠くで飲まれていくビルと光の壁はそのまま
   let worldFx = null;
   function setExplosionDust(on) {
     worldFx ??= [explosionView.group?.getObjectByName?.('dust'), scene?.getObjectByName?.('debris')].filter(Boolean);
@@ -226,16 +263,21 @@ export function createCinematic(views, enemyView, explosionView, { renderer, sce
     const rk = t >= tl.burst ? clamp01((t - tl.burst) / Math.max(0.05, tl.camHit - tl.burst)) : 0; // 弾けてからカメラが飲まれるまで
     const gap = Math.max(0, tl.camDist - front); // 光の壁からカメラまで
     const near = smooth(1 - gap / Math.max(60, tl.camDist * 0.5)); // 壁が近いほど 1
-    // カメラ: 軍勢の後ろで、スローの間にごくわずかに前へ押し込む。弾けて壁が迫ると、押し寄せる圧で後ろへ弾かれ、揺れる
-    _pos.copy(P.cam).addScaledVector(P.fwd, 3 * easeInOut(sw)).addScaledVector(P.fwd, -2.5 * near * near);
+    // fix1: スローの間は長いレンズで地平の爆心の光の玉を大きく（ふくらんで画面の 1/4〜1/3 ほどに）、ゆっくり押し込む。
+    // 弾けると画角が広がり、見る向きが下がって、屋上に並ぶ乗り手の列と迫る光の壁が入る
+    const wideAt = t >= tl.burst ? smooth((t - tl.burst) / BEAT_WIDEN) : 0;
+    _pos.copy(P.cam).addScaledVector(P.fwd, 4 * easeInOut(sw)).addScaledVector(P.fwd, -2.5 * near * near);
     // 手持ちのわずかな揺れ
     _pos.addScaledVector(P.right, 0.03 * Math.sin(t * 1.3)).y += 0.025 * Math.sin(t * 1.1 + 1);
-    // 見る先: 地平の爆心の光。光の壁が迫ると、そびえる壁の上の方へ少し見上げる
+    // 見る先: 地平の爆心の光 → 弾けたら乗り手の列の真ん中の方へ半分。光の壁が迫ると、そびえる壁の上の方へ少し見上げる
+    _a.copy(P.look).sub(_pos).normalize();
+    _b.copy(P.riderMid).sub(_pos).normalize();
+    _a.lerp(_b, BEAT_LOOK_RIDERS * wideAt).normalize();
     const lookUp = Math.min(0.14, (front * 0.5) / Math.max(1, gap + 30)) * near;
-    _look.copy(P.look);
-    _look.y += _look.distanceTo(_pos) * lookUp;
+    _look.copy(_pos).addScaledVector(_a, 100);
+    _look.y += 100 * lookUp;
     const [f0, f1] = lens(LENS.beat);
-    const fov = f0 + (f1 - f0) * (0.15 * easeInOut(sw) + 0.85 * smooth(near));
+    const fov = f0 * (1 - 0.08 * easeInOut(sw)) + (f1 - f0) * Math.max(0.8 * wideAt, smooth(near));
     aim(_pos, _look, fov, 0.015 * Math.sin(t * 0.7));
     const shake = 0.0015 + (t >= tl.burst ? 0.006 * Math.exp(-(t - tl.burst) / 0.25) + 0.035 * near * near : 0.002 * sw);
     _e.set(shake * Math.sin(t * 41), shake * Math.sin(t * 33 + 1.3), shake * 0.7 * Math.sin(t * 27 + 2.1));
@@ -243,19 +285,16 @@ export function createCinematic(views, enemyView, explosionView, { renderer, sce
     cam.updateMatrixWorld();
     poseRiders();
     const g = screen.grade;
-    g.sat = 1.0; g.warm = 0.45; g.contrast = 1.15 + 0.15 * near;
+    g.sat = 1.0; g.warm = 0.45; g.contrast = 1.15 + 0.25 * rk;
     g.vig = 0.42 + 0.2 * near;
-    g.ca = 0.2 + 0.4 * rk + 1.8 * near * near;
-    // 弾けた瞬間の球の閃き（爆発の見た目の uBirth と爆心の光）は近い街を白く飛ばすので、弾けてからしばらく露出と bloom を絞る
-    // （光の壁が街を走り、軍勢が壁を背にした影になるのが見えるように）
-    const flare = t >= tl.burst ? Math.exp(-(t - tl.burst) / 0.35) : 0;
-    g.exposure = 0.92 - 0.12 * near - 0.3 * flare;
-    g.bloom = (0.8 + 0.4 * near) * (1 - 0.6 * flare);
+    g.ca = 0.2 + 0.4 * rk + 1.2 * near * near;
+    // fix1: 弾けたあとは露出を下げる（光の壁は明るいまま、乗り手と街は黒い影に）。白い閃きは出さない
+    g.exposure = 0.92 - BEAT_RACE_DARK * Math.max(wideAt, rk);
+    g.bloom = 0.8 + 0.2 * near;
     g.grain = 0.04;
-    // 白が晴れる閃光、弾けた瞬間の閃き、光の壁がカメラに届く手前から白へ（追うカットへは白のまま切り替わる）
+    // 白が晴れる閃光。光の壁がカメラの WHITE_AHEAD m 手前に来てから白へ（追うカットへは白のまま切り替わる）
     const camD = _pos.length(), whiteAhead = Math.min(WHITE_AHEAD, 0.08 * camD);
     screen.flash = Math.max(0, 0.95 * Math.exp(-(t - tl.white) / 0.05))
-      + (t >= tl.burst ? 0.15 * Math.exp(-(t - tl.burst) / 0.08) : 0)
       + Math.max(smooth((front - (camD - whiteAhead)) / whiteAhead), smooth((t - (tl.snap - 0.06)) / 0.06));
   }
 
@@ -265,7 +304,8 @@ export function createCinematic(views, enemyView, explosionView, { renderer, sce
     // はじめは通りの高さで、すぐ後ろに迫る光の壁から逃げる（近い）。追いつかれる寸前に振り切り、
     // 光の壁の輪郭（球の上の縁）が画面に入る遠さへ引いて、街が飲まれていく全体を見せる
     const k = (t - tl.snap);
-    const wide = smooth((k - 0.45) / 0.7);
+    // fix1: 引くのは追うカットの始めから CHASE_WIDE.sec 秒かけて（前は 0.6 秒で球の見かけが半分になった）
+    const wide = smooth((k - 0.05) / CHASE_WIDE.sec);
     if (!chase) {
       const d = ensureRetreat().dir;
       chaseC = Math.max(0.35, (d[0] * P.radial.x + d[1] * P.radial.z));
@@ -401,7 +441,10 @@ export function createCinematic(views, enemyView, explosionView, { renderer, sce
     // 爆心の光（explosionView.light）の強さの上限。軍勢の後ろのカット（swell・race）の間だけ。弾けた瞬間に光が跳ね上がると、
     // カメラのまわりの街まで真っ白に照らされ、光の壁が街を走るのも軍勢の影も見えなくなる（main.js が描く前に当てはめる）
     // 弾けた瞬間に爆発の球が白く飛ぶ強さの倍率（軍勢の後ろのカットの間だけ弱める。main.js が爆発の見た目を進める前に渡す）
+    get blastCoreScale() { return phase === 'play' && (stage === 'swell' || stage === 'race') ? BLAST_CORE_SCALE : 1; },
     get blastBirthScale() { return phase === 'play' && (stage === 'swell' || stage === 'race') ? BLAST_BIRTH_SCALE : 1; },
+    // 軍勢と主人公が爆発の光で白く光る強さの倍率（軍勢の後ろのカットの間は 0: 乗り手は光の壁を背にした黒い影）
+    get glowScale() { return phase === 'play' && (stage === 'swell' || stage === 'race') ? 0 : 1; },
     get blastLightCap() { return phase === 'play' && (stage === 'swell' || stage === 'race') ? BLAST_LIGHT_CAP : Infinity; },
     on(name, fn) { (listeners[name] ??= []).push(fn); },
     warmup(r) {
@@ -436,10 +479,22 @@ export function createCinematic(views, enemyView, explosionView, { renderer, sce
       P.right.set(-P.fwd.z, 0, P.fwd.x);
       chaseR0 = Math.hypot(p.camPos[0], p.camPos[2]);
       const nearOf = (b) => Math.hypot(Math.max(0, Math.abs(b.x) - b.w / 2), Math.max(0, Math.abs(b.z) - b.d / 2));
-      const byCam = (b) => Math.hypot(Math.max(0, Math.abs(b.x - p.camPos[0]) - b.w / 2), Math.max(0, Math.abs(b.z - p.camPos[2]) - b.d / 2));
       unveilAll();
-      touch = veilBuilding && buildings ? buildings.filter((b) => byCam(b) < VEIL_NEAR).map((b) => [nearOf(b), b.id]).filter(([d]) => d < s.radius).sort((a, b) => a[0] - b[0]) : [];
+      touch = veilBuilding && buildings ? buildings.map((b) => ({ near: nearOf(b), id: b.id, x: b.x, z: b.z, w: b.w, d: b.d, h: b.h })).filter((b) => b.near < s.radius).sort((a, b) => a.near - b.near) : [];
       touchAt = 0;
+      // スローの間、爆心のそば（じわじわ期の光の OCCLUDE 倍の内）で、カメラから光の玉をふさぐビルは、白の間に隠しておく
+      // （じわじわ期〜弾けた直後に光に飲まれるビル。白が晴れたときにはもう無いので、隠れる瞬間は見えない。追うカットで戻す）
+      if (veilBuilding && buildings) {
+        const f0 = tl.creepFront;
+        for (const b of buildings) {
+          if (nearOf(b) > OCCLUDE * f0) continue;
+          const hits = [-0.7, 0, 0.7].some((u) => [0.25, 0.6, 0.95].some((v) => {
+            _a.set(-P.radial.z * u * f0, v * f0, P.radial.x * u * f0);
+            return segBox(P.cam, _a, b);
+          }));
+          if (hits) occluders.push(b.id);
+        }
+      }
       // 主人公は撮る向きを向く
       enemyView.setHeroYaw(Math.atan2(P.radial.x, P.radial.z));
       // 乗り手: 撮る一人（[0]）と、その前に並ぶ数人。古い plan（riders なし）は撮る一人だけ
@@ -451,6 +506,9 @@ export function createCinematic(views, enemyView, explosionView, { renderer, sce
         return { id: r.id, pos: r.pos, yaw: r.yaw, dist, out: [r.pos[0] / d, 0, r.pos[2] / d], seed: hash, hitAt: tl.timeAtFront(dist - FLING.lead) };
       });
       poses.length = 0;
+      P.riderMid.set(0, 0, 0);
+      for (const r of riders) P.riderMid.add(_a.fromArray(r.pos));
+      P.riderMid.multiplyScalar(1 / Math.max(1, riders.length));
       for (let i = 0; i < riders.length; i++) poses.push(mkPose());
       // 宇宙での大きさ: 大きな一発ほど大きい
       // 光の半球の最大の大きさは、宇宙のカメラの画面の高さに対して決める（縦長でも横長でも同じ見え方）
@@ -486,15 +544,15 @@ export function createCinematic(views, enemyView, explosionView, { renderer, sce
         enemyView.setFocus?.({ id: riders[0]?.id ?? null, pose: poses[0], group: riders.slice(1).map((r, i) => ({ id: r.id, pose: poses[i + 1] })) });
         focusOn = true;
       }
+      if (occluders.length) { for (const id of occluders) { veilBuilding(id, true); veiled.push(id); } occluders = []; }
       if (stage === 'white') { screen.flash = 0; return; }
-      setExplosionDust(stage !== 'race');
+      setExplosionDust(stage !== 'race' && stage !== 'swell');
       if (stage === 'swell' || stage === 'race') {
         cue('erupt'); // 白が晴れて爆発が始まる: 世界の音が戻り、遠い地鳴りがふくらむ
         if (stage === 'race') cue('burst'); // 弾けた瞬間に爆発の音が開く
         dimLights(0.5 * smooth((t - tl.white) / 0.3) * (1 - smooth((t - tl.camHit) / 0.1)));
-        const fr = tl.front(t);
-        while (touchAt < touch.length && touch[touchAt][0] <= fr) veilBuilding(touch[touchAt++][1], true);
         updateBeat();
+        veilTouched(tl.front(t));
         // 逃げる道は、スローの間に求める（必要になるのは追うカットから）
         ensureRetreat();
         return;

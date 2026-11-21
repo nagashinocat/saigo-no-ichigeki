@@ -38,7 +38,8 @@ export const FINALE = {
   rumbleHold: 1.0,
 };
 
-// 一発ごとの時刻表。riderDist: 撮る一人（いちばん手前の乗り手）の爆心からの距離、firstDist: いちばん奥（爆心に近い）の乗り手、
+// 一発ごとの時刻表。riderDist: 撮る一人（いちばん手前の乗り手）の爆心からの距離、firstDist: いちばん奥（爆心に近い）の乗り手
+// （firstEngulf: その者が飲まれる時刻。firstEngulf〜camHit が、乗り手が光の壁を背にした影として順に飲まれていく間）、
 // camDist: カメラの爆心からの距離（m。省けば riderFrac・camBack から）
 export function createTimeline({ radius, riderDist = null, firstDist = null, camDist = null }, F = FINALE, cfg = CONFIG) {
   const freeze = cfg.cinematic.freezeSec;
@@ -54,7 +55,7 @@ export function createTimeline({ radius, riderDist = null, firstDist = null, cam
   const dFirst = Math.min(dR, Math.max(f0 + 0.5, firstDist ?? dR));
   const burst = F.white + swell.sec;
   const at = (d) => burst + timeAtFront(d, radius, cfg) - creep; // 弾けてから前線が d に届く演出の時刻（現実の速さ）
-  const engulf = at(dR), camHit = at(dC);
+  const engulf = at(dR), camHit = at(dC), firstEngulf = at(dFirst);
   const snap = Math.max(camHit + F.snapLag, at(dPass));
   const bSnap = creep + (snap - burst);
   // 前線が半径に届いて止まる（ゲームの一発が終わる）時刻
@@ -91,7 +92,7 @@ export function createTimeline({ radius, riderDist = null, firstDist = null, cam
 
   return {
     radius, riderDist: dR, firstDist: dFirst, camDist: dC, creepFront: f0, bSnap, total, swell,
-    hands: F.hands, white: F.white, erupt: F.white, burst, resume: burst, engulf, camHit, snap,
+    hands: F.hands, white: F.white, erupt: F.white, burst, resume: burst, firstEngulf, engulf, camHit, snap,
     chaseEnd, frontDone, domeEnd, flatten, lineEnd, rumble, end,
     blastClock, timeScale, domeAt, fCut,
     // 放ってからのゲームの時計（freezeSec の止まった間を含む）

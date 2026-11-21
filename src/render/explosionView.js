@@ -39,7 +39,7 @@ void main() {
 }`;
 
 const SPHERE_FRAG = /* glsl */`
-uniform float uTime, uSeed, uRadius, uFade, uBirth, uScale;
+uniform float uTime, uSeed, uRadius, uFade, uBirth, uScale, uCoreK;
 uniform vec3 uCore, uDeep, uInner, uBand, uRimA, uRimB;
 varying vec3 vWorld;
 varying vec3 vDir;
@@ -70,7 +70,7 @@ void main() {
   float n2 = fbm(sp * 2.2 + vec3(uTime * 0.35, uTime * 0.2, -uTime * 0.3) + uSeed * 1.7);
   float plasma = n1 * 0.62 + n2 * 0.38;
   float flow = smoothstep(0.4, 0.72, plasma);
-  float core = exp(-rn * rn * 34.0) * (0.85 + 0.6 * uBirth);
+  float core = exp(-rn * rn * 34.0) * (0.85 + 0.6 * uBirth) * uCoreK;
   // 球の中身: 流れる熱の模様を3色の段で塗る（深い橙 → 琥珀 → 淡い黄の筋）。明るさは 1 未満に抑えて色を残す
   float tone = xcel(clamp(plasma * 1.25 - 0.18 + core * 0.6 + (1.0 - mu) * 0.15, 0.0, 0.999), 3.0, 0.05);
   vec3 body = mix(uDeep, uInner, smoothstep(0.2, 0.45, tone));
@@ -172,7 +172,7 @@ export function createExplosionView(scene, tierName, { sunDir = null, seed = 7 }
 
   function makeSphere() {
     const uniforms = {
-      uTime: { value: 0 }, uSeed: { value: 0 }, uRadius: { value: 1 }, uFade: { value: 1 }, uBirth: { value: 0 }, uScale: { value: 3 },
+      uTime: { value: 0 }, uSeed: { value: 0 }, uRadius: { value: 1 }, uFade: { value: 1 }, uBirth: { value: 0 }, uScale: { value: 3 }, uCoreK: { value: 1 },
       ...sharedColors,
     };
     const mat = new THREE.ShaderMaterial({
@@ -204,6 +204,7 @@ export function createExplosionView(scene, tierName, { sunDir = null, seed = 7 }
 
   let time = 0, flash = 0, shake = 0;
   let birthK = 1; // 弾けた瞬間に球が白く飛ぶ強さの倍率（R0b: 遠くの軍勢の後ろのカットでは弱める。setBirthScale）
+  let coreK = 1;  // 球の真ん中の白い芯の強さの倍率（R0b fix1: 爆心を見ながら球に迫ると、芯が画面の真ん中を白く飛ばす。setCoreScale）
   // 毎フレーム作り直さず、中身だけ書き換えて返す
   const cameraInfo = { front: 0, shake: 0 };
   const heat = { center: [0, 0, 0], radius: 0, strength: 0 };
@@ -308,6 +309,7 @@ export function createExplosionView(scene, tierName, { sunDir = null, seed = 7 }
         u.uTime.value = time;
         u.uRadius.value = r * pulse;
         u.uFade.value = fade;
+        u.uCoreK.value = coreK;
         u.uBirth.value = birthK * (s.burst ? 1 : 0.3) * Math.exp(-(s.burst ? s.burstAge : s.age) / (s.burst ? BURST_FLARE_SEC : 0.12));
         u.uScale.value = 3.5 + r / 60;
         const ringR = s.ringFront * 1.25 + 10;
@@ -375,6 +377,7 @@ export function createExplosionView(scene, tierName, { sunDir = null, seed = 7 }
     vaporize(target) { vapor.add(time, target); },
     // R0b: 弾けた瞬間に球全体が白く飛ぶ強さ（uBirth）の倍率。カメラのそばまで迫る大きな球が白く飛ぶと、bloom で画面全体が白い膜になる
     setBirthScale(k) { birthK = k; },
+    setCoreScale(k) { coreK = k; },
     get busy() { return flash > 0 || spheres.some((s) => s.active) || vapor.busy(time); },
     // 上空カメラへ: 見えている球の一番大きい半径・揺れ (rad)
     get cameraInfo() { return cameraInfo; },

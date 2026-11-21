@@ -30,6 +30,7 @@ export const REPLAY_BARS = { portrait: 0.6, landscape: 2.39 };
 // レンズ（縦の画角、度）
 export const REPLAY_LENS = {
   street: { portrait: 80, landscape: 52 },
+  streetSwell: { portrait: 22, landscape: 15 }, // fix1: street のスローの間（遠くの光の玉を大きく）
   side: { portrait: 66, landscape: 44 },
   top: { portrait: 62, landscape: 44 },
   hero: { portrait: 40, landscape: 27 },
@@ -56,7 +57,8 @@ const easeInOut = (x) => { const t = clamp01(x); return t < 0.5 ? 4 * t * t * t 
 // opts.onRestore(): 世界を放つ直前へ戻す。opts.onTick(dt, camera): 世界を爆発の dt 秒進める（camera はそのときのカメラ）
 // opts.fog: 霞み始める距離の uniform（style.uniforms.uFogStart）。真上のカメラは遠いので、その間だけ延ばす
 // opts.blastLight: 爆心の光（explosionView.light）。最後のカットでは主人公を影絵にするため、描く前に弱める
-export function createReplay(views, { scene, lights = null, fog = null, blastLight = null, onRestore = () => {}, onTick = () => {} } = {}) {
+// opts.dust: 爆発の粉の板（fix1: street のスローの間は隠す。爆心の光の玉を雲でおおってしまう）
+export function createReplay(views, { scene, lights = null, fog = null, blastLight = null, dust = null, onRestore = () => {}, onTick = () => {} } = {}) {
   const listeners = {};
   const emit = (name, arg) => { for (const fn of listeners[name] ?? []) fn(arg); };
   const cam = new THREE.PerspectiveCamera(60, 1, 0.3, 9000);
@@ -100,22 +102,29 @@ export function createReplay(views, { scene, lights = null, fog = null, blastLig
     const gap = Math.max(0, s.dist - F);
     const prox = clamp01(1 - gap / 70);                 // 壁が近いほど 1
     const burst = smooth((F - tl.radius * 0.07) / 25);   // 弾けた
-    // ゆっくり後ずさる（壁から逃げたいが逃げられない）
-    _pos.set(s.pos[0] - s.dir[0] * 5 * easeInOut(u), s.pos[1], s.pos[2] - s.dir[1] * 5 * easeInOut(u));
+    // fix1: スローでふくらむ間はゆっくり通りの先へ押し込み、弾けたら後ずさる（壁から逃げたいが逃げられない）
+    const sw = clamp01((t - tl.intro) / Math.max(0.1, tl.burst - tl.intro));
+    const back = t >= tl.burst ? smooth((t - tl.burst) / 0.6) : 0;
+    const dolly = 10 * easeInOut(sw) - 6 * back;
+    _pos.set(s.pos[0] + s.dir[0] * dolly, s.pos[1], s.pos[2] + s.dir[1] * dolly);
     const sh = 0.004 * burst + 0.018 * prox * prox;
     _pos.x += sh * 9 * Math.sin(t * 31); _pos.y += sh * 6 * Math.sin(t * 23 + 1);
     // R0b（持ち主 22:18）: スローでふくらむ間は、通りの突き当たり（爆心）の光の玉を少し長いレンズで見る。弾けて壁が迫るにつれて
     // 通りの先の上を見上げ（壁の上の縁が頭の上を越えていく）、レンズは広がる
-    const up = smooth(burst * 0.6 + prox);
+    const up = smooth(burst * 0.6 + prox) * (t >= tl.burst ? 1 : 0);
     const endX = s.pos[0] + s.dir[0] * s.dist, endZ = s.pos[2] + s.dir[1] * s.dist;
     const ahead = 60, lift = 14 + 16 * up + 10 * prox;
     _look.set(endX, Math.max(2.5, 0.45 * F), endZ);
     _look.lerp(_up.set(s.pos[0] + s.dir[0] * ahead, lift, s.pos[2] + s.dir[1] * ahead), up);
-    const fov = lens(REPLAY_LENS.street) * (0.62 + 0.38 * up) + 7 * burst * Math.exp(-Math.max(0, t - tl.burst) * 6) + 6 * prox;
+    // fix1（I-2）: スローの間は長いレンズ（縦長 22°・横長 15°）でふくらむ光の玉を大きく、弾けると一気に広がる
+    const wideAt = t >= tl.burst ? smooth((t - tl.burst) / 0.25) : 0;
+    const swellLens = lens(REPLAY_LENS.streetSwell) * (1 - 0.1 * easeInOut(sw));
+    const fov = swellLens + (lens(REPLAY_LENS.street) - swellLens) * Math.max(wideAt, up) + 6 * prox;
     aim(_pos, _look, fov, 0.055 * up);
     // 壁が近づくほど暗く・硬くして、光の壁の模様を白く飛ばさない
     setGrade({ sat: 1.1, warm: 0.45, contrast: 1.2 + 0.25 * prox, vig: 0.42 + 0.2 * prox, ca: 0.25 + 1.6 * prox * prox, grain: 0.04, exposure: 0.95 - 0.35 * prox, streak: 0, bloom: 1 - 0.4 * prox });
     setFog(0);
+    if (dust) dust.visible = t >= tl.burst;
     // 弾けた瞬間の閃き。呑み込まれる: 壁がカメラの数 m 手前に来ると白へ（カットの終わりで白。時間は止めない）
     const tb = tl.burst;
     screen.flash = (t >= tb ? 0.3 * Math.exp(-(t - tb) / 0.1) : 0) + smooth((F - (s.dist - 14)) / 11);
@@ -124,6 +133,7 @@ export function createReplay(views, { scene, lights = null, fog = null, blastLig
   }
 
   function shotSide(u) {
+    if (dust) dust.visible = true;
     const s = plan.side, F = tl.frontAt(t);
     const lead = 32 + 0.1 * F;
     // 壁と並んで横へ走る（前線の円に沿って回る）。壁は外へ広がるので、カメラも同じだけ外へ逃げる
@@ -346,6 +356,7 @@ export function createReplay(views, { scene, lights = null, fog = null, blastLig
     // やめる（何も描かない）
     stop() {
       phase = 'off'; cutName = ''; after = null;
+      if (dust) dust.visible = true;
       light.hide();
       dimLights(0);
       setFog(0);

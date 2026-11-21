@@ -254,6 +254,9 @@ test('最後の爆発音は前より重い（オフラインで鳴らして測�
   // R0b: hold は 3.3 → 2.6 秒に縮んだ（弾けてから追うカットまでが短い）。hold の直後の 1 秒は前の版とほぼ同じ大きさ（-0.7 dB）で、
   // 重い一発の尾はその先で長く残る（hold + 1 〜 hold + 3.7 秒で +4.9 dB）。尾の厚さはそこで測る
   expect(db(o.hold + 1, o.hold + 3.7)).toBeGreaterThanOrEqual(1.5);
+  // fix1（I-3）: もとの窓（hold〜hold + 2.7 秒、前の hold 3.3 秒で 6 秒まで）も見張る。測ると −0.68 dB（hold が縮んで、hold の直後の尾は
+  // 前の版よりわずかに弱い。持ち主は 23:01 にこの音でよいと言った）。前の版より 1 dB 以上弱くはしない
+  expect(db(o.hold, o.hold + 2.7)).toBeGreaterThanOrEqual(-1.0);
   expect(lastAbove(now.sub, 0.01)).toBeGreaterThanOrEqual(lastAbove(was.sub, 0.01));
 });
 

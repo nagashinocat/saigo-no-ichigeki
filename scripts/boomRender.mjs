@@ -111,7 +111,6 @@ export async function renderScenes(scenes, { modPath = 'src/audio/audio.js', SR 
         if (name === 'boom') audio.boom(arg);
         else if (name === 'boomOnly') audio.boom(sc.size, { hold: sc.hold, open: sc.open, heavy: sc.heavy });
         else if (name === 'silence') audio.silence();
-        else if (name === 'heart') audio.heartbeat(arg);
         else if (name === 'erupt') { audio.unsilence(); if (audio.finaleRumble) audio.finaleRumble(tlArg); } // main.js と同じ
         else if (name === 'burst') audio.boom(sc.size, { hold: sc.hold, open: sc.open, heavy: sc.heavy });
         else if (name === 'debrisMode') audio.debrisMode(arg); // リプレイ（'replay'）の瓦礫の音の道

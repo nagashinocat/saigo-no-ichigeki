@@ -1,6 +1,6 @@
 import { test, expect } from 'vitest';
 import * as THREE from 'three';
-import { leadFor, minLeadFor, createChase, createCinematic, barsFor, shellRadius, FLING, spaceSparkTime, VEIL_NEAR, CHASE_HOLD } from '../../src/render/cinematic.js';
+import { leadFor, minLeadFor, createChase, createCinematic, barsFor, shellRadius, FLING, spaceSparkTime, VEIL_NEAR, VEIL_K, VEIL_ADD, OCCLUDE, WHITE_AHEAD, CHASE_HOLD } from '../../src/render/cinematic.js';
 import { createEnemies } from '../../src/game/enemies.js';
 import { createTimeline } from '../../src/render/finaleTimeline.js';
 import { planFinale, planRetreat } from '../../src/render/finalePlan.js';
@@ -297,7 +297,7 @@ test('乗り手の列: 画面全体になってから決めた隊形に描かれ
   }
 });
 
-test('カメラ: スローの間、地平の爆心（光の玉）と撮る一人が画面の中に入り、撮る一人は爆心より下。弾けて光の壁が迫ると画角が広がる', () => {
+test('fix1 カメラ: スローの間は長いレンズ（縦長 22° 以下）で地平の爆心が画面の真ん中に入り、光の玉はふくらんで画面の高さの 1/5 以上になる。弾けると画角が広がり、乗り手の列の大半が画面に入る。白いのは光の壁がカメラの数 m 手前に来てから', () => {
   for (const size of [{ w: 390, h: 844 }, { w: 1280, h: 720 }]) {
     for (const shot of SHOTS) {
       const { cin, plan } = makeBeat(shot, size);
@@ -305,26 +305,32 @@ test('カメラ: スローの間、地平の爆心（光の玉）と撮る一人
       const tl = cin.timeline;
       advance(cin, tl.white + 0.1);
       const fov0 = cin.camera.fov;
+      if (size.w < size.h) expect(fov0).toBeLessThanOrEqual(22);
       while (cin.time < tl.burst) {
         const gz = project(cin.camera, [0, tl.creepFront * 0.5, 0]);
-        const lead = project(cin.camera, [plan.rider.pos[0], plan.rider.pos[1] + 1, plan.rider.pos[2]]);
-        expect(Math.abs(gz.x)).toBeLessThan(0.6);
-        expect(Math.abs(gz.y)).toBeLessThan(0.6);
-        expect(gz.z).toBeLessThan(1);
-        expect(Math.abs(lead.x)).toBeLessThan(0.9);
-        expect(lead.y).toBeGreaterThan(-0.95);
-        expect(lead.y).toBeLessThan(gz.y);
-        expect(lead.z).toBeLessThan(1);
+        expect(Math.abs(gz.x)).toBeLessThan(0.3);
+        expect(Math.abs(gz.y)).toBeLessThan(0.3);
         advance(cin, 0.1);
       }
-      advance(cin, tl.camHit - 0.03 - cin.time);
+      // じわじわ期の終わりの光の玉（半径 creepFront）の見かけの直径 / 画面の高さ
+      const d = cin.camera.position.length(), ball = 2 * Math.atan(tl.creepFront / d) / THREE.MathUtils.degToRad(cin.camera.fov);
+      expect(ball, `${size.w} r=${shot.radius.toFixed(0)}`).toBeGreaterThan(0.18);
+      advance(cin, Math.min(tl.burst + 0.3, tl.camHit - 0.1) - cin.time);
       expect(cin.camera.fov).toBeGreaterThan(fov0 + 8);
-      expect(cin.screen.flash).toBeGreaterThan(0.3); // 光の壁がカメラに届く手前から白へ
+      const inView = plan.riders.filter((r) => { const q = project(cin.camera, [r.pos[0], r.pos[1] + 1, r.pos[2]]); return Math.abs(q.x) < 1 && Math.abs(q.y) < 1 && q.z < 1; });
+      expect(inView.length, `${size.w} r=${shot.radius.toFixed(0)}`).toBeGreaterThanOrEqual(Math.ceil(plan.riders.length / 2));
+      // 弾けたあと: 白くしない（光の壁がカメラの WHITE_AHEAD m 手前に来るまで）、露出を下げる
+      while (cin.time < tl.camHit - 0.05) {
+        const gap = tl.camDist - tl.front(cin.time);
+        if (gap > WHITE_AHEAD + 1) expect(cin.screen.flash, `t=${cin.time.toFixed(3)}`).toBeLessThan(0.02);
+        advance(cin, 1 / 60);
+      }
+      expect(cin.screen.grade.exposure).toBeLessThan(0.8);
     }
   }
 });
 
-test('カメラのそば（VEIL_NEAR 以内）のビルだけ、軍勢の後ろのカットの間、光の壁が触れた瞬間に一時的に隠し、追うカットへ切り替わると戻す。遠くのビルは隠さない（飲まれてつぶれていくのを見せる）', () => {
+test('fix1 光の壁が触れたビルのうち、カメラのそば（VEIL_NEAR 以内）か、画面の中でカメラの近く（壁の残りの道のりの VEIL_K 倍 + VEIL_ADD 以内）のものだけ、触れた瞬間に一時的に隠し、追うカットへ切り替わると戻す。遠くのビルは隠さない', () => {
   for (const shot of SHOTS) {
     const veiled = new Map(), restored = new Map();
     const { cin, plan } = makeBeat(shot, undefined, { veilBuilding: (id, on) => (on ? veiled.set(id, cin.time) : restored.set(id, cin.time)) });
@@ -338,17 +344,33 @@ test('カメラのそば（VEIL_NEAR 以内）のビルだけ、軍勢の後ろ�
     }
     for (const [id, at] of veiled) {
       const b = city.buildings.find((x) => x.id === id);
-      expect(byCam(b)).toBeLessThan(VEIL_NEAR);
+      // 爆心のそば（じわじわ期の光の OCCLUDE 倍の内）で光の玉をふさぐビルは、白の間（画面が真っ白）に先に隠す
+      if (at < tl.white) { expect(near(b)).toBeLessThanOrEqual(OCCLUDE * tl.creepFront + 1e-6); expect(at).toBeGreaterThanOrEqual(tl.hands); expect(restored.get(id)).toBeGreaterThanOrEqual(tl.snap); continue; }
+      expect(byCam(b) < VEIL_NEAR || byCam(b) < VEIL_K * (tl.camDist - near(b)) + VEIL_ADD).toBe(true);
       expect(at).toBeGreaterThanOrEqual(tl.white);
       expect(at).toBeLessThan(tl.snap + 1e-9);
       expect(near(b)).toBeLessThanOrEqual(tl.front(at) + 1e-6);
       expect(restored.get(id)).toBeGreaterThanOrEqual(tl.snap);
       expect(restored.get(id)).toBeLessThan(tl.snap + 1 / 60 + 1e-9);
     }
+    // 遠くのビル（どちらの決まりにも入らない）は隠さない
+    const far = city.buildings.filter((b) => near(b) < tl.front(tl.snap - 1e-6) && byCam(b) >= VEIL_K * (tl.camDist - near(b)) + VEIL_ADD && byCam(b) >= VEIL_NEAR);
+    expect(far.length).toBeGreaterThan(0);
+    for (const b of far) expect(veiled.has(b.id)).toBe(false);
     const n = restored.size;
     cin.stop();
     expect(restored.size).toBe(n);
   }
+});
+
+test('fix1 軍勢の後ろのカットの間は、軍勢と主人公を爆発の光で白く光らせない（glowScale 0: 光の壁を背にした黒い影）。追うカットで戻す', () => {
+  const { cin, plan, shot } = makeBeat();
+  cin.play(plan, shot);
+  const tl = cin.timeline;
+  advance(cin, tl.burst + 0.1);
+  expect(cin.glowScale).toBe(0);
+  advance(cin, tl.snap + 0.1 - cin.time);
+  expect(cin.glowScale).toBe(1);
 });
 
 test('持ち主 23:01: 追うカットで引ききったカメラは、宇宙へ切り替わる直前の球（前線の半径）を、縦長でも横長でも画面の内に余白をもって収める', () => {

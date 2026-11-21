@@ -484,6 +484,7 @@ const replay = createReplay(views, {
   lights: { sun: style.lights[0], fill: style.lights[2] },
   fog: style.uniforms.uFogStart,
   blastLight: explosionView.light,
+  dust: explosionView.group?.getObjectByName?.('dust') ?? null,
   // 放つ直前へ戻す: 街の姿・破片と瓦礫・爆発の見た目・地面のえぐれ。爆発と軍勢は写しから起こし直す
   onRestore() {
     cityView.restore(citySnap);
@@ -568,10 +569,11 @@ function stepWorld(wdt, live, enemies, cam, focus, glowScale = 1) {
   const shaping = live.some((b) => b.shot.small) ? live.filter((b) => !b.shot.small) : live;
   const list = fronts.update(shaping);
   destruction.pool.setCrater(fronts.crater);
+  _frustum.setFromProjectionMatrix(_projView.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse));
   if (wdt > 0) {
     explosionView.dust(destruction.update(wdt, list));
-    // 落ちて止まった大きな破片: 瓦礫の崩れる音へ（画面の出来事の場所から。持ち主 23:01）
-    for (const p of destruction.lastSettled) hitFeed.settleHit(p);
+    // 落ちて止まった大きな破片: 画面に入っているものだけ、瓦礫の崩れる音へ（画面の出来事の場所から。持ち主 23:01）
+    for (const p of destruction.lastSettled) if (_frustum.containsPoint(_sphC.fromArray(p.pos))) hitFeed.settleHit(p);
   }
   debrisView.update();
   rubbleView.update();
@@ -584,7 +586,6 @@ function stepWorld(wdt, live, enemies, cam, focus, glowScale = 1) {
   // 最後の一発の演出・リプレイ・時間切れの結末の間は、上空カメラ用の補助表示（目印・透かし）を出さない
   const aids = !(debugCam || cinematic.active || replay.active || blackhole.active);
   // 街を見回る者（S8）は、今のカメラの画面に入る者だけ描く（遠くの見えないバイクの頂点を描かない）。毎フレーム同じ配列を使う
-  _frustum.setFromProjectionMatrix(_projView.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse));
   _shown.length = 0;
   for (const e of enemies) if (!e.patrol || _frustum.intersectsSphere(_sph.set(_sphC.set(e.x, 3, e.z), 12))) _shown.push(e);
   patrolGlow.update(enemies, { pixelRatio: renderer.getPixelRatio(), dt: wdt, time: performance.now() / 1000, visible: patrolGlowVisible({ overhead: aids, over: game.phase === 'over' }) });
@@ -612,10 +613,11 @@ function simulate(dt) {
   if (cdt === null) game.update(dt); else stepGame(cdt);
   const wdt = cinematic.active ? cinematic.worldDt : dt;
   explosionView.setBirthScale(cinematic.active ? cinematic.blastBirthScale : 1);
+  explosionView.setCoreScale(cinematic.active ? cinematic.blastCoreScale : 1);
   const cam = cityCam();
   const live = game.blasts;
   // 手前の物理は、演出の間は演出のカメラの近くの破片だけ（ふだんは null で全部プール）
-  stepWorld(wdt, live, game.enemies.list, cam, cinematic.active ? cam.position.toArray(_focusAt) : null);
+  stepWorld(wdt, live, game.enemies.list, cam, cinematic.active ? cam.position.toArray(_focusAt) : null, cinematic.active ? cinematic.glowScale : 1);
   // R0b: 遠くの軍勢の後ろのカットの間は、爆心の光が近くの街まで真っ白に照らさないよう上限を当てる
   if (cinematic.active) explosionView.light.intensity = Math.min(explosionView.light.intensity, cinematic.blastLightCap);
   // 上空カメラは、ゲームが動いている間はいつも進める（演出の終わりにこの姿勢へなじむ）

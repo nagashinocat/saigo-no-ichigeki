@@ -100,7 +100,7 @@ async function stepped(page) {
   }
   const info = await page.evaluate(() => ({ phase: window.__game.phase, blasts: window.__game.blasts.map((b) => ({ r: +b.shot.radius.toFixed(1), front: +b.front.toFixed(1) })), tier: window.__tier }));
   console.log('released', JSON.stringify(info));
-  const plan = await page.evaluate(() => { const p = window.__cinematic?.plan; if (!p) return null; const tl = window.__cinematic.timeline; return { rider: p.riderId, mode: p.mode, riders: p.riders?.map((r) => r.id), at: p.rider?.pos.map((v) => +v.toFixed(1)), cam: p.camPos.map((v) => +v.toFixed(1)), beat: ['white', 'burst', 'engulf', 'camHit', 'snap', 'chaseEnd', 'end'].map((k) => k + '=' + (+tl[k].toFixed(2))).join(' ') }; });
+  const plan = await page.evaluate(() => { const p = window.__cinematic?.plan; if (!p) return null; const tl = window.__cinematic.timeline; return { rider: p.riderId, open: p.open, window: p.window, riders: p.riders?.map((r) => r.id), at: p.rider?.pos.map((v) => +v.toFixed(1)), cam: p.camPos.map((v) => +v.toFixed(1)), beat: ['white', 'burst', 'engulf', 'camHit', 'snap', 'chaseEnd', 'end'].map((k) => k + '=' + (+tl[k].toFixed(2))).join(' ') }; });
   if (plan) console.log('finale plan', JSON.stringify(plan));
   if (args.perf > 0) {
     const t = await page.evaluate((n) => window.__debug.timeFrames(n), args.perf);
