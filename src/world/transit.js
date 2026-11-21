@@ -21,6 +21,7 @@ export const TRANSIT = {
     lanes: [2.0, 5.4],// 車線の中心線からの距離 m（+ の側が進む向き、- の側が戻る向き）
     carGap: [11, 34], // 同じ車線の車の間隔 m
     carSpeed: [24, 31],
+    endPad: 15,       // 街の端からこの距離の内で終える
   },
   rail: {
     ring: 0.5,        // 環状線の半径（R に対する割合）
@@ -85,7 +86,9 @@ function smooth(ctrl, step) {
 
 // 街の半径 R の高速と環状線の道筋
 export function transitPaths(R, T = TRANSIT) {
-  const expressway = makePath(smooth(T.expressway.ctrl.map(([x, z]) => [x * R, z * R]), 6));
+  // 高速は街の内（端から endPad m 手前）で終える（最大の一発が全部を飲み、街の外に残らない）
+  const pts = smooth(T.expressway.ctrl.map(([x, z]) => [x * R, z * R]), 6).filter(([x, z]) => Math.hypot(x, z) <= R - T.expressway.endPad);
+  const expressway = makePath(pts);
   const rr = T.rail.ring * R, n = Math.max(48, Math.round((2 * Math.PI * rr) / 8));
   const ring = [];
   for (let i = 0; i < n; i++) { const a = (i / n) * Math.PI * 2; ring.push([Math.cos(a) * rr, Math.sin(a) * rr]); }
@@ -126,6 +129,34 @@ function pillarStations(path, span) {
   return out;
 }
 
+// 車線（軍勢が飛ぶ所）: 道路の中心線から LANE_HALF m の内。橋脚の柱はその外に立てる（歩道・区画の上）
+export const LANE_HALF = 3.5; // = GRID.ROAD / 2 - 0.5（cityGen と互いに読み込むので数で書く。テストで確かめる）
+// 柱の足元（一辺 w）が車線にかかるか
+export const legOnLane = (x, z, w) => {
+  const off = (v) => Math.abs(v - (Math.round(v / GRID.PITCH - 0.5) + 0.5) * GRID.PITCH);
+  return off(x) < LANE_HALF + w / 2 || off(z) < LANE_HALF + w / 2;
+};
+// 橋脚の柱の置き場所（道筋の点 p、向き heading）: 車線の外の、橋桁の下の一番近い所に 1 本。
+// なければ道路をまたぐ門形（2 本の柱を道の両側に立てて梁で結ぶ）
+function legsFor(p, heading, width, w) {
+  const ax = Math.cos(heading), az = Math.sin(heading), px = -az, pz = ax;
+  const side = width / 2 - w / 2 - 0.3;
+  let best = null;
+  for (let a = -8; a <= 8; a += 1) for (let k = -side; k <= side + 1e-9; k += 0.5) {
+    const x = p.x + ax * a + px * k, z = p.z + az * a + pz * k;
+    if (legOnLane(x, z, w)) continue;
+    const c = Math.abs(a) * 0.6 + Math.abs(k);
+    if (!best || c < best.c) best = { c, legs: [[x, z]] };
+  }
+  if (best) return best.legs;
+  for (let a = 0; a <= 8; a += 1) for (const sa of a ? [1, -1] : [1]) for (let d = side; d <= 16; d += 0.5) {
+    const cx = p.x + ax * a * sa, cz = p.z + az * a * sa;
+    const l1 = [cx + px * d, cz + pz * d], l2 = [cx - px * d, cz - pz * d];
+    if (!legOnLane(...l1, w) && !legOnLane(...l2, w)) return [l1, l2];
+  }
+  return [[p.x, p.z]];
+}
+
 // 金額（円）: 橋桁の体積あたり
 const RATE = { expressway: 90000, rail: 110000 };
 
@@ -154,8 +185,10 @@ export function buildTransit(R, T = TRANSIT) {
       const id = (line === 'expressway' ? 'x' : 'r') + segments.filter((s) => s.line === line).length;
       segments.push({ id, line, a, b, s0, s1, y: L.deckY, width: L.width, thick: L.thick, len, heading, x: cx, z: cz, dist: near,
         w: ex, d: ez, h: L.deckY, value: Math.round(len * L.width * L.thick * RATE[line]) });
-      pillars.push({ seg: id, x: a[0], z: a[1], h: L.deckY - L.thick, w: line === 'expressway' ? 2.4 : 1.6, heading, kind: line === 'expressway' ? 'T' : 'I' });
-      if (!path.closed && i + 2 === ends.length) pillars.push({ seg: id, x: b[0], z: b[1], h: L.deckY - L.thick, w: 2.4, heading, kind: 'T' });
+      const pw = line === 'expressway' ? 2.4 : 1.6;
+      const pier = (q) => ({ seg: id, x: q[0], z: q[1], h: L.deckY - L.thick, w: pw, heading, kind: line === 'expressway' ? 'T' : 'I', legs: legsFor({ x: q[0], z: q[1] }, heading, L.width, pw) });
+      pillars.push(pier(a));
+      if (!path.closed && i + 2 === ends.length) pillars.push(pier(b));
     }
   }
   return { paths, segments, pillars, config: T };

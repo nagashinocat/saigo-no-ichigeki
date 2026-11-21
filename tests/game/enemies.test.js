@@ -1,5 +1,5 @@
 import { test, expect } from 'vitest';
-import { maxEnemyReach } from '../../src/game/enemies.js';
+import { maxEnemyReach, patrolBand } from '../../src/game/enemies.js';
 import { radiusFor } from '../../src/game/charge.js';
 import { createGame } from '../../src/game/game.js';
 import { createEnemies, spawnRateAt, approachSpeed, lineOfSight, roadNode } from '../../src/game/enemies.js';
@@ -342,22 +342,32 @@ test('届くまでの秒の分布: 前（中央 約 11 秒）より速く届く�
 });
 
 // ---- S8: 広い街を見回る者と、最大溜めの一発が届く距離 ----
-test('S8: 見回る者は始めから count 人、広い街の帯（band × cityRadius）の道路を走り回り、主人公を探さず掴みにも来ない', () => {
+test('fix1: 見回る者は始めから count 人、探す者の外（patrolBand の内端）から街の端まで、どの方角・どの距離にもいて、主人公を探さず掴みにも来ない', () => {
   const city = generateCity(7);
   const E = createEnemies(createRng(2), CONFIG, { buildings: city.buildings, patrolRng: createRng(9) });
-  const P = CONFIG.enemy.patrol, lo = P.band[0] * CONFIG.cityRadius, hi = P.band[1] * CONFIG.cityRadius;
-  expect(E.list.filter((e) => e.patrol).length).toBe(P.count);
+  const [lo, hi] = patrolBand(CONFIG);
+  // 帯は式で決まる: 内は探す者の動ける範囲の外、外は街の端
+  expect(lo).toBeCloseTo(CONFIG.enemy.roamDist + GRID.PITCH / 2);
+  expect(hi).toBe(CONFIG.cityRadius);
+  const pats = () => E.list.filter((e) => e.patrol);
+  expect(pats().length).toBe(CONFIG.enemy.patrol.count);
+  // 8 つの方角 × 3 つの距離の帯のどこにも、始めから見回る者がいる
+  const rings = [lo, lo + (hi - lo) / 3, lo + 2 * (hi - lo) / 3, hi + 1];
+  for (let s8 = 0; s8 < 8; s8++) for (let r = 0; r < 3; r++) {
+    const n = pats().filter((e) => Math.floor(((e.angle + Math.PI) / (2 * Math.PI)) * 8) % 8 === s8 && e.dist >= rings[r] - GRID.PITCH && e.dist < rings[r + 1] + GRID.PITCH).length;
+    expect(n, `sector ${s8} ring ${r}`).toBeGreaterThan(0);
+  }
   let minD = Infinity, maxD = 0;
-  const start = new Map(E.list.filter((e) => e.patrol).map((e) => [e.id, [e.x, e.z]]));
+  const start = new Map(pats().map((e) => [e.id, [e.x, e.z]]));
   for (let i = 0; i < 60 * 30; i++) {
     E.update(1 / 30);
-    for (const e of E.list) if (e.patrol) { minD = Math.min(minD, e.dist); maxD = Math.max(maxD, e.dist); expect(e.state).toBe('search'); }
+    for (const e of pats()) { minD = Math.min(minD, e.dist); maxD = Math.max(maxD, e.dist); expect(e.state).toBe('search'); }
   }
   expect(minD).toBeGreaterThan(lo - GRID.PITCH);
+  expect(maxD).toBeGreaterThan(hi - 30); // 街の端まで行く
   expect(maxD).toBeLessThan(hi + 6);
-  // 動き回っている（同じ所に留まらない）
-  const moved = E.list.filter((e) => e.patrol && Math.hypot(e.x - start.get(e.id)[0], e.z - start.get(e.id)[1]) > 50).length;
-  expect(moved).toBeGreaterThan(P.count * 0.7);
+  const moved = pats().filter((e) => Math.hypot(e.x - start.get(e.id)[0], e.z - start.get(e.id)[1]) > 50).length;
+  expect(moved).toBeGreaterThan(pats().length * 0.7);
 });
 
 test('S8: 見回る者がいても、探して掴みに来る者の湧き方・動きは同じ（釣り合いを変えない）', () => {
@@ -372,7 +382,7 @@ test('S8: 見回る者がいても、探して掴みに来る者の湧き方・�
 test('S8: 最大溜めの一発の半径は、軍勢が街で行きうる一番遠い距離（maxEnemyReach）に 40 m 以上の余裕を足した距離より大きい。どの種でも、湧く・探す・見回るどの軍勢もその距離の内にいる', () => {
   const reach = maxEnemyReach(CONFIG);
   expect(radiusFor(CONFIG.power.max, CONFIG)).toBeGreaterThanOrEqual(reach + 40);
-  expect(reach).toBeGreaterThan(CONFIG.enemy.patrol.band[1] * CONFIG.cityRadius); // 見回る者の帯の外端まで
+  expect(reach).toBeGreaterThanOrEqual(CONFIG.cityRadius); // 見回る者は街の端まで
   let far = 0;
   for (const seed of [1, 2, 7, 11, 23]) {
     const g = createGame({ seed });
@@ -384,4 +394,16 @@ test('S8: 最大溜めの一発の半径は、軍勢が街で行きうる一番�
   }
   expect(far).toBeLessThanOrEqual(reach);
   expect(far).toBeGreaterThan(reach - 40); // 見積もりが大きすぎない
+});
+
+test('fix1: 描ける数（enemyView の CAPACITY）は、払わずに 60 秒たったときの探す者（倒れた者を含む）と見回る者の全員より多い', async () => {
+  const { CAPACITY, HUNT_CAPACITY } = await import('../../src/render/enemyView.js');
+  expect(CAPACITY).toBe(HUNT_CAPACITY + CONFIG.enemy.patrol.count);
+  let most = 0;
+  for (const seed of [1, 2, 3, 4]) {
+    const g = createGame({ seed });
+    g.pressStart();
+    for (let t = 0; t < 59.9; t += 1 / 30) { g.update(1 / 30); most = Math.max(most, g.enemies.list.filter((e) => !e.patrol).length); }
+  }
+  expect(most).toBeLessThanOrEqual(HUNT_CAPACITY);
 });

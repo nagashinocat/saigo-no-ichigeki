@@ -87,7 +87,9 @@ export function dressCity(city, { density = 1, clutter = density, seed = 7 } = {
   for (const b of city.buildings) byLot.set(lotCenter(b.x) + ',' + lotCenter(b.z), b);
 
   for (const b of city.buildings) {
-    const r = createRng((seed * 7919 + b.id * 104729 + 0x2545) >>> 0);
+    // 飾りの乱数: S7 の街にもあったビルは S7 の番号で（広場のまわりの看板・飾りが S7 と同じ）、外の地区のビルは別の番号で
+    const did = b.legacyId ?? 1e5 + b.id;
+    const r = createRng((seed * 7919 + did * 104729 + 0x2545) >>> 0);
     const pick = (arr) => arr[Math.floor(r() * arr.length)];
     // 間引きの値 roll（0〜1）を引いて、続けて置く飾りに付ける。roll < 密度 のものだけ使う（画質の段が下がったら、
     // cityView が roll の小さい順に並べた InstancedMesh の count を減らすだけで同じように間引ける）

@@ -218,15 +218,13 @@ const dominant = (x, t0, t1) => {
 const energy = (x, t0 = 0, t1 = x.length / SR) => { let s = 0; for (let i = Math.round(t0 * SR); i < Math.min(x.length, t1 * SR); i++) s += x[i] * x[i]; return s / SR; };
 const lastAbove = (x, rms) => { let last = 0; for (let t = 0; t + 0.1 <= x.length / SR; t += 0.1) if (Math.sqrt(energy(x, t, t + 0.1) / 0.1) > rms) last = t + 0.1; return last; };
 
-// S8 で最大の半径と見せる期を広げ、最大の一発のうなりを保つ秒（hold = chaseEnd − resume）が約 0.4 秒延びた。この試しは
-// 前の版の設計図（oldRecipe）と今の設計図を同じ hold で比べるもので、S3 で決めた時刻表（S7 までの最大 440 m・見せる期 3.4 秒）の
-// hold で比べる（hold が延びると、どちらのうなりも 14 秒の窓の中で同じだけ延び、尾の長さの差が窓の端で縮んで見える）
-const S7_CFG = { ...CONFIG, radius: { ...CONFIG.radius, max: 440 }, finalBlast: { ...CONFIG.finalBlast, burstFrac: 0.4, showSec: 3.4 } };
+// S8 fix1: 今の時刻表（最大 730 m、見せる期 4.3 秒）の hold で比べる。hold が延びた分、うなりの尾が 14 秒の窓の端にかかるので、
+// 鳴らす窓を 16 秒に広げた
 test('最後の爆発音は前より重い（オフラインで鳴らして測る）: スマホで聞こえる 100〜300 Hz が最初の 1.5 秒で +3 dB 以上、低い一打の基音が低く、うなりが長く、超低域も厚い', () => {
-  const tl = createTimeline({ radius: 440, hitDist: 40 }, FINALE, S7_CFG);
+  const tl = timelines()[0];
   const o = finaleBoomOpts(tl, FINALE.burstRamp);
-  const was = renderLow(oldRecipe(1, { hold: o.hold, open: o.open, rng: seeded() }));
-  const now = renderLow(boomRecipe(1, { ...o, rng: seeded() }));
+  const was = renderLow(oldRecipe(1, { hold: o.hold, open: o.open, rng: seeded() }), 16);
+  const now = renderLow(boomRecipe(1, { ...o, rng: seeded() }), 16);
   // 基音（一打の最初の 0.5 秒でいちばん力のある周波数）
   const fWas = dominant(was.punch, 0.01, 0.5), fNow = dominant(now.punch, 0.01, 0.5);
   expect(fNow).toBeLessThan(fWas * 0.8);

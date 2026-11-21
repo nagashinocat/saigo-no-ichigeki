@@ -8,7 +8,8 @@ const PITCH = BLOCK + ROAD;  // 格子の間隔 m
 // 描画（道路の格子）が同じ寸法を使えるように公開する
 export const GRID = { BLOCK, ROAD, PITCH };
 
-const HEIGHT_FRAC = 0.7;     // 高さの山の裾（街の半径に対する割合）
+// 高さの山の裾 m（fix1: S7 の街と同じ 420 m。広場のまわりの高さを S7 と同じにし、外の地区は低く安く）
+const HEIGHT_R = 420;
 const CORE_N = 18;           // 芯の区画の範囲（±区画。S7 までの半径 420 m の街の格子）
 const EMPTY_R = 420;         // 空き地の割合が外へ向けて増えきる距離 m
 const FOOTPRINT = [8, 17];   // 建物の幅・奥行き m（区画内に収まる）
@@ -166,6 +167,7 @@ export function generateCity(seed, cfg = CONFIG, opts = {}) {
   const corridors = [...(opts.corridors ?? []), ...(transit ? transitCorridors(R) : [])];
   const lotRng = (i, j, salt) => createRng(lotSeed(seed, i, j, salt));
   const coreRng = createRng(seed), coreArng = createRng((seed ^ 0x51ab7) >>> 0);
+  let legacyCount = 0;
   const n = Math.ceil(R / PITCH) + 1;
   const buildings = [];
   const props = [];
@@ -202,8 +204,8 @@ export function generateCity(seed, cfg = CONFIG, opts = {}) {
       if ((empty && !fill) || dist > R || dist <= cfg.plazaRadius + Math.max(w, d) / 2 || blocked(cx, cz)) {
         // 建物なし
       } else {
-        // 高さの山は中心から HEIGHT_FRAC × R で裾まで下がる（S8: 広い街の外の地区は低く、遠くまで見通せる）
-        const t = Math.min(1, dist / (HEIGHT_FRAC * R));
+        // 高さの山は中心から HEIGHT_R m で裾まで下がる（広い街の外の地区は低く、遠くまで見通せる）
+        const t = Math.min(1, dist / HEIGHT_R);
         let h = Math.max(EDGE_H[0], edge + (CENTER_MAX_H - edge) * (1 - t) ** 2 * noise);
         const near = dist < NEAR_DIST;
         const arch = fill ? (ar[0] < 0.7 ? 'shop' : 'slab') : variety ? pickArch(ar[0], near ? ARCH_WEIGHTS.near : ARCH_WEIGHTS.far) : 'box';
@@ -220,8 +222,10 @@ export function generateCity(seed, cfg = CONFIG, opts = {}) {
           const re = reshapeFootprint(arch, cx, cz, x, z, w, d, [ar[17], ar[18], ar[19]], BLOCK);
           if (Math.hypot(re.x, re.z) <= R) fp = re;
         }
+        // S7 の街（半径 420 m、通り道なし）での番号。飾りの乱数に使う（広場のまわりの看板・飾りを S7 と同じに）
+        const legacyId = core && dist <= HEIGHT_R ? legacyCount++ : null;
         if (!onPath(fp.x, fp.z, fp.w, fp.d)) {
-        const b = { id: buildings.length, x: fp.x, z: fp.z, w: fp.w, d: fp.d, h, dist: Math.hypot(fp.x, fp.z), arch, kind: 'house', value: 0 };
+        const b = { id: buildings.length, legacyId, x: fp.x, z: fp.z, w: fp.w, d: fp.d, h, dist: Math.hypot(fp.x, fp.z), arch, kind: 'house', value: 0 };
         const shaped = variety ? shapeBuilding(b, arch, ar) : { h, parts: [part(0, 0, b.w, b.d, 0, h, ar[3])] };
         // 部品（塔屋など）で上限を超えたら全体を縮める
         const k = shaped.h > cap ? cap / shaped.h : 1;

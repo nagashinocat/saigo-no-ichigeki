@@ -144,8 +144,10 @@ export function createCityView(city, style, tier) {
   const sectorOf = (a) => Math.floor((((a + Math.PI + REGIONS.offset) / (2 * Math.PI)) % 1) * REGIONS.sectors) % REGIONS.sectors;
   const regionOf = (b) => (b.dist < innerR ? 0 : 1 + sectorOf(Math.atan2(b.z, b.x)));
   const sunDir = style.sunDir ?? new THREE.Vector3(0.8, 0.3, -0.45).normalize();
-  for (const kind of KINDS) {
-    const all = city.buildings.filter((b) => b.kind === kind);
+  // fix1: 種類の違いはインスタンスの aKind で材質が選ぶので、低い家（house）と高いビル（office と tower）の 2 つに分ける
+  // （細かい箱の縦の分け方が違う）。地区ごとに 2 つの InstancedMesh
+  for (const [kind, kinds] of [['house', ['house']], ['tall', ['office', 'tower']]]) {
+    const all = city.buildings.filter((b) => kinds.includes(b.kind));
     for (let region = 0; region <= REGIONS.sectors; region++) {
       const list = all.filter((b) => regionOf(b) === region);
       if (!list.length) continue;
@@ -155,22 +157,24 @@ export function createCityView(city, style, tier) {
       const sg = kind === 'house' ? [sg0[0], Math.min(sg0[1], HOUSE_V[tier] ?? HOUSE_V.mid), sg0[2]] : sg0;
       const crushAttr = new THREE.InstancedBufferAttribute(new Float32Array(n * 2), 2);
       const shape = new THREE.InstancedBufferAttribute(new Float32Array(n * 2), 2);
+      const kindAttr = new THREE.InstancedBufferAttribute(new Float32Array(n), 1);
       const boxGeo = (sgm) => {
         const g = new THREE.BoxGeometry(1, 1, 1, ...sgm).translate(0, 0.5, 0);
         g.setAttribute('aCrush', crushAttr);
         g.setAttribute('aShape', shape);
+        g.setAttribute('aKind', kindAttr);
         return g;
       };
       const geo = boxGeo(COARSE_SEGMENTS);
       const entryL = { kind, region, coarse: geo, fine: boxGeo(sg), meshes: [], spheres: regionSpheres(list, region) };
       lod.push(entryL);
-      const mesh = instanced(geo, style.building(kind), n, { cast: shadows, receive: shadows });
+      const mesh = instanced(geo, style.building(), n, { cast: shadows, receive: shadows });
       entryL.meshes.push(mesh);
       if (style.buildingDepth) mesh.customDepthMaterial = style.buildingDepth;
       mesh.name = 'buildings-' + kind + (region ? '-s' + region : '');
-      const colors = style.kindColors[kind];
       let i = 0;
       for (const b of list) {
+        const colors = style.kindColors[b.kind];
         base.set(pick(colors)).multiplyScalar(0.9 + 0.14 * rng());
         const entry = { parts: [], extras: [] };
         for (const p of b.parts) {
@@ -180,6 +184,7 @@ export function createCityView(city, style, tier) {
           else color.copy(base).multiplyScalar(0.95 + 0.1 * p.tone);
           mesh.setColorAt(i, color);
           shape.setXY(i, p.shape?.[0] ?? 0, p.shape?.[1] ?? 0);
+          kindAttr.setX(i, KINDS.indexOf(b.kind));
           entry.parts.push({ mesh, index: i });
           i++;
         }
@@ -242,6 +247,8 @@ export function createCityView(city, style, tier) {
         m.frustumCulled = !!sp;
         if (sp) m.boundingSphere = sp.clone();
       }
+      // mid / low: 最後の一発からは、外の地区の平らな影を描かない（つぶれていく遠いビルの影は光の中で見えない。描画を減らす）
+      if (l.shadow) l.shadow.visible = !(fine && l.region !== 0);
     }
   };
   applySpheres('coarse');
@@ -276,15 +283,45 @@ export function createCityView(city, style, tier) {
     mesh.setColorAt(i, color.setRGB(...x.color, THREE.SRGBColorSpace));
     attach(x.bid, mesh, i);
   });
+  // fix1: 屋上・壁の飾りと看板は、ビルと同じ地区（中心の円と 8 つの扇）ごとの InstancedMesh（画面の外の地区は描かない）。
+  // 外の地区は境界の球を持つ: 遊んでいる間は飾りの位置から、最後の一発からは押されて外へ動く扇の全体（ビルと同じ考え）
+  const regionByBid = new Map(city.buildings.map((b) => [b.id, regionOf(b)]));
+  const wedgeSphere = (region) => {
+    const a0 = (region - 1) / REGIONS.sectors * 2 * Math.PI - Math.PI - REGIONS.offset, a1 = a0 + 2 * Math.PI / REGIONS.sectors;
+    const pts = [];
+    for (let k = 0; k <= 4; k++) {
+      const a = a0 + (a1 - a0) * k / 4;
+      for (const r of [innerR * 0.8, Math.max(CONFIG.radius.max, R + 20)]) for (const y of [0, 300]) pts.push(new THREE.Vector3(Math.cos(a) * r, y, Math.sin(a) * r));
+    }
+    return new THREE.Sphere().setFromPoints(pts);
+  };
+  const dressRegions = []; // { mesh, spheres: { coarse, fine } }（中心の地区は入れない）
+  const regional = (list, makeGeo, material, name, place, kind, opts = {}) => {
+    const by = new Map();
+    for (const x of list) { const r = regionByBid.get(x.bid) ?? 0; (by.get(r) ?? by.set(r, []).get(r)).push(x); }
+    const out = [];
+    for (const [region, items] of [...by.entries()].sort((a, b) => a[0] - b[0])) {
+      const mesh = instanced(makeGeo(items.length), material, items.length, opts);
+      mesh.name = name + (region ? '-s' + region : '');
+      place(mesh, items);
+      tiered.push({ mesh, list: items, kind });
+      if (region) {
+        const pts = [];
+        for (const x of items) {
+          if (x.a) pts.push(_a.fromArray(x.a).clone(), _b.fromArray(x.b).clone());
+          else pts.push(new THREE.Vector3(x.x, x.y ?? 0, x.z), new THREE.Vector3(x.x, (x.y ?? 0) + (x.h ?? 1), x.z));
+        }
+        const coarse = new THREE.Sphere().setFromPoints(pts);
+        coarse.radius += 10; // 箱の大きさの分
+        dressRegions.push({ mesh, spheres: { coarse, fine: wedgeSphere(region) } });
+      }
+      out.push(mesh);
+    }
+    return out;
+  };
   // 屋上・区画の飾り: 底の面を省いた箱。壁と道の飾り: 底と裏（壁の側 = ローカルの -z）を省いた箱
-  const boxMesh = instanced(withCrush(openBox(['ny']), roofBoxes.length), style.props.clutter, roofBoxes.length, { receive: shadows });
-  boxMesh.name = 'clutter-boxes';
-  placeBoxes(boxMesh, roofBoxes);
-  tiered.push({ mesh: boxMesh, list: roofBoxes, kind: 'clutter' });
-  const wallMesh = instanced(withCrush(openBox(['ny', 'nz']), wallBoxes.length), style.props.clutter, wallBoxes.length, { receive: shadows });
-  wallMesh.name = 'clutter-wall';
-  placeBoxes(wallMesh, wallBoxes);
-  tiered.push({ mesh: wallMesh, list: wallBoxes, kind: 'clutter' });
+  const boxMeshes = regional(roofBoxes, (n) => withCrush(openBox(['ny']), n), style.props.clutter, 'clutter-boxes', placeBoxes, 'clutter', { receive: shadows });
+  const wallMeshes = regional(wallBoxes, (n) => withCrush(openBox(['ny', 'nz']), n), style.props.clutter, 'clutter-wall', placeBoxes, 'clutter', { receive: shadows });
 
   const tankGeo = mergeGeometries([
     new THREE.CylinderGeometry(1, 1, 0.62, 10, 1, true).translate(0, 0.62, 0),
@@ -300,21 +337,23 @@ export function createCityView(city, style, tier) {
   });
   tiered.push({ mesh: tankMesh, list: dress.tanks, kind: 'clutter' });
 
-  const signGeo = withCrush(unitBox(), dress.signs.length);
-  const tileAttr = new THREE.InstancedBufferAttribute(new Float32Array(Math.max(1, dress.signs.length) * 4), 4);
-  const signAttr = new THREE.InstancedBufferAttribute(new Float32Array(Math.max(1, dress.signs.length) * 4), 4);
-  signGeo.setAttribute('aTile', tileAttr);
-  signGeo.setAttribute('aSign', signAttr);
-  const signMesh = instanced(signGeo, style.props.sign, dress.signs.length);
-  signMesh.name = 'neon-signs';
-  dress.signs.forEach((x, i) => {
-    signMesh.setMatrixAt(i, boxMatrix(x.x, x.y, x.z, x.w, x.h, x.t, x.ry));
-    signMesh.setColorAt(i, color.setRGB(...x.color)); // ネオンの色は sRGB のままシェーダーへ（シェーダーが線形へ直す）
-    tileAttr.setXYZW(i, ...(x.tile ?? [0, 0, 0, 0]));
-    signAttr.setXYZW(i, x.flicker, x.phase, x.gain, x.mode);
-    attach(x.bid, signMesh, i);
-  });
-  tiered.push({ mesh: signMesh, list: dress.signs, kind: 'sign' });
+  const signGeo = (n) => {
+    const g = withCrush(unitBox(), n);
+    g.setAttribute('aTile', new THREE.InstancedBufferAttribute(new Float32Array(Math.max(1, n) * 4), 4));
+    g.setAttribute('aSign', new THREE.InstancedBufferAttribute(new Float32Array(Math.max(1, n) * 4), 4));
+    return g;
+  };
+  const placeSigns = (mesh, list) => {
+    const tileAttr = mesh.geometry.getAttribute('aTile'), signAttr = mesh.geometry.getAttribute('aSign');
+    list.forEach((x, i) => {
+      mesh.setMatrixAt(i, boxMatrix(x.x, x.y, x.z, x.w, x.h, x.t, x.ry));
+      mesh.setColorAt(i, color.setRGB(...x.color)); // ネオンの色は sRGB のままシェーダーへ（シェーダーが線形へ直す）
+      tileAttr.setXYZW(i, ...(x.tile ?? [0, 0, 0, 0]));
+      signAttr.setXYZW(i, x.flicker, x.phase, x.gain, x.mode);
+      attach(x.bid, mesh, i);
+    });
+  };
+  const signMeshes = regional(dress.signs, signGeo, style.props.sign, 'neon-signs', placeSigns, 'sign');
 
   const poolGeo = withCrush(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2).translate(0, 0.07, 0), dress.pools.length);
   const neonPools = instanced(poolGeo, style.props.neonPool, dress.pools.length);
@@ -333,11 +372,15 @@ export function createCityView(city, style, tier) {
     beaconMesh.setMatrixAt(i, boxMatrix(r.x, r.y, r.z, 1, 1, 1));
     attach(r.bid, beaconMesh, i);
   });
-  group.add(boxMesh, wallMesh, tankMesh, signMesh, neonPools, beaconMesh);
+  group.add(...boxMeshes, ...wallMeshes, tankMesh, ...signMeshes, neonPools, beaconMesh);
+  const applyDressSpheres = (level) => {
+    for (const { mesh, spheres } of dressRegions) { mesh.frustumCulled = true; mesh.boundingSphere = (level === 'fine' ? spheres.fine : spheres.coarse).clone(); }
+  };
+  applyDressSpheres('coarse');
   const dressCounts = { boxes: roofBoxes.length + wallBoxes.length, roofBoxes: roofBoxes.length, wallBoxes: wallBoxes.length, tanks: dress.tanks.length, signs: dress.signs.length, pools: dress.pools.length, beacons: dress.beacons.length };
   let tierNow = tier, closeView = false;
   // 壁と道の細かい飾りは、mid / low の上空の画面では描かない（演出・リプレイ・結末の近いカメラでは描く）
-  const applyWallVisibility = () => { wallMesh.visible = closeView || tierNow === 'high'; };
+  const applyWallVisibility = () => { for (const m of wallMeshes) m.visible = closeView || tierNow === 'high'; };
   applyWallVisibility();
 
   // 道路沿いの props
@@ -505,6 +548,7 @@ export function createCityView(city, style, tier) {
     setDetail(level) {
       for (const l of lod) for (const m of l.meshes) m.geometry = level === 'fine' ? l.fine : l.coarse;
       applySpheres(level);
+      applyDressSpheres(level);
       detail = level;
     },
     get detail() { return detail; },
@@ -512,10 +556,10 @@ export function createCityView(city, style, tier) {
     // 隠している壁の飾りも作る
     // S8: 最後の一発で差し替える細かい箱の形も、ここで一度だけ 1 画素の的へ描いて GPU へ送っておく（差し替えた瞬間に止まらない）
     warmup(renderer, camera, scene = group) {
-      const v = wallMesh.visible;
-      wallMesh.visible = true;
+      const v = wallMeshes.map((m) => m.visible);
+      for (const m of wallMeshes) m.visible = true;
       renderer.compile(scene, camera);
-      wallMesh.visible = v;
+      wallMeshes.forEach((m, i) => { m.visible = v[i]; });
       preloadFine(renderer, camera, scene === group ? null : scene);
     },
     // 爆発の球に沿ったゆがみを進める。fronts: [えぐれの半径, ...今の球の半径]（createFrontTracker）、

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { CONFIG } from '../config.js';
 import { groundHeight } from './sphereDeform.js';
 import { srgb } from './figureGeo.js';
 import { buildHeroBody, HERO_WIND } from './heroBody.js';
@@ -19,7 +20,9 @@ export const ENEMY_LOOK = {
   minPx: 16,         // 画面の上でこの高さ（CSS の px）より小さければ大きく描く
   maxBoost: 3,
 };
-const CAPACITY = 200; // S8: 街を見回る者（26 人）の分を足した
+// 描ける数: 主人公を探す者（60 秒で約 100 人。倒れた者も 3 秒残る）の上限 HUNT_CAPACITY と、街を見回る者の全員
+export const HUNT_CAPACITY = 130;
+export const CAPACITY = HUNT_CAPACITY + CONFIG.enemy.patrol.count;
 
 const hash = (n) => { const x = Math.sin(n * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
 

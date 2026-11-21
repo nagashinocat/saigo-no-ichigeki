@@ -98,7 +98,7 @@ test('飾りは種類ごとに 1 つの InstancedMesh（描画の回数を増や
   const hi = createCityView(city, createStyle('high'), 'high'), lo = createCityView(city, createStyle('low'), 'low');
   for (const n of ['clutter-boxes', 'clutter-tanks', 'neon-signs', 'neon-pools']) expect(names(hi).filter((x) => x === n).length).toBe(1);
   expect(lo.dressCounts.signs / hi.dressCounts.signs).toBeGreaterThan(0.44);
-  expect(lo.dressCounts.signs / hi.dressCounts.signs).toBeLessThan(0.56);
+  expect(lo.dressCounts.signs / hi.dressCounts.signs).toBeLessThan(0.6); // S8: 遠い地区は段によらず FAR_KEEP
   expect(lo.dressCounts.boxes / hi.dressCounts.boxes).toBeLessThan(0.5);
   // 看板の明るさ・ちらつき: low は bloom がないので控えめで、ちらつかない
   const sh = createStyle('high'), sl = createStyle('low');
@@ -162,7 +162,7 @@ test('fix1: 段が下がると、飾りは間引きの値の小さい順に残�
 test('fix1: ビルは遊んでいる間は粗い箱、最後の一発から細かい箱（同じつぶれ・屋根の形の値を使う）', () => {
   const view = createCityView(city, createStyle('high'), 'high');
   // S8: ビルは種類と地区ごとの InstancedMesh（'tower:0' は中心の地区）
-  const m = view.meshes['tower:0'];
+  const m = view.meshes['tall:0'];
   const coarse = m.geometry;
   expect(view.detail).toBe('coarse');
   view.setDetail('fine');
@@ -170,7 +170,7 @@ test('fix1: ビルは遊んでいる間は粗い箱、最後の一発から細�
   expect(m.geometry.index.count).toBeGreaterThan(coarse.index.count * 4);
   expect(m.geometry.getAttribute('aCrush')).toBe(coarse.getAttribute('aCrush'));
   expect(m.geometry.getAttribute('aShape')).toBe(coarse.getAttribute('aShape'));
-  let outline = null; view.group.traverse((o) => { if (o.name === 'outline-tower') outline = o; });
+  let outline = null; view.group.traverse((o) => { if (o.name === 'outline-tall') outline = o; });
   expect(outline.geometry).toBe(m.geometry);
   // 低い家（20m 未満）は細かくしても縦は 3 段まで
   view.setDetail('fine');
@@ -191,7 +191,7 @@ test('S8: ビルは種類と地区（中心の円と外の扇）ごとの Instan
   const view = createCityView(city, createStyle('mid'), 'mid');
   const R = CONFIG.cityRadius;
   const keys = Object.keys(view.meshes);
-  expect(keys.filter((k) => k.endsWith(':0')).length).toBe(3);
+  expect(keys.filter((k) => k.endsWith(':0')).length).toBe(2); // fix1: 低い家と高いビル（office と tower は aKind で一つの材質）
   expect(keys.length).toBeGreaterThan(6);
   const inSphere = (s, p) => s.center.distanceTo(p) <= s.radius + 1e-6;
   for (const b of city.buildings) {
@@ -211,6 +211,28 @@ test('S8: ビルは種類と地区（中心の円と外の扇）ごとの Instan
     expect(inSphere(m.boundingSphere, dir.multiplyScalar(CONFIG.radius.max))).toBe(true);
   }
   view.setDetail('coarse');
+});
+
+test('fix1: 屋上・壁の飾りと看板も地区ごと。外の地区の飾りは境界の球の内にあり、最後の一発からは扇の全体の球になる', () => {
+  const view = createCityView(city, createStyle('high'), 'high');
+  const metas = [];
+  view.group.traverse((o) => { if (/^(clutter-boxes|clutter-wall|neon-signs)-s\d+$/.test(o.name)) metas.push(o); });
+  expect(metas.length).toBeGreaterThan(12);
+  const p = new THREE.Vector3(), m4 = new THREE.Matrix4();
+  for (const m of metas) {
+    expect(m.frustumCulled).toBe(true);
+    for (let i = 0; i < m.count; i += 7) { m.getMatrixAt(i, m4); p.setFromMatrixPosition(m4); expect(m.boundingSphere.distanceToPoint(p)).toBeLessThanOrEqual(1e-6); }
+  }
+  view.setDetail('fine');
+  for (const m of metas) expect(m.boundingSphere.radius).toBeGreaterThan(150);
+});
+
+test('fix1: mid / low は最後の一発から、外の地区の平らな影を描かない（中心の地区の影は描く）', () => {
+  const view = createCityView(city, createStyle('mid'), 'mid');
+  const sh = []; view.group.traverse((o) => { if (o.name.startsWith('planarShadow-')) sh.push(o); });
+  expect(sh.every((o) => o.visible)).toBe(true);
+  view.setDetail('fine');
+  for (const o of sh) expect(o.visible).toBe(!/-s\d+$/.test(o.name));
 });
 
 test('S8: 上空の画面では、外の地区のうち画面に入るものだけを描く（後ろ・横の扇は描かない）', () => {

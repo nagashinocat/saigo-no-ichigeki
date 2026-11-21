@@ -301,6 +301,34 @@ export function createSpaceView(tier = 'high') {
   line.frustumCulled = false;
   scene.add(line);
 
+  // fix1: 街を見回る軍勢の光（緑の点）と、光の半球に飲まれた瞬間の火花（宇宙からも「街じゅうの軍勢が消える」のが読める）
+  const SPARK_MAX = 128;
+  const spPos = new THREE.BufferAttribute(new Float32Array(SPARK_MAX * 3), 3), spAge = new THREE.BufferAttribute(new Float32Array(SPARK_MAX), 1);
+  spPos.setUsage(THREE.DynamicDrawUsage); spAge.setUsage(THREE.DynamicDrawUsage);
+  const spGeo = new THREE.BufferGeometry();
+  spGeo.setAttribute('position', spPos); spGeo.setAttribute('aAge', spAge); spGeo.setDrawRange(0, 0);
+  const sparks = new THREE.Points(spGeo, additive({
+    uniforms: { uPR: { value: 1 } }, depthTest: false,
+    vertexShader: `attribute float aAge; uniform float uPR; varying float vA; varying float vF;
+      void main() {
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        if (aAge < 0.0) { vA = 0.75; vF = 0.0; gl_PointSize = 2.6 * uPR; }
+        else { float u = clamp(aAge / 0.7, 0.0, 1.0); vA = (1.0 - u) * (1.0 - u); vF = 1.0; gl_PointSize = (6.0 + 22.0 * sqrt(u)) * uPR; }
+      }`,
+    fragmentShader: `varying float vA; varying float vF;
+      void main() {
+        vec2 q = gl_PointCoord * 2.0 - 1.0; float r = dot(q, q); if (r > 1.0) discard;
+        vec3 g = vec3(0.45, 1.0, 0.7);
+        vec3 c = mix(g * (exp(-r * 8.0) * 1.4 + exp(-r * 2.5) * 0.4), vec3(1.0, 1.0, 0.92) * exp(-r * 6.0) * 2.0 + g * exp(-r * 2.0) * 0.5, vF);
+        gl_FragColor = vec4(c * vA, 0.0);
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
+      }`,
+  }));
+  sparks.renderOrder = 4;
+  sparks.frustumCulled = false;
+  scene.add(sparks);
+
   const _qz = new THREE.Quaternion(), _z = new THREE.Vector3(0, 0, 1), _dir = new THREE.Vector3(), _look = new THREE.Vector3();
   let camRoll = 0;
 
@@ -352,6 +380,14 @@ export function createSpaceView(tier = 'high') {
       line.scale.set(len, thick, 1);
     },
     setScar(I) { earthU.uScar.value = I; },
+    // list: [{ x, z, age }]（宇宙の座標。age は飲まれてからの秒、生きていれば -1）、pixelRatio: 画素比
+    setSparks(list, pixelRatio = 1) {
+      const n = Math.min(SPARK_MAX, list.length);
+      for (let i = 0; i < n; i++) { spPos.setXYZ(i, list[i].x, 0.15, list[i].z); spAge.setX(i, list[i].age); }
+      spGeo.setDrawRange(0, n);
+      spPos.needsUpdate = spAge.needsUpdate = true;
+      sparks.material.uniforms.uPR.value = pixelRatio;
+    },
     // 衝撃波の殻: 半径 r（単位）、明るさ I
     setShell(r, I) {
       shell.visible = I > 0.001;

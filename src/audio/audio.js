@@ -41,7 +41,9 @@ export function boomRecipe(size, { hold = 0, open = 0, heavy = 0, rng = Math.ran
   };
   const air = { dur: 0.22 + 1.2 * s, freq: 1700 - 800 * s, q: 1.1, attack: 0.002, gain: 0.22 + 0.06 * s };
   const sub = {
-    dur: (0.45 + 4.6 * s ** 1.3) * (1 + 0.4 * hv) + h, hold: h, cutoff: 115 - 60 * s,
+    // S8 fix1: 重い一発の地響きの尾（保つ秒のあと消えるまで）を 1.4 → 1.8 倍に（見せる期を延ばして保つ秒が延びた分、前の版より
+    // 長く残る差が縮んでいた）
+    dur: (0.45 + 4.6 * s ** 1.3) * (1 + 0.8 * hv) + h, hold: h, cutoff: 115 - 60 * s,
     attack: 0.015 + 0.2 * s, gain: (0.3 + 0.6 * s) * (1 + 0.15 * hv),
     wobble: { rate: (6 - 3 * s) * (0.9 + 0.2 * rng()), depth: 0.1 + 0.18 * s },
   };

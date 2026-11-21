@@ -9,7 +9,8 @@ export const CONFIG = {
   puff:    { cost: 4.5, radius: 22 },
   // 最後の一発の半径（貯めた力 / power.max で決まる）。S8: max 440 → 720（街の端 680 m と、見回る軍勢の一番外
   // （maxEnemyReach、約 603 m）より十分先まで。最大溜めなら街のどこにいる軍勢も必ず巻き込む）
-  radius:  { min: 10, max: 720, exponent: 0.75 },
+  // fix1（持ち主 15:33「軍勢は街の全体に」）: 見回る者が街の端まで行くので max 720 → 730（maxEnemyReach 約 685 m + 40 m より先）
+  radius:  { min: 10, max: 730, exponent: 0.75 },
   // 爆発は「じわじわ → 突然弾ける」: creepSec/burstSec は最大の一発での秒数（小さい一発は sqrt で縮む）
   // fadeSec: 前線が届いてから球が消えるまで（上空カメラが全体の構図で球を見せる間）
   // （この creep/burst は払うの曲線。最後の一発のじわじわ期も同じ creepSec / creepFrac）
@@ -41,9 +42,10 @@ export const CONFIG = {
     searchSpeed: 24, inwardBias: 0.8, turnRate: 16, lookAhead: 2.5, accel: 30, brake: 70,
     spotDist: 17, spotEvery: 0.15, sightMargin: 0.8, alertAfter: 12, alertRate: 0.05, alertAtSpawn: 0.1,
     spotPause: 0.45, speed: 18, chaseAccel: 60, chaseTurnRate: 8, snapDist: 6, slowDist: 1.5, slowMin: 0.3, grabRange: 2.5,
-    // S8: 広くなった街を見回る者（enemies.js）。始めから count 人が、band × cityRadius の距離の帯の道路を speed m/s で走り回る。
-    // 主人公を探さず掴みにも来ない（釣り合いは前のまま）。最大溜めの一発はこの帯の外端より先まで届く（maxEnemyReach）
-    patrol: { count: 26, band: [0.2, 0.88], speed: 22 },
+    // S8: 広くなった街を見回る者（enemies.js）。始めから count 人が、探す者の外から街の端まで（patrolBand）の道路を speed m/s で走り回る
+    // （持ち主 15:33「軍勢は街の全体にいた方が良い」で 26 → 70 人、帯を街の端まで）。主人公を探さず掴みにも来ない（釣り合いは前のまま）。
+    // 最大溜めの一発はこの帯の外端より先まで届く（maxEnemyReach）
+    patrol: { count: 70, speed: 22 },
   },
   score:   { comboStep: 0.1, comboMax: 3 },
 };

@@ -19,8 +19,8 @@ const METAL = [0.26, 0.27, 0.30], STEEL = [0.58, 0.59, 0.62];
 const TRAIN = { body: [0.74, 0.76, 0.8], stripe: [0.98, 0.42, 0.12], roof: [0.34, 0.35, 0.38], h: 3.5, d: 2.9, lift: 0.9 };
 // 光の色（sRGB）。行く向き（+）は白、戻る向き（-）は赤。照明はナトリウム灯の琥珀。窓は暖かい白
 export const TRANSIT_LIGHT = {
-  head: [1.0, 0.95, 0.86], tail: [1.0, 0.13, 0.08], lamp: [1.0, 0.62, 0.24], window: [1.0, 0.86, 0.66], spark: [0.72, 0.88, 1.0],
-  gain: { head: 0.85, tail: 0.95, lamp: 0.7, window: 0.62, cab: 1.4, spark: 2.4 },
+  head: [1.0, 0.95, 0.86], tail: [1.0, 0.13, 0.08], lamp: [1.0, 0.62, 0.24], window: [1.0, 0.86, 0.66], spark: [0.72, 0.88, 1.0], edge: [0.55, 0.85, 1.0],
+  gain: { head: 0.85, tail: 0.95, lamp: 0.7, window: 0.62, cab: 1.4, spark: 2.4, edge: 0.55 },
 };
 const DERAIL = { out: [26, 46], up: [9, 16], spin: [1.2, 3.2], gravity: 22, life: 1.7 };
 const SPARK = { every: [1.2, 3.6], dur: 0.12 };
@@ -36,6 +36,7 @@ export function createTransitView(transit, style, tier, { markRange } = {}) {
   group.name = 'transitView';
   const { segments, pillars, paths, config: T } = transit;
   const rng = createRng(0x7a11 + segments.length);
+  const dyn = createRng(0x7a12 + segments.length); // 動きの乱数（脱線・火花）。setState で巻き戻す
   const mark = markRange ?? ((attr, start, count) => { attr.addUpdateRange(start, count); attr.needsUpdate = true; });
   const color = new THREE.Color();
   const segIndex = new Map(segments.map((s, i) => [s.id, i]));
@@ -45,6 +46,14 @@ export function createTransitView(transit, style, tier, { markRange } = {}) {
   const off = (s, k) => [-Math.sin(s.heading) * k, Math.cos(s.heading) * k]; // 道の横（左）へ k m
   const put = (seg, x, y, z, w, h, d, ry, c) => parts.push({ seg, x, y, z, w, h, d, ry, color: c });
   const lampSpots = []; // 照明 { seg, x, y, z, ry }
+  const strips = []; // 橋桁の縁の光の線（遠くからも高速の線が読める）{ seg, x, y, z, len, ry }
+  // 柱の上の横梁: 柱が 1 本なら柱の上に橋桁の幅で、門形（2 本）なら 2 本の柱を結ぶ長さで（道の上をまたぐ）
+  const beam = (s, p, y, h, t, w, ry) => {
+    if (p.legs.length < 2) { const [x, z] = p.legs[0]; put(s.id, x, y, z, t, h, w, ry, CONCRETE[1]); return; }
+    const [[x1, z1], [x2, z2]] = p.legs;
+    const span = Math.hypot(x2 - x1, z2 - z1) + p.w;
+    put(s.id, (x1 + x2) / 2, y, (z1 + z2) / 2, span, h, t, -Math.atan2(z2 - z1, x2 - x1), CONCRETE[1]);
+  };
   for (const s of segments) {
     const cx = s.x, cz = s.z, ry = along(s.heading), conc = CONCRETE[Math.floor(rng() * CONCRETE.length)];
     const pil = pillars.filter((p) => p.seg === s.id);
@@ -63,10 +72,14 @@ export function createTransitView(transit, style, tier, { markRange } = {}) {
       const [hx, hz] = off(s, side * (s.width / 2 - 2.0));
       put(s.id, cx + (lx + hx) / 2, s.y + 6.1, cz + (lz + hz) / 2, 0.16, 0.16, 3.4, ry, METAL);
       lampSpots.push({ seg: s.id, x: cx + hx, y: s.y + 5.85, z: cz + hz, ry });
+      for (const k of [-1, 1]) {
+        const [ex, ez] = off(s, k * (s.width / 2 - 0.2));
+        strips.push({ seg: s.id, x: cx + ex, y: s.y + 1.08, z: cz + ez, len: s.len, ry });
+      }
       for (const p of pil) {
         const hb = p.h - 1.3;
-        put(s.id, p.x, 0, p.z, p.w, hb - 1.5, p.w, ry, CONCRETE[0]);
-        put(s.id, p.x, hb - 1.6, p.z, 2.6, 1.6, s.width * 0.82, ry, CONCRETE[1]); // 横梁
+        for (const [x, z] of p.legs) put(s.id, x, 0, z, p.w, hb - 1.5, p.w, ry, CONCRETE[0]);
+        beam(s, p, hb - 1.6, 1.6, 2.6, s.width * 0.82, ry); // 横梁
       }
     } else {
       put(s.id, cx, s.y - s.thick, cz, s.len + 0.05, s.thick, s.width, ry, RAIL_C);
@@ -83,8 +96,8 @@ export function createTransitView(transit, style, tier, { markRange } = {}) {
       put(s.id, a0[0] + ox + ax, s.y + 6.3, a0[1] + oz + az, 0.14, 0.14, s.width * 0.55, ry, METAL);
       put(s.id, cx, s.y + 5.6, cz, s.len + 0.05, 0.05, 0.05, ry, [0.12, 0.12, 0.13]);
       for (const p of pil) {
-        put(s.id, p.x, 0, p.z, p.w, p.h - 0.7, p.w, ry, CONCRETE[2]);
-        put(s.id, p.x, p.h - 0.8, p.z, 1.8, 0.8, s.width * 0.85, ry, CONCRETE[0]);
+        for (const [x, z] of p.legs) put(s.id, x, 0, z, p.w, p.h - 0.7, p.w, ry, CONCRETE[2]);
+        beam(s, p, p.h - 0.8, 0.8, 1.8, s.width * 0.85, ry);
       }
     }
   }
@@ -127,7 +140,7 @@ export function createTransitView(transit, style, tier, { markRange } = {}) {
   const Rl = T.rail, rp = paths.rail;
   const train = { s: rng() * rp.length, v: Rl.speed, cars: Array.from({ length: Rl.cars }, () => ({ state: 'run' })), spark: { next: 1, until: -1, car: 1 } };
   const WIN = 5; // 一両の片側の窓の数
-  const nLamp = lampSpots.length, nCar = cars.length, nWin = Rl.cars * 2 * WIN, nCab = 4, nSpark = 1;
+  const nLamp = lampSpots.length + strips.length, nCar = cars.length, nWin = Rl.cars * 2 * WIN, nCab = 4, nSpark = 1;
   const nLights = nLamp + nCar + nWin + nCab + nSpark;
   const lightGeo = new THREE.BoxGeometry(1, 1, 1).translate(0, 0.5, 0);
   const lCrush = new THREE.InstancedBufferAttribute(new Float32Array(nLights * 2), 2);
@@ -139,13 +152,21 @@ export function createTransitView(transit, style, tier, { markRange } = {}) {
   lights.frustumCulled = false;
   lights.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
   const G = TRANSIT_LIGHT.gain;
-  const setLight = (i, c, gain) => { lights.setColorAt(i, color.setRGB(...c)); lSign.setXYZW(i, 0, (i * 0.618) % 1, gain, 2); };
-  lampSpots.forEach((l, i) => {
-    _q.setFromAxisAngle(UP, l.ry);
-    lights.setMatrixAt(i, _m.compose(_p.set(l.x, l.y, l.z), _q, _s.set(0.5, 0.22, 1.3)));
-    setLight(i, TRANSIT_LIGHT.lamp, G.lamp);
-    bySeg.get(l.seg).lights.push(i);
-  });
+  // 描き方 3: 遠いほど画面で大きく（一定の画素より細くしない・暗くしない）、霞の中でも光る（看板の材質。sign の描き方の説明）
+  const setLight = (i, c, gain) => { lights.setColorAt(i, color.setRGB(...c)); lSign.setXYZW(i, 0, (i * 0.618) % 1, gain, 3); };
+  const placeStatic = () => {
+    lampSpots.forEach((l, i) => {
+      _q.setFromAxisAngle(UP, l.ry);
+      lights.setMatrixAt(i, _m.compose(_p.set(l.x, l.y, l.z), _q, _s.set(0.5, 0.22, 1.3)));
+    });
+    strips.forEach((l, k) => {
+      _q.setFromAxisAngle(UP, l.ry);
+      lights.setMatrixAt(lampSpots.length + k, _m.compose(_p.set(l.x, l.y, l.z), _q, _s.set(l.len, 0.12, 0.12)));
+    });
+  };
+  placeStatic();
+  lampSpots.forEach((l, i) => { setLight(i, TRANSIT_LIGHT.lamp, G.lamp); bySeg.get(l.seg).lights.push(i); });
+  strips.forEach((l, k) => { const i = lampSpots.length + k; setLight(i, TRANSIT_LIGHT.edge, G.edge); bySeg.get(l.seg).lights.push(i); });
   const C0 = nLamp, W0 = C0 + nCar, K0 = W0 + nWin, S0 = K0 + nCab;
   cars.forEach((c, k) => setLight(C0 + k, c.dir > 0 ? TRANSIT_LIGHT.head : TRANSIT_LIGHT.tail, c.dir > 0 ? G.head : G.tail));
   for (let i = 0; i < nWin; i++) setLight(W0 + i, TRANSIT_LIGHT.window, G.window * (0.8 + 0.4 * rng()));
@@ -175,6 +196,8 @@ export function createTransitView(transit, style, tier, { markRange } = {}) {
     // 長さ s の点がどの区間か（区間は s0〜s1。輪は回り込む）
     const L = path.length; s = path.closed ? ((s % L) + L) % L : s;
     const list = line === 'expressway' ? xSegs : rSegs;
+    // 輪の最後の区間は長さ L をまたぐ（s0 〜 最初の橋脚 + L）。最初の橋脚より手前の s は最後の区間
+    if (path.closed && s < list[0].s0) s += L;
     let lo = 0, hi = list.length - 1;
     while (lo < hi) { const m = (lo + hi + 1) >> 1; if (list[m].s0 <= s) lo = m; else hi = m - 1; }
     return list[lo];
@@ -273,10 +296,10 @@ export function createTransitView(transit, style, tier, { markRange } = {}) {
       events.push({ kind: 'vaporize', target });
       return;
     }
-    const r = (a) => a[0] + (a[1] - a[0]) * rng();
+    const r = (a) => a[0] + (a[1] - a[0]) * dyn();
     const ox = car.x / Math.max(1, dist), oz = car.z / Math.max(1, dist), out = r(DERAIL.out);
-    Object.assign(car, { state: 'derail', vx: ox * out + (rng() - 0.5) * 8, vy: r(DERAIL.up), vz: oz * out + (rng() - 0.5) * 8,
-      rx: 0, rz: 0, wx: (rng() < 0.5 ? -1 : 1) * r(DERAIL.spin), wz: (rng() < 0.5 ? -1 : 1) * r(DERAIL.spin), wy: (rng() - 0.5) * 2, life: 0 });
+    Object.assign(car, { state: 'derail', vx: ox * out + (dyn() - 0.5) * 8, vy: r(DERAIL.up), vz: oz * out + (dyn() - 0.5) * 8,
+      rx: 0, rz: 0, wx: (dyn() < 0.5 ? -1 : 1) * r(DERAIL.spin), wz: (dyn() < 0.5 ? -1 : 1) * r(DERAIL.spin), wy: (dyn() - 0.5) * 2, life: 0 });
     events.push({ kind: 'derail', target });
   }
 
@@ -337,8 +360,8 @@ export function createTransitView(transit, style, tier, { markRange } = {}) {
       const sp = train.spark;
       if (time >= sp.next) {
         sp.until = time + SPARK.dur;
-        sp.next = time + SPARK.every[0] + (SPARK.every[1] - SPARK.every[0]) * rng();
-        sp.car = 1 + 2 * Math.floor(rng() * Math.floor((Rl.cars - 1) / 2));
+        sp.next = time + SPARK.every[0] + (SPARK.every[1] - SPARK.every[0]) * dyn();
+        sp.car = 1 + 2 * Math.floor(dyn() * Math.floor((Rl.cars - 1) / 2));
       }
       writeTrain();
       // 隠した区間の照明は毎フレーム消しておく（光の行列は毎フレーム全部送るので）
@@ -371,10 +394,8 @@ export function createTransitView(transit, style, tier, { markRange } = {}) {
       for (const c of train.cars) { for (const k of Object.keys(c)) delete c[k]; c.state = 'run'; }
       broken.clear();
       for (const e of bySeg.values()) e.lightsHidden = false;
-      lampSpots.forEach((l, i) => {
-        _q.setFromAxisAngle(UP, l.ry);
-        lights.setMatrixAt(i, _m.compose(_p.set(l.x, l.y, l.z), _q, _s.set(0.5, 0.22, 1.3)));
-      });
+      placeStatic();
+      dyn.reseed(); // 脱線の吹き飛び方と火花の間合いの乱数も放った瞬間へ戻す（リプレイは毎回同じ）
       events.length = 0;
       writeTrain();
       writeLights();

@@ -1,5 +1,5 @@
 import { test, expect } from 'vitest';
-import { buildTransit, transitPaths, pointAt, pathDist, segDist, TRANSIT } from '../../src/world/transit.js';
+import { buildTransit, transitPaths, pointAt, pathDist, segDist, TRANSIT, LANE_HALF } from '../../src/world/transit.js';
 import { GRID } from '../../src/world/cityGen.js';
 import { CONFIG } from '../../src/config.js';
 
@@ -11,8 +11,8 @@ const t = buildTransit(R);
 test('高速は街を端から端まで横切り、環状線は街を一周する。どちらも広場から plazaKeep m より離れる（上空の画面の通りをふさがない）', () => {
   const { expressway, rail } = transitPaths(R);
   const xs = expressway.pts.map((p) => p[0]);
-  expect(Math.min(...xs)).toBeLessThan(-R);
-  expect(Math.max(...xs)).toBeGreaterThan(R);
+  expect(Math.min(...xs)).toBeLessThan(-R * 0.85); // 街を端から端まで（fix1: 街の端の手前で終わる）
+  expect(Math.max(...xs)).toBeGreaterThan(R * 0.85);
   expect(rail.closed).toBe(true);
   expect(rail.length).toBeGreaterThan(2 * Math.PI * R * TRANSIT.rail.ring * 0.99);
   expect(pathDist(expressway, 0, 0)).toBeGreaterThan(TRANSIT.plazaKeep);
@@ -53,11 +53,25 @@ test('橋桁の区間は道筋をすき間なく覆い（前の区間の終わ�
   expect(r[r.length - 1].b[1]).toBeCloseTo(r[0].a[1], 6);
 });
 
-test('橋脚はたいてい道路（軍勢が飛ぶ道）の外の区画に立つ', () => {
+test('fix1: 橋脚の柱は車線（道路の中心線から LANE_HALF m の内、軍勢が飛ぶ所）にかからない（歩道・区画の上か、道をまたぐ門形）', () => {
   const off = (v) => Math.abs(v - (Math.round(v / GRID.PITCH - 0.5) + 0.5) * GRID.PITCH);
-  const onRoad = t.pillars.filter((p) => off(p.x) < GRID.ROAD / 2 + 1.2 || off(p.z) < GRID.ROAD / 2 + 1.2);
-  expect(onRoad.length / t.pillars.length).toBeLessThan(0.15); // 道筋が道路に沿って斜めに曲がる所だけは道路に立つ
-  for (const p of t.pillars) expect(t.segments.some((s) => s.id === p.seg)).toBe(true);
+  expect(LANE_HALF).toBe(GRID.ROAD / 2 - 0.5);
+  let n = 0;
+  for (const p of t.pillars) {
+    expect(p.legs.length).toBeGreaterThanOrEqual(1);
+    for (const [x, z] of p.legs) {
+      expect(off(x)).toBeGreaterThanOrEqual(LANE_HALF + p.w / 2);
+      expect(off(z)).toBeGreaterThanOrEqual(LANE_HALF + p.w / 2);
+      n++;
+    }
+    expect(t.segments.some((s) => s.id === p.seg)).toBe(true);
+  }
+  expect(n).toBeGreaterThan(100);
+});
+
+test('fix1: 高速は街の内で終わる（最大の一発が全部を飲み、終わったあとの街の外に残らない）', () => {
+  for (const p of t.paths.expressway.pts) expect(Math.hypot(...p)).toBeLessThanOrEqual(R - TRANSIT.expressway.endPad + 1e-6);
+  for (const s of t.segments) expect(Math.hypot(...s.a) + 1).toBeLessThan(CONFIG.radius.max);
 });
 
 test('最大の一発は高架の全部の区間に届く（街の中の区間）', () => {

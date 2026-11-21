@@ -30,6 +30,7 @@ import { createAudio, finaleBoomOpts } from './audio/audio.js';
 import { createHitFeed } from './audio/hitFeed.js';
 import { transitObstacles } from './world/transit.js';
 import { transitMix } from './audio/transitSound.js';
+import { createPatrolGlow } from './render/patrolGlow.js';
 import { createBgm } from './audio/bgm.js';
 
 const MAX_FRAME_DT = 0.1;
@@ -209,6 +210,9 @@ function ensureHeroBody() {
 game.on('shot', ensureHeroBody);
 game.on('shot', () => { if (enemyView.focusMesh?.geometry !== riderBuilder.finish().geometry) enemyView.setRiderBody(riderBuilder.body); });
 game.on('over', ensureHeroBody);
+// 街を見回る軍勢の光の点と、光の壁に飲まれた瞬間の火花（fix1。遠くの地区の軍勢も読める）
+const patrolGlow = createPatrolGlow(CONFIG.enemy.patrol.count, tier);
+cityScene.add(patrolGlow.points);
 const heroAura = createHeroAura(tier); // 浮いている主人公のまわりの力のゆらぎ
 cityScene.add(heroAura.group);
 
@@ -249,7 +253,7 @@ game.on('cinematicStart', (shot) => {
   const plan = planFinale({ shot, rng: shotRng, crater, lead, buildings, enemies: game.enemies.list, retreat: false });
   finalBlastSize = Math.sqrt(shot.radius / CONFIG.radius.max);
   // 逃げる道は高架の橋桁もよける（S8）
-  cinematic.play(plan, shot, { buildings, retreat: () => planRetreat(plan, { buildings: [...buildings, ...transitObs], crater, radius: shot.radius, lead }) });
+  cinematic.play(plan, shot, { buildings, enemies: () => game.enemies.list, retreat: () => planRetreat(plan, { buildings: [...buildings, ...transitObs], crater, radius: shot.radius, lead }) });
 });
 game.on('cinematicEnd', () => cinematic.end());
 // 演出の音の段取り
@@ -302,7 +306,7 @@ function onTransit(events) {
   for (const e of events) {
     if (e.kind === 'vaporize') explosionView.vaporize(e.target);
     const hit = { hit: { id: e.target.id + e.kind[0], kind: e.kind }, target: e.target };
-    if (replay.active) hitFeed.replayHit(hit); else hitFeed.gameHit(hit);
+    if (replay.active) hitFeed.replayHit(hit); else hitFeed.gameHit(hit, { replayPending: !!replaySnap });
   }
 }
 
@@ -331,6 +335,7 @@ const replay = createReplay(views, {
   // 放つ直前へ戻す: 街の姿・破片と瓦礫・爆発の見た目・地面のえぐれ。爆発と軍勢は写しから起こし直す
   onRestore() {
     cityView.restore(citySnap);
+    patrolGlow.reset();
     destruction.reset();
     explosionView.reset();
     fronts.reset();
@@ -394,7 +399,7 @@ function stepGame(gdt) {
 // 世界（破片・粉・ビルのつぶれ・爆発の見た目・軍勢・主人公のまわり）を wdt 秒進める。
 // live: game.blasts と同じ形の一発の一覧、enemies: 軍勢の一覧、cam: 今描いているカメラ、focus: 手前の物理の焦点（null なら全部プール）
 // glowScale: 軍勢と主人公が爆発の光で白く光る強さの倍率（リプレイの最後のカットは影絵にするので 0 へ）
-const _frustum = new THREE.Frustum(), _projView = new THREE.Matrix4(), _sph = new THREE.Sphere(), _sphC = new THREE.Vector3();
+const _frustum = new THREE.Frustum(), _projView = new THREE.Matrix4(), _sph = new THREE.Sphere(), _sphC = new THREE.Vector3(), _shown = [];
 function stepWorld(wdt, live, enemies, cam, focus, glowScale = 1) {
   const ps = pointScaleFor(cam);
   destruction.setPhysicsFocus(focus);
@@ -413,10 +418,12 @@ function stepWorld(wdt, live, enemies, cam, focus, glowScale = 1) {
   // 光が弱まった分だけ、主人公は光を背にした影絵になる（リプレイの最後のカット）
   // 最後の一発の演出・リプレイ・時間切れの結末の間は、上空カメラ用の補助表示（目印・透かし）を出さない
   const aids = !(debugCam || cinematic.active || replay.active || blackhole.active);
-  // 街を見回る者（S8）は、今のカメラの画面に入る者だけ描く（遠くの見えないバイクの頂点を描かない）
+  // 街を見回る者（S8）は、今のカメラの画面に入る者だけ描く（遠くの見えないバイクの頂点を描かない）。毎フレーム同じ配列を使う
   _frustum.setFromProjectionMatrix(_projView.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse));
-  const shown = enemies.filter((e) => !e.patrol || _frustum.intersectsSphere(_sph.set(_sphC.set(e.x, 3, e.z), 12)));
-  enemyView.sync(shown, { fronts: list, pointScale: ps, glow: explosionView.ground.heat * glowScale, dt: wdt, pixelRatio: renderer.getPixelRatio(), silhouette: 1 - glowScale, aids });
+  _shown.length = 0;
+  for (const e of enemies) if (!e.patrol || _frustum.intersectsSphere(_sph.set(_sphC.set(e.x, 3, e.z), 12))) _shown.push(e);
+  patrolGlow.update(enemies, { pixelRatio: renderer.getPixelRatio(), dt: wdt });
+  enemyView.sync(_shown, { fronts: list, pointScale: ps, glow: explosionView.ground.heat * glowScale, dt: wdt, pixelRatio: renderer.getPixelRatio(), silhouette: 1 - glowScale, aids });
   heroAura.update(wdt, ps, 1 - glowScale);
 }
 

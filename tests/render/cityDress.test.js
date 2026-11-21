@@ -49,7 +49,8 @@ test('画質の段で数を間引く: 看板は mid で約 75%、low で約半�
   const hi = at('high'), mid = at('mid'), low = at('low');
   const ratio = (o, k) => o[k].length / hi[k].length;
   expect(ratio(mid, 'signs')).toBeGreaterThan(0.68); expect(ratio(mid, 'signs')).toBeLessThan(0.82);
-  expect(ratio(low, 'signs')).toBeGreaterThan(0.44); expect(ratio(low, 'signs')).toBeLessThan(0.56);
+  // S8: 遠い地区の縦看板・ネオン管は、どの段でも roll < FAR_KEEP（0.4）だけ。low でもその分は減らないので、上限を 0.56 → 0.6
+  expect(ratio(low, 'signs')).toBeGreaterThan(0.44); expect(ratio(low, 'signs')).toBeLessThan(0.6);
   expect(ratio(mid, 'boxes')).toBeGreaterThan(0.5); expect(ratio(mid, 'boxes')).toBeLessThan(0.72);
   expect(ratio(low, 'boxes')).toBeGreaterThan(0.3); expect(ratio(low, 'boxes')).toBeLessThan(0.5);
 });

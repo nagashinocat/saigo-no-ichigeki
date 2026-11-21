@@ -24,14 +24,14 @@ test('高架は 4 つの InstancedMesh（長い骨組み・短い骨組み・光
   for (const s of city.transit.segments) {
     const p = t.segmentParts(s.id);
     expect(p.struct.length).toBeGreaterThanOrEqual(4);
-    if (s.line === 'expressway') expect(p.lights.length).toBe(1);
+    if (s.line === 'expressway') expect(p.lights.length).toBe(3); // 照明 1 つと縁の光の線 2 本（fix1）
   }
 });
 
 test('高速の車の光は流れる: 行く向きの車線は白、戻る向きは赤。時間がたつと位置が進む', () => {
   const view = createCityView(city, createStyle('high'), 'high');
   const L = view.transit.lights;
-  const nLamp = city.transit.segments.filter((s) => s.line === 'expressway').length;
+  const nLamp = 3 * city.transit.segments.filter((s) => s.line === 'expressway').length;
   const cols = new Set();
   const before = posOf(L, nLamp + 3);
   for (let i = nLamp; i < nLamp + 40; i++) { const c = new THREE.Color(); L.getColorAt(i, c); cols.add(c.r > 0.9 && c.g > 0.9 ? 'white' : c.r > 0.9 && c.g < 0.3 ? 'red' : 'other'); }
@@ -63,7 +63,7 @@ test('つぶす: 区間の骨組みと照明が同じ時刻・同じ速さでつ
   // その区間の上を走る車の光は描かない
   for (let k = 0; k < 30; k++) {
     view.update(0.25, {});
-    const nLamp = city.transit.segments.filter((s) => s.line === 'expressway').length;
+    const nLamp = 3 * city.transit.segments.filter((s) => s.line === 'expressway').length;
     for (let i = nLamp; i < t.lights.count; i++) {
       if (scaleOf(t.lights, i) === 0) continue;
       const p = posOf(t.lights, i);
@@ -162,4 +162,31 @@ test('壊れていく: 橋桁の区間はゲームの命中の表に入り、des
   expect(log.hidden).toEqual([]);
   for (let i = 0; i < 60; i++) d.update(1 / 60, [seg.dist + 30]);
   expect(log.hidden).toEqual([seg.id]);
+});
+
+test('fix1: リプレイは毎回同じ: 放った瞬間へ戻すと、脱線の吹き飛び方も同じになる', () => {
+  const view = createCityView(city, createStyle('low'), 'low');
+  const t = view.transit;
+  view.update(2, {});
+  const snap = view.snapshot();
+  const run = () => {
+    view.restore(snap);
+    const r = city.transit.config.rail.ring * CONFIG.cityRadius;
+    for (let i = 0; i < 30; i++) view.update(1 / 30, { front: r + 5, radius: CONFIG.radius.max });
+    return t.train.cars.map((c) => [+(c.x ?? 0).toFixed(6), +(c.y ?? 0).toFixed(6), c.state]);
+  };
+  expect(run()).toEqual(run());
+});
+
+test('fix1: 環状線のつなぎ目（最初の橋脚より手前）を走る車両も、正しい区間（最後の区間）で確かめる', () => {
+  const view = createCityView(city, createStyle('low'), 'low');
+  const rs = city.transit.segments.filter((s) => s.line === 'rail');
+  const last = rs[rs.length - 1];
+  if (rs[0].s0 > 0.5) {
+    view.crushTransit(last.id, 0.3);
+    // 車両を最初の橋脚の手前に置く
+    view.transit.train.s = rs[0].s0 * 0.5 + city.transit.config.rail.carLen / 2;
+    const ev = view.update(1 / 60, {});
+    expect(ev.some((e) => e.kind === 'derail' && e.target.id === 't0')).toBe(true);
+  }
 });

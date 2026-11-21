@@ -47,8 +47,13 @@ export const WINDOW_LAMP_MAX = Math.max(
   linLum(SHOP) * SHOP_GAIN,
 );
 const FOG_DENSITY = 0.0015;
-// S8: 霞み始める距離は街の半径に合わせる（S7 の 420 m の街で 320 m）。遠い地区（cityDress の ROOF / FAR）は霞の中で安く
-export const FOG_START = Math.round(CONFIG.cityRadius * 0.6);
+// fix1（日が沈んだ空なのに壁が昼のように明るく見えた）: 夕日の直射は、立った面（壁）には SUN_SIDE の割合だけ当てる
+// （屋根・上向きの面はそのまま）。近くの壁は暗い夕方に沈み、窓の明かりとネオンが光を運ぶ。upN: 面の上向きの成分（ワールド）
+export const SUN_SIDE = 0.32;
+const SUN_SIDE_FRAG = (upN) => `reflectedLight.directDiffuse *= mix(${SUN_SIDE.toFixed(3)}, 1.0, smoothstep(0.55, 0.9, ${upN}));
+reflectedLight.directSpecular *= mix(${SUN_SIDE.toFixed(3)}, 1.0, smoothstep(0.55, 0.9, ${upN}));`;
+// 霞み始める距離（見た目。fix1 で S7 の 320 m へ戻した。飾りを間引く距離は cityDress の DRESS_DIST が別に決める）
+export const FOG_START = 320;
 
 // sRGB で決めた色をシェーダーの線形値へ（見た目の色で調整しやすくするため）
 const GLSL_COMMON = /* glsl */`
@@ -217,22 +222,30 @@ transformed = shapeShear(transformed);
     bO = instanceMatrix[3].xz; bY = instanceMatrix[3].y;
   #endif
   vSize = bS + vec3(0.0, bY, 0.0); vB = transformed * bS + vec3(0.0, bY, 0.0); vObjN = normal; vShaped = aShape.x;
+  vKind = aKind; vUpN = normal.y;
   vSeed = hash12(bO * 0.137 + 3.1);
   vPress = 0.0;
 }
 `;
 
-function buildingFragment(p) {
+// fix1: 種類（house / office / tower）の違いはインスタンスごとの値 aKind（0 / 1 / 2）で選ぶ（一つの材質で、地区ごとの描画を減らす）
+const KIND_ORDER = ['house', 'office', 'tower'];
+const kindPick = (key) => `(vKind < 0.5 ? ${f(FACADE.house[key])} : vKind < 1.5 ? ${f(FACADE.office[key])} : ${f(FACADE.tower[key])})`;
+const kindPickV = (key) => `(vKind < 0.5 ? vec3(${FACADE.house[key].map(f).join(',')}) : vKind < 1.5 ? vec3(${FACADE.office[key].map(f).join(',')}) : vec3(${FACADE.tower[key].map(f).join(',')}))`;
+export const KIND_INDEX = Object.fromEntries(KIND_ORDER.map((k, i) => [k, i]));
+function buildingFragment() {
   return /* glsl */`
 #include <color_fragment>
+${['bay', 'floor', 'ground', 'corner', 'top', 'wx', 'wy', 'refl', 'lit', 'shop'].map((k) => `float P_${k} = ${kindPick(k)};`).join('\n')}
+vec3 P_glass = ${kindPickV('glass')};
 float glassM = 0.0; vec3 winEmis = vec3(0.0);
 {
   vec3 n = vec3(round(vObjN.x), round(vObjN.y), round(vObjN.z));
   // 建物ごとのばらつき（窓の間隔・大きさ・ガラスの色）
   float sA = fract(vSeed * 7.13), sB = fract(vSeed * 3.71), sC = fract(vSeed * 5.19);
-  float bay = ${f(p.bay)} * mix(0.8, 1.35, sA);
-  float wxV = clamp(${f(p.wx)} + (sB - 0.5) * 0.28, 0.28, 0.92);
-  float wyV = clamp(${f(p.wy)} + (sC - 0.5) * 0.3, 0.3, 0.9);
+  float bay = P_bay * mix(0.8, 1.35, sA);
+  float wxV = clamp(P_wx + (sB - 0.5) * 0.28, 0.28, 0.92);
+  float wyV = clamp(P_wy + (sC - 0.5) * 0.3, 0.3, 0.9);
   float side = 1.0 - step(0.5, abs(n.y));
   // 壁の明るさ: 足元は暗く（接地の陰）、上へ少し明るく
   float ao = mix(0.55, 1.0, smoothstep(0.0, 7.0, vB.y));
@@ -249,12 +262,12 @@ float glassM = 0.0; vec3 winEmis = vec3(0.0);
     wall = mix(wall, wall * vec3(0.84, 0.9, 0.98) * 1.12, patchv * 0.55 * side);
   }
   float faceW = abs(n.x) > 0.5 ? vSize.z : vSize.x;
-  float usable = faceW - 2.0 * ${f(p.corner)};
+  float usable = faceW - 2.0 * P_corner;
   float nb = max(1.0, floor(usable / bay));
-  float cx = (fu.x + faceW * 0.5 - ${f(p.corner)}) / (usable / nb);
-  float vTop = vSize.y - ${f(p.top)};
-  float nf = max(0.0, floor((vTop - ${f(p.ground)}) / ${f(p.floor)}));
-  float cy = (fu.y - ${f(p.ground)}) / ${f(p.floor)};
+  float cx = (fu.x + faceW * 0.5 - P_corner) / (usable / nb);
+  float vTop = vSize.y - P_top;
+  float nf = max(0.0, floor((vTop - P_ground) / P_floor));
+  float cy = (fu.y - P_ground) / P_floor;
   float inGrid = step(0.0, cx) * step(cx, nb) * step(0.0, cy) * step(cy, nf);
 
   float wxA = fwidth(cx) * 0.8, wyA = fwidth(cy) * 0.8;
@@ -269,23 +282,21 @@ float glassM = 0.0; vec3 winEmis = vec3(0.0);
 
   // 1階の店先（office / tower）
   float shopM = 0.0;
-  #if ${p.shop > 0 ? 1 : 0}
-  {
+  if (P_shop > 0.0) {
     float sx = fract((fu.x + faceW * 0.5) / 4.0);
     float sa = fwidth(fu.x) * 0.25;
-    float band = smoothstep(0.5, 0.7, fu.y) * (1.0 - smoothstep(${f(p.ground - 1.2)}, ${f(p.ground - 0.9)}, fu.y));
+    float band = smoothstep(0.5, 0.7, fu.y) * (1.0 - smoothstep((P_ground - 1.2), (P_ground - 0.9), fu.y));
     float mull = smoothstep(0.04 - sa, 0.04 + sa, sx) * (1.0 - smoothstep(0.96 - sa, 0.96 + sa, sx));
     shopM = band * mix(mull, 0.92, smoothstep(0.2, 0.5, sa * 4.0)) * side * step(abs(fu.x), faceW * 0.5 - 0.6);
   }
-  #endif
 
   // 窓の階ごと・部屋ごとの点灯（暗めの夕方なので多くの部屋が灯る）
   vec2 cell = vec2(floor(cx), floor(cy)) + n.xz * 37.0 + vSeed * 113.0;
   float floorLit = hash12(vec2(floor(cy), vSeed * 71.0 + n.x * 5.0 + n.z * 9.0));
-  float lit = step(hash12(cell), ${f(p.lit)} * (0.25 + 1.5 * floorLit));
+  float lit = step(hash12(cell), P_lit * (0.25 + 1.5 * floorLit));
   float warm = hash12(cell + 7.7);
   vec3 lampC = mix(srgb(vec3(${LAMP_WARM.map(f).join(',')})), srgb(vec3(${LAMP_COOL.map(f).join(',')})), step(0.64, warm)) * (${f(LAMP_VAR[0])} + ${f(LAMP_VAR[1])} * hash12(cell + 3.3));
-  float shopLit = step(hash12(vec2(floor((fu.x + faceW * 0.5) / 4.0), vSeed * 19.0 + n.x * 3.0 + n.z)), ${f(p.shop)});
+  float shopLit = step(hash12(vec2(floor((fu.x + faceW * 0.5) / 4.0), vSeed * 19.0 + n.x * 3.0 + n.z)), P_shop);
 
   // ガラス: 暗い地の色に、空をわずかに映す
   vec3 V = normalize(cameraPosition - vFogW);
@@ -293,10 +304,10 @@ float glassM = 0.0; vec3 winEmis = vec3(0.0);
   // 下向きの反射も地平付近の空として映す（夕焼けを窓に映すアニメ的な誇張）
   R.y = abs(R.y) * 0.2 + 0.02;
   float fres = 0.35 + 0.65 * pow(1.0 - max(dot(n, V), 0.0), 4.0);
-  vec3 skyR = skyColor(normalize(R)) * fres * ${f(p.refl)};
+  vec3 skyR = skyColor(normalize(R)) * fres * P_refl;
 
   glassM = clamp(m + shopM, 0.0, 1.0);
-  vec3 glassBase = srgb(vec3(${p.glass.map(f).join(',')}));
+  vec3 glassBase = srgb(P_glass);
   glassBase = mix(glassBase, sC < 0.33 ? srgb(vec3(0.24, 0.19, 0.15)) : sC < 0.66 ? srgb(vec3(0.15, 0.22, 0.24)) : srgb(vec3(0.18, 0.19, 0.24)), 0.6);
   diffuseColor.rgb = mix(wall, glassBase, glassM);
   winEmis = (skyR * (1.0 - lit) + lampC * lit * ${f(LAMP_GAIN)}) * m + srgb(vec3(${SHOP.map(f).join(',')})) * shopLit * shopM * ${f(SHOP_GAIN)} + skyR * shopM * (1.0 - shopLit);
@@ -322,23 +333,23 @@ float glassM = 0.0; vec3 winEmis = vec3(0.0);
 `;
 }
 
-function makeBuildingMaterial(kind, uniforms) {
-  const p = FACADE[kind];
+function makeBuildingMaterial(uniforms) {
   const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.82, metalness: 0.0 });
   mat.onBeforeCompile = (shader) => {
     patchCommon(shader, uniforms);
     patchDeform(shader, uniforms);
     shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', '#include <common>\nvarying vec3 vB; flat varying vec3 vSize; varying vec3 vObjN; flat varying float vSeed; varying float vPress; flat varying float vShaped;\nfloat hash12(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }\n' + DEFORM_VERT_PARS + SHAPE_VERT_PARS)
+      .replace('#include <common>', '#include <common>\nvarying vec3 vB; flat varying vec3 vSize; varying vec3 vObjN; flat varying float vSeed; varying float vPress; flat varying float vShaped; flat varying float vKind; varying float vUpN;\nattribute float aKind;\nfloat hash12(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }\n' + DEFORM_VERT_PARS + SHAPE_VERT_PARS)
       .replace('#include <begin_vertex>', BUILDING_VERTEX + buildingDeform(true));
     shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', '#include <common>\nvarying vec3 vB; flat varying vec3 vSize; varying vec3 vObjN; flat varying float vSeed; varying float vPress; flat varying float vShaped;\nuniform float uHeat;')
+      .replace('#include <common>', '#include <common>\nvarying vec3 vB; flat varying vec3 vSize; varying vec3 vObjN; flat varying float vSeed; varying float vPress; flat varying float vShaped; flat varying float vKind; varying float vUpN;\nuniform float uHeat;')
       .replace('#include <normal_fragment_begin>', '#include <normal_fragment_begin>\nif (vShaped > 0.5 && vObjN.y > 0.5) normal = normalize(cross(dFdx(vViewPosition), dFdy(vViewPosition)));')
-      .replace('#include <color_fragment>', buildingFragment(p))
+      .replace('#include <color_fragment>', buildingFragment())
+      .replace('#include <lights_fragment_end>', '#include <lights_fragment_end>\n' + SUN_SIDE_FRAG('vUpN'))
       .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = mix(roughnessFactor, 0.18, glassM);')
       .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += winEmis;');
   };
-  mat.customProgramCacheKey = () => 'building-' + kind;
+  mat.customProgramCacheKey = () => 'building';
   return mat;
 }
 
@@ -669,8 +680,11 @@ function makeClutterMaterial(uniforms) {
     patchCommon(shader, uniforms);
     patchDeform(shader, uniforms);
     shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', '#include <common>\n' + DEFORM_VERT_PARS)
-      .replace('#include <begin_vertex>', '#include <begin_vertex>\n' + CRUSH_ROT_VERTEX);
+      .replace('#include <common>', '#include <common>\nvarying float vUpN;\n' + DEFORM_VERT_PARS)
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\n' + CRUSH_ROT_VERTEX + '\nvUpN = normal.y;');
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying float vUpN;')
+      .replace('#include <lights_fragment_end>', '#include <lights_fragment_end>\n' + SUN_SIDE_FRAG('vUpN'));
   };
   mat.customProgramCacheKey = () => 'clutter';
   return mat;
@@ -716,7 +730,14 @@ function makeSignMaterial(uniforms) {
         // そのぶん暗くする（遠くの塔の角のネオン管が、光の球ごしに点線に見えた）
         vec3 pos = position;
         vThin = 1.0;
-        if (aSign.w > 1.5) {
+        if (aSign.w > 2.5) {
+          // 描き方 3（fix1: 高架の車の光・照明・縁の光の線、電車の窓）: 遠いほど画面で大きく（約 2.5 画素より小さくしない）、暗くしない
+          vec3 sc = vec3(length(instanceMatrix[0].xyz), length(instanceMatrix[1].xyz), length(instanceMatrix[2].xyz));
+          float minW = length(cameraPosition - instanceMatrix[3].xyz) * 0.0042;
+          if (sc.x < minW) pos.x *= minW / sc.x;
+          if (sc.y < minW) pos.y = 0.5 + (pos.y - 0.5) * minW / sc.y;
+          if (sc.z < minW) pos.z *= minW / sc.z;
+        } else if (aSign.w > 1.5) {
           vec3 sc = vec3(length(instanceMatrix[0].xyz), length(instanceMatrix[1].xyz), length(instanceMatrix[2].xyz));
           float minW = length(cameraPosition - instanceMatrix[3].xyz) * 0.0022;
           if (sc.x < minW) { pos.x *= minW / sc.x; vThin = min(vThin, sc.x / minW); }
@@ -770,7 +791,8 @@ function makeSignMaterial(uniforms) {
         vec3 board = c * 0.035 + vec3(0.018, 0.016, 0.022);
         vec3 neon = (c * (core * 0.95 + halo * 0.42) + vec3(core) * 0.18) * uGain * vSign.z;
         vec3 col = mix(board, vec3(0.0), core) + neon * lit;
-        col = applyFog(col, vFogW);
+        // 描き方 3 は霞の中でも光が半分は残る（遠くの高架の光の線が読める）
+        col = vSign.w > 2.5 ? max(applyFog(col, vFogW), neon * lit * 0.5) : applyFog(col, vFogW);
         gl_FragColor = vec4(col, 1.0);
         #include <tonemapping_fragment>
         #include <colorspace_fragment>
@@ -853,8 +875,9 @@ export function createStyle(tierName) {
   }
   const fill = new THREE.HemisphereLight(SKY_FILL, GROUND_FILL, FILL_INTENSITY);
 
-  const buildingMats = {};
-  const building = (kind) => (buildingMats[kind] ??= makeBuildingMaterial(kind, uniforms));
+  // 種類によらず一つの材質（種類はインスタンスの aKind）
+  let buildingMat = null;
+  const building = () => (buildingMat ??= makeBuildingMaterial(uniforms));
 
   return {
     tier: tierName,

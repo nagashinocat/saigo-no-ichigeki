@@ -1,3 +1,4 @@
+import { CONFIG } from '../config.js';
 import { groundHeight } from './sphereDeform.js';
 import { FINALE } from './finaleTimeline.js';
 
@@ -43,9 +44,9 @@ export const PLAN = {
   flats: [110, 70, 40, 20, 0], // 通りの高さのまま飛ぶ長さ（m）の候補。長いほどよい
   riseLen: 7,
   slope: 0.2,
-  // S8: 広い街では逃げる道が長く（最大の半径 720 m の先まで）、街の中ほどの高いビルの上を通る。一気に上がる（rise）より、
-  // ゆるい坂（slope）を少し急にして越える方を先に試す
-  slopes: [0.2, 0.28, 0.38, 0.5],
+  // fix1: 逃げる道は屋上をなぞる（findRetreat）。flatMax: 通りの高さで飛ぶ最長、above: 屋上（余裕 pathClear 込み）から上へ、
+  // lookAhead: 先の高いビルへ上がり始める距離、climb / descend: 上り・下りの傾きの上限、chaseLen: 追うカットで比べる長さ
+  profile: { flatMax: 240, above: 1.5, lookAhead: 28, climb: 1.1, descend: 0.35, chaseLen: 600, outside: 34 },
   pathClear: 4,
   azOffsets: [0, 0.3, -0.3, 0.6, -0.6, 0.9, -0.9],
 };
@@ -83,6 +84,13 @@ export const retreatMargin = (path, x) => (x < (path.flat ?? 0) ? PLAN.clearance
 
 // 逃げる道の上の、横に x 引いた点。はじめの flat m は通りの高さのまま低く飛び、そこから上がる
 export function retreatPoint(path, x) {
+  if (path.profile) {
+    // 始まり（x = 0）はカメラの位置。最初の点（x0）まではそこからつなぐ
+    if (x < path.x0) return [path.origin[0] + path.dir[0] * x, path.origin[1] + (path.profile[0] - path.origin[1]) * Math.max(0, x) / path.x0, path.origin[2] + path.dir[1] * x];
+    const f = Math.max(0, (x - path.x0) / path.step), i = Math.min(path.profile.length - 1, Math.floor(f));
+    const j = Math.min(path.profile.length - 1, i + 1), y = path.profile[i] + (path.profile[j] - path.profile[i]) * Math.min(1, f - i);
+    return [path.origin[0] + path.dir[0] * x, y, path.origin[2] + path.dir[1] * x];
+  }
   const u = Math.max(0, x - (path.flat ?? 0));
   const y = path.origin[1] + path.rise * (1 - Math.exp(-u / path.riseLen)) + path.slope * u;
   return [path.origin[0] + path.dir[0] * x, y, path.origin[2] + path.dir[1] * x];
@@ -121,7 +129,8 @@ function findRetreat(origin, base, buildings, ground, radius, lead) {
     const BIN = 10, bins = new Map();
     for (const o of corridor) {
       const rx = o.x - origin[0], rz = o.z - origin[2], along = rx * dir[0] + rz * dir[1];
-      const ext = (Math.abs(dir[0]) * o.w + Math.abs(dir[1]) * o.d) / 2 + PLAN.pathClear + 1;
+      // 箱を margin 広げたときの道に沿った広がり: (|dx|·(w + 2m) + |dz|·(d + 2m)) / 2（斜めの道では m·(|dx| + |dz|) まで）
+      const ext = (Math.abs(dir[0]) * o.w + Math.abs(dir[1]) * o.d) / 2 + PLAN.pathClear * (Math.abs(dir[0]) + Math.abs(dir[1])) + 1;
       for (let k = Math.floor((along - ext) / BIN); k <= Math.floor((along + ext) / BIN); k++) (bins.get(k) ?? bins.set(k, []).get(k)).push(o);
     }
     const needAt = (m) => xs.map((x, i) => {
@@ -131,24 +140,37 @@ function findRetreat(origin, base, buildings, ground, radius, lead) {
       return h;
     });
     const needLow = needAt(PLAN.clearance - 0.2), needUp = needAt(PLAN.pathClear);
-    for (const flat of PLAN.flats) {
-      const need = xs.map((x, i) => (x < flat ? needLow[i] : needUp[i]));
-      let found = false;
-      for (const rise of PLAN.rises) {
-        for (const slope of PLAN.slopes) {
-          const path = { origin, dir, rise, riseLen: PLAN.riseLen, slope, flat };
-          if (!xs.every((x, i) => retreatPoint(path, x)[1] > need[i])) continue;
-          // 一気に高く上がる道（まっすぐ上へ逃げるように見える）は、低く飛ぶ長さより強く嫌う
-          const score = rise * 0.5 + Math.max(0, rise - 100) * 1.5 + (slope - PLAN.slope) * 150 - flat * 0.6 + Math.abs(off) * 40;
-          if (!best || score < best.score) best = { path, score };
-          found = true;
-          break;
-        }
-        if (found) break;
-      }
-      // S8: 低く飛ぶ長さが長い候補で見つかっても、短い候補の方が低い道になることがある（広い街の高いビル）。上がる高さが
-      // 十分低ければ、そこで止める
-      if (found && best.path.rise <= 60) break;
+    // fix1（追うカットで手前のビルが消えた）: 屋上をなぞる道。通りの高さで飛べる間（はじめから needLow が始めの高さより低い間、
+    // flatMax m まで）は低く、その先はビルの屋上 + 余裕の少し上を、先の高いビルへ早めに上がり（lookAhead m 先まで見る、
+    // 上りの傾き climb まで）、越えたらゆっくり下がる（descend）。手前にビルが入ったまま、引いていく
+    const y0 = origin[1];
+    let i0 = 0;
+    while (i0 < n && xs[i0] < PLAN.profile.flatMax && needLow[i0] < y0) i0++;
+    // 街の外（野原）へ出たら、outside m より下へは下がらない（屋上の並びを見下ろして、手前に街を入れる）
+    const low = xs.map((x, i) => {
+      const r = Math.hypot(origin[0] + dir[0] * x, origin[2] + dir[1] * x);
+      return Math.max(r > CONFIG.cityRadius ? PLAN.profile.outside : 4, i < i0 ? Math.max(y0, needLow[i] + 0.3) : needUp[i] + PLAN.profile.above);
+    });
+    const A = Math.ceil(PLAN.profile.lookAhead / STEP);
+    const prof = new Float32Array(n);
+    // 先 A 点の最大（簡単な両端の窓。n は 2000 ほど）
+    for (let i = n - 1; i >= 0; i--) {
+      let m = low[i];
+      for (let j = i + 1; j <= Math.min(n - 1, i + A); j++) if (low[j] > m) m = low[j];
+      prof[i] = m;
+    }
+    for (let i = n - 2; i >= 0; i--) prof[i] = Math.max(prof[i], prof[i + 1] - PLAN.profile.climb * STEP);
+    for (let i = 1; i < n; i++) prof[i] = Math.max(prof[i], prof[i - 1] - PLAN.profile.descend * STEP);
+    for (let i = 0; i < i0; i++) if (prof[i] < y0) prof[i] = y0;
+    // 追うカットで見える範囲（始まりから chaseLen m）の平均の高さが低いほどよい。爆心からそれた向きは少し嫌う
+    const nC = Math.min(n, Math.ceil(PLAN.profile.chaseLen / STEP));
+    let mean = 0, top = 0;
+    for (let i = 0; i < nC; i++) mean += prof[i];
+    for (let i = 0; i < n; i++) top = Math.max(top, prof[i]);
+    mean /= nC;
+    const score = mean + Math.abs(off) * 25 - xs[Math.max(0, i0 - 1)] * 0.05;
+    if (!best || score < best.score) {
+      best = { score, path: { origin, dir, profile: prof, step: STEP, x0: xs[0], flat: i0 > 0 ? xs[i0 - 1] : 0, rise: top - y0, riseLen: PLAN.riseLen, slope: 0 } };
     }
   }
   return best ? best.path : { origin, dir: [Math.cos(radial), Math.sin(radial)], rise: 260, riseLen: PLAN.riseLen, slope: PLAN.slope, flat: 0 };

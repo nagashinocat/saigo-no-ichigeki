@@ -112,6 +112,8 @@ export function createCinematic(views, enemyView, explosionView, { renderer, sce
 
   // phase: 'off' | 'play'（時刻表を進める） | 'held'（終わって最後の絵のまま待つ）
   let phase = 'off', t = 0, plan = null, tl = null, stage = 'off';
+  let shot = null, getEnemies = null;
+  const sparkAt = new Map(), _sparks = [];
   let gameDt = 0, worldDt = 0, chase = null, chaseC = 1, chaseR0 = 0, cuesDone = new Set(), focusOn = false;
   // 逃げる道（planFinale の retreat: false で後回しにしたもの）を求める関数。一拍の間に一度だけ呼ぶ
   let resolveRetreat = null;
@@ -389,6 +391,19 @@ export function createCinematic(views, enemyView, explosionView, { renderer, sce
     const len = 2 * d * Math.tan(hf / 2) * (0.6 + 0.5 * smooth(f / 0.7)) * (1 + 0.15 * th);
     const lineI = smooth((f - 0.15) / 0.35) * (1 - smooth((th - 0.35) / 0.65)) * (1.2 + 0.8 * Math.sin(Math.PI * clamp01(f * 1.3)));
     space.setLine(len, r * 1.1 * (1 - 0.8 * flat), th, lineI);
+    // 街を見回る軍勢: 生きている者は緑の点、前線に飲まれた瞬間に火花（宇宙の座標へ縮める: 半径 radius m → rMax）
+    if (getEnemies) {
+      const k = rMax / Math.max(1, shot.radius), front = tl.front(t);
+      _sparks.length = 0;
+      for (const e of getEnemies()) {
+        if (!e.patrol) continue;
+        if (e.dist <= front && !sparkAt.has(e.id)) sparkAt.set(e.id, t);
+        const age = sparkAt.has(e.id) ? t - sparkAt.get(e.id) : -1;
+        if (age > 0.7 || f > 0.3) continue;
+        _sparks.push({ x: e.x * k, z: e.z * k, age });
+      }
+      space.setSparks(_sparks, renderer?.getPixelRatio?.() ?? 1);
+    }
     // 消えたあとに残る、焼けた街の小さな灯
     space.setScar(2.0 * smooth((t - tl.lineEnd + 0.3) / 0.6) * (1 - 0.4 * smooth((t - tl.rumble) / 1.5)));
     space.setStars(smooth(u / 0.4));
@@ -457,8 +472,10 @@ export function createCinematic(views, enemyView, explosionView, { renderer, sce
     // 'cinematicStart': plan は finalePlan.planFinale の戻り値。
     // opts.retreat: plan.retreat が null のとき逃げる道を返す関数（重いので、放つ瞬間ではなく止まった一拍の間に呼ぶ）
     // opts.buildings: 残っているビル（肩越しのカットの間、光の壁が触れたものを veilBuilding で一時的に隠す）
-    play(p, s, { retreat = null, buildings = null } = {}) {
+    // opts.enemies: 軍勢の一覧を返す関数（宇宙で見回る軍勢の光と火花を描く）
+    play(p, s, { retreat = null, buildings = null, enemies = null } = {}) {
       plan = { ...p }; phase = 'play'; t = 0; stage = 'hands';
+      shot = s; getEnemies = enemies; sparkAt.clear();
       resolveRetreat = retreat;
       if (!plan.retreat && !resolveRetreat) throw new Error('cinematic.play: plan.retreat がなく、求める関数もない');
       playTier = getTier();
