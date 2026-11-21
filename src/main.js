@@ -393,7 +393,8 @@ const standing = new Set(game.city.buildings.map((b) => b.id)); // まだ壊れ�
 // 撮る場所の計算を一度空回しして JIT を温めておく（放つ瞬間、両手が玉を握り込む間に止まらないように）。乱数は別のものを使う
 {
   const warm = { radius: CONFIG.radius.max };
-  planFinale({ shot: warm, rng: createRng(seed ^ 0x5eed), lead: leadFor(warm.radius), buildings: game.city.buildings, enemies: game.enemies.list });
+  // fix4: 屋上の飾り（props: 撮る一人の背後の確かめ）と縦横比（縦長で撮る一人が入るか）も渡し、その道も温める
+  planFinale({ shot: warm, rng: createRng(seed ^ 0x5eed), lead: leadFor(warm.radius), buildings: game.city.buildings, enemies: game.enemies.list, props: cityView.roofProps, aspect: views.size.w / Math.max(1, views.size.h) });
 }
 let finalBlastSize = 0;
 const transitObs = game.city.transit ? transitObstacles(game.city.transit) : [];
@@ -407,7 +408,8 @@ game.on('cinematicStart', (shot) => {
   const props = cityView.roofProps.filter((o) => standing.has(o.bid)); // 屋上の飾り（撮る一人の背後に飾りがない所を選ぶ）
   finalBlastSize = Math.sqrt(shot.radius / CONFIG.radius.max);
   // 逃げる道は高架の橋桁もよける（S8）
-  cinematic.play(() => planFinale({ shot, rng: shotRng, crater, lead, buildings, enemies: enemiesAtRelease, props, retreat: false }), shot,
+  // fix4: 縦横比は撮る場所を決めるフレームの画面のもの（縦長では撮る一人がまるごと入る横のずれ・左右・レンズを選ぶ）
+  cinematic.play(() => planFinale({ shot, rng: shotRng, crater, lead, buildings, enemies: enemiesAtRelease, props, retreat: false, aspect: views.size.w / Math.max(1, views.size.h) }), shot,
     { buildings, enemies: () => game.enemies.list, retreat: () => planRetreat(cinematic.plan, { buildings: [...buildings, ...transitObs], crater, radius: shot.radius, lead }) });
 });
 game.on('cinematicEnd', () => cinematic.end());

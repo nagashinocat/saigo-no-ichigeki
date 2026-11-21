@@ -322,3 +322,17 @@ test('fix3 撮る一人の背後: 屋上の飾り（小屋・空調・給水塔�
     }
   }
 });
+
+// R0b fix4: 縦長で撮る一人が入るか（nearFitFrac）。光の玉を小さめにするレンズ（ball を下げる）ほど入り、横長はまるごと入る
+test('fix4 nearFitFrac: 横へ大きくずれた撮る一人は縦長で切れ、ball を minBall へ下げると多く入る。横長では入る', async () => {
+  const { nearFitFrac, BEAT_LENS } = await import('../../src/render/finalePlan.js');
+  const cam = [0, 40, 400], f0 = 44;
+  const yaw = Math.atan2(0, -400);
+  const rider = (side) => ({ pos: [side, 37, 383], yaw });
+  expect(nearFitFrac(cam, rider(0), f0, 390 / 844)).toBe(1);
+  const wide = nearFitFrac(cam, rider(3.5), f0, 390 / 844);
+  const wider = nearFitFrac(cam, rider(3.5), f0, 390 / 844, BEAT_LENS.minBall);
+  expect(wide).toBeLessThan(0.98);
+  expect(wider).toBeGreaterThan(wide);
+  expect(nearFitFrac(cam, rider(3.5), f0, 1280 / 720)).toBe(1);
+});

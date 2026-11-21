@@ -47,7 +47,7 @@ export const PLAN = {
   // 縦長の狭い画面に光の玉と並んで入る）、below[0]〜below[1] m 下
   // （見下ろす角度 dip°（8〜10°）。演出が画面の下 1/3 に、画面の高さの 15〜25% に撮る）。爆心の光の玉の真ん中より under° 下に置く。
   // それに dipMax° より深く見下ろす要る小さな一発（カメラが爆心に近く、屋上の並みから光を見下ろす）だけは、steep m まで下げる
-  near: { ahead: [17, 15, 18, 13], side: [2, 2.5, 3], below: [2.5, 3.5], dip: 8.5, under: 1.5, dipMax: 10, steep: 8, steepCost: 0.15, back: 40, backCost: 2 },
+  near: { ahead: [17, 15, 18, 13], side: [2, 2.5, 3], below: [2.5, 3.5], dip: 8.5, under: 1.5, dipMax: 10, steep: 8, steepCost: 0.15, back: 40, backCost: 2, fitCost: 10 },
   // 画面の上の乗り手の大きさ（重ならないかを確かめる）: 半分の高さ・幅（m）、遠くで大きく描かれる下限（°）と倍率の上限、余白（°）
   look: { halfH: 0.95, halfW: 0.6, minHalfDeg: 0.4, maxBoost: 3, gapDeg: 0.15 },
   maxDip: 24,            // カメラから乗り手を見下ろす角度（°）の上限（足りないときは maxDipLoose まで）
@@ -369,8 +369,53 @@ export function rectsOverlap(a, b, gap = PLAN.look.gapDeg) {
   return Math.abs(a.az - b.az) < a.hw + b.hw + gap && Math.abs(a.el - b.el) < a.hh + b.hh + gap;
 }
 
+// fix2: スローの間のレンズ（縦の画角、度）: スローの終わりに、じわじわ期の光の玉（半径 f0、カメラから d）が画面の高さの
+// ball 倍になる画角 2·atan(f0/d)/ball を、min〜max に収める。スローの始めは push 倍だけ広い（ゆっくり寄る）。
+// fix4: 縦長で光の玉と撮る一人が並んで入らないときは、ball を minBall まで下げる（max も同じ割合で広げる。planFinale の plan.lens）
+export const BEAT_LENS = { ball: 0.33, minBall: 0.28, min: 18, max: 35, push: 0.08 };
+export function beatLens(f0, d, L = BEAT_LENS) {
+  const deg = 2 * Math.atan(f0 / Math.max(1, d)) / DEG;
+  return Math.min(L.max, Math.max(L.min, deg / L.ball));
+}
+export const BEAT_PUSH = 1.5; // スローの間にカメラを押し込む距離（m）
+// fix2: 手前の撮る一人（riders[0]）を、画面の下 1/3 の縦 y（NDC）に撮る。弾けたあとは横 ±x（NDC）の内に。
+// fix3: スローの間は、じわじわ期の終わりの光の玉の幅を横 ±dome の内に必ず入れ、撮る一人も入るなら入れる。
+// fix4: 撮る一人の幅は riderBody の箱（横 ±body.halfW m、長さ body.back〜body.front m、高さ body.h m）の角から測る
+export const NEAR_FRAME = { y: -0.5, x: 0.85, dome: 0.97, body: { halfW: 0.45, back: -1.7, front: 1.5, h: 1.6 } };
+const wrapA = (x) => Math.atan2(Math.sin(x), Math.cos(x));
+// 撮る一人の体の箱の角の、カメラ（x, z）から見た横の角度（rad）の幅 [lo, hi]（基準の向き az0 から）
+export function riderAzSpan(camXZ, pos, yaw, az0, B = NEAR_FRAME.body) {
+  let lo = Infinity, hi = -Infinity;
+  const cy = Math.cos(yaw), sy = Math.sin(yaw);
+  for (const x of [-B.halfW, B.halfW]) for (const z of [B.back, B.front]) {
+    const px = pos[0] + x * cy + z * sy, pz = pos[2] - x * sy + z * cy;
+    const a = wrapA(Math.atan2(pz - camXZ[1], px - camXZ[0]) - az0);
+    lo = Math.min(lo, a); hi = Math.max(hi, a);
+  }
+  return [lo, hi];
+}
+// fix4: スローの終わり（押し込んだカメラ、スローのレンズ）の縦長の画面で、光の玉の幅をまるごと入れたとき（演出の決まり）に、
+// 撮る一人の体の箱の横の何割が画面に入るか（0〜1）。横長（aspect ≥ 1）は 1 とは限らないが、同じ式で測る
+export function nearFitFrac(cam, rider, f0, aspect, ball = BEAT_LENS.ball) {
+  const h = Math.hypot(cam[0], cam[2]) || 1, fx = -cam[0] / h, fz = -cam[2] / h;
+  const p = [cam[0] + fx * BEAT_PUSH, cam[1], cam[2] + fz * BEAT_PUSH];
+  const L = { ...BEAT_LENS, ball, max: BEAT_LENS.max * BEAT_LENS.ball / ball };
+  const fov = beatLens(f0, Math.hypot(...p), L) * DEG;
+  const tanH = Math.tan(fov / 2) * aspect;
+  const limD = Math.atan(NEAR_FRAME.dome * tanH), limF = Math.atan(tanH);
+  const hd = Math.asin(Math.min(1, f0 / Math.hypot(p[0], p[1] - PLAN.open.lookH * f0, p[2])));
+  const az0 = Math.atan2(-p[2], -p[0]);
+  const [aLo, aHi] = riderAzSpan([p[0], p[2]], rider.pos, rider.yaw, az0);
+  if (Math.max(hd, aHi) - Math.min(-hd, aLo) <= 2 * limD) return 1;
+  // 光の玉を優先: 撮る一人と反対側の光の玉の縁を画面の ±limD に置く
+  const right = aLo + aHi > 0;
+  const w0 = right ? -hd - (limF - limD) : hd - limD - limF, w1 = right ? -hd + limD + limF : hd + (limF - limD);
+  return Math.max(0, Math.min(1, (Math.min(aHi, w1) - Math.max(aLo, w0)) / Math.max(1e-9, aHi - aLo)));
+}
+const FIT_FULL = 0.98; // これ以上なら「撮る一人がまるごと入る」
+
 // カメラ s から爆心の方へ並ぶ乗り手（corridor: まわりのビル）。[0] は手前の撮る一人（near）、ほかは左右へ交互に散った列
-function beatRiders(s, f0, corridorAll, ground, maxDip = PLAN.maxDip, props = []) {
+function beatRiders(s, f0, corridorAll, ground, maxDip = PLAN.maxDip, props = [], aspect = 1) {
   const { cam, fwd, right, dC } = s, camXZ = [cam[0], cam[2]], yC = cam[1];
   // 列のまわり（カメラから爆心の方へ ahead[1] m、横に side の端 + 余裕）のビルだけ
   const sideMax = PLAN.side[1] + 8;
@@ -394,16 +439,22 @@ function beatRiders(s, f0, corridorAll, ground, maxDip = PLAN.maxDip, props = []
     const q = cam.map((v, i) => v + (h[i] - v) * k);
     return !corridorAll.some((o) => segHitsBox(h, q, o, 0.3)) && !props.some((o) => segHitsBox(h, q, o, 0.3));
   };
-  found: for (const needBack of [true, false]) for (const a of PLAN.near.ahead) for (const m of PLAN.near.side) for (const sg of [1, -1]) {
+  // fix4: 縦長では、横のずれ（near.side）と左右を、スローの終わりに光の玉と撮る一人の体がまるごと画面に入るか（nearFitFrac）で選ぶ。
+  // 入るものを先に（安い画面の確かめを先にして、重い見通しの確かめは入るものだけ）。どれも入らなければ今までの順で最初の所
+  const fitPass = aspect < 1 ? [true, false] : [false];
+  found: for (const needBack of [true, false]) for (const needFit of fitPass) for (const a of PLAN.near.ahead) for (const m of PLAN.near.side) for (const sg of [1, -1]) {
     const dip = Math.max(PLAN.near.dip, glowMid + PLAN.near.under) * DEG;
     // ふつうは below[0]〜below[1] m 下。爆心の光をかなり見下ろす小さな一発では、光の玉の真ん中より下に来るまで steep m まで下げる
     const top = glowMid + PLAN.near.under > PLAN.near.dipMax ? PLAN.near.steep : PLAN.near.below[1];
     const below = Math.min(top, Math.max(PLAN.near.below[0], Math.hypot(a, m) * Math.tan(dip)));
     const [x, z] = at(a, sg * m), pos = [x, yC - below, z];
+    const yaw = Math.atan2(-pos[0], -pos[2]);
+    const fit = aspect < 1 ? nearFitFrac(cam, { pos, yaw }, f0, aspect) : 1;
+    if (needFit && fit < FIT_FULL) continue;
     if (pos[1] < ground([x, 0, z]) + PLAN.hover) continue;
     if (corridorAll.some((o) => inBox(pos, o, PLAN.riderClear)) || !sees(pos, null)) continue;
     if (needBack && !backClear(pos)) continue;
-    riders.push({ pos, yaw: Math.atan2(-pos[0], -pos[2]), ahead: a, near: true, back: needBack });
+    riders.push({ pos, yaw, ahead: a, near: true, back: needBack, fit });
     rects.push(riderRect(s, pos));
     nearSide = sg;
     break found;
@@ -455,7 +506,7 @@ function beatRiders(s, f0, corridorAll, ground, maxDip = PLAN.maxDip, props = []
 // lead: 逃げる道を確かめる長さに足す、前線の先を行く距離（m、半径 radius のとき）
 // retreat: false なら逃げる道は探さず null（放つ瞬間を軽くする。あとで planRetreat で求める）
 // props: 屋上の飾りの箱（cityView.roofProps。手前の撮る一人の背後に飾りがない所を選ぶ）
-export function planFinale({ shot, buildings, enemies = [], rng, crater = 0, lead = 0, retreat = true, props = [] }) {
+export function planFinale({ shot, buildings, enemies = [], rng, crater = 0, lead = 0, retreat = true, props = [], aspect = 1 }) {
   const R = shot.radius;
   const ground = groundFor(crater);
   const f0 = frontAt(phaseTimes(R).creep, R);
@@ -498,9 +549,9 @@ export function planFinale({ shot, buildings, enemies = [], rng, crater = 0, lea
       evals++;
       const op = openness(s.cam, f0, seen);
       const near = props.filter((o) => Math.hypot(o.x - s.cam[0], o.z - s.cam[2]) < PLAN.near.ahead[2] + PLAN.near.back + 10);
-      s.riders = beatRiders(s, f0, corridor, ground, PLAN.maxDip, near);
+      s.riders = beatRiders(s, f0, corridor, ground, PLAN.maxDip, near, aspect);
       // 足りなければ、見下ろす角度の上限をゆるめて並べ直す
-      if (s.riders.length < PLAN.minRiders) { const more = beatRiders(s, f0, corridor, ground, PLAN.maxDipLoose, near); if (more.length > s.riders.length) s.riders = more; }
+      if (s.riders.length < PLAN.minRiders) { const more = beatRiders(s, f0, corridor, ground, PLAN.maxDipLoose, near, aspect); if (more.length > s.riders.length) s.riders = more; }
       if (s.riders.length < 3 || !s.riders[0].near) continue;
       const w = win(s);
       // 谷・開け具合が open.min 未満・乗り手が minRiders 未満・影の間が window.min 未満は、ほかに無いときだけ（大きく減点）
@@ -510,7 +561,8 @@ export function planFinale({ shot, buildings, enemies = [], rng, crater = 0, lea
       const score = soft * 25 + (1 - op.open) * PLAN.open.weight + (PLAN.riders + 1 - s.riders.length) * 0.6 + liftPenalty(s.lift)
         + Math.abs(off) * 1.5 + Math.abs(d - dPref) / R + Math.abs(w - PLAN.window.want) * 4
         + Math.max(0, glowDip + PLAN.near.under - PLAN.near.dipMax) * PLAN.near.steepCost
-        + (s.riders[0].back ? 0 : PLAN.near.backCost); // fix3: 撮る一人のすぐ後ろにビルがある所は嫌う
+        + (s.riders[0].back ? 0 : PLAN.near.backCost) // fix3: 撮る一人のすぐ後ろにビルがある所は嫌う
+        + (1 - s.riders[0].fit) * PLAN.near.fitCost; // fix4: 縦長で撮る一人が画面の端で切れる所は嫌う
       if (!best || score < best.score) best = { ...s, score, soft, open: op.open, canyon: op.canyon, window: w };
     }
     // 開けた所が見つかった（細かい向きを試し終えたら、それより大きくずれた向きは試さない）。放つ瞬間を重くしないよう、
@@ -525,13 +577,22 @@ export function planFinale({ shot, buildings, enemies = [], rng, crater = 0, lea
     const top = buildings.reduce((m, o) => Math.max(m, o.h), 0);
     const s = beatAt(a0, dPref, f0, [], [], ground);
     s.cam[1] = Math.max(s.cam[1], top + PLAN.camAbove);
-    s.riders = beatRiders(s, f0, [], ground, 90);
+    s.riders = beatRiders(s, f0, [], ground, 90, [], aspect);
     best = { ...s, open: 1, window: win(s), soft: 0 };
   }
   // 乗り手の顔ぶれ: 手前の撮る一人（riderBody で描く）は選んだ見回る者、列の者はその場所に近い生きた者から順に
   // （足りなければ名もない乗り手 id: null）
   const riders = best.riders;
   const atP = riders[0].pos;
+  // fix4: 縦長でも撮る一人がまるごと入らなければ、スローのレンズを広げる（光の玉を画面の高さの ball 倍へ小さく。minBall まで）
+  let ball = BEAT_LENS.ball, fit = riders[0].fit ?? 1;
+  if (aspect < 1 && fit < FIT_FULL) {
+    for (let b = BEAT_LENS.ball - 0.005; b >= BEAT_LENS.minBall - 1e-9; b -= 0.005) {
+      ball = b;
+      fit = nearFitFrac(best.cam, riders[0], f0, aspect, b);
+      if (fit >= FIT_FULL) break;
+    }
+  }
   const rest = enemies.filter((e) => alive(e) && e !== picked)
     .map((e) => [e, Math.hypot(posOf(e)[0] - atP[0], posOf(e)[2] - atP[2])]).sort((a, b) => a[1] - b[1]).map(([e]) => e.id);
   const ids = [picked ? picked.id : null, ...rest];
@@ -544,6 +605,8 @@ export function planFinale({ shot, buildings, enemies = [], rng, crater = 0, lea
     soft: best.soft ?? 0, // 開けた所の決まり（谷でない・真ん中が見通せる・開け具合・人数・影の間）のうち守れなかった数（ふつう 0）
     fallback,             // 撮れる所が一つもなく、街のどのビルより高く浮かせた
     nearBack: !!riders[0].back, // fix3: 撮る一人のすぐ後ろ（near.back m）にビルがない（黒い背中が明るい光の壁を背にする）
+    nearFit: fit, // fix4: スローの終わりに撮る一人の体の箱の横の何割が画面に入るか（縦長。横長は 1）
+    lens: { ...BEAT_LENS, ball, max: BEAT_LENS.max * BEAT_LENS.ball / ball }, // fix4: スローのレンズ（演出の beatLens に渡す）
     window: best.window,
     riderDist: Math.hypot(...group[0].pos),
     firstDist: Math.min(...group.map((g) => Math.hypot(...g.pos))),

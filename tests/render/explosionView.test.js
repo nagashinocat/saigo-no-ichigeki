@@ -257,3 +257,63 @@ test('fix3 光の壁: setWall(1) の間は球が不透明（uWall 1）で深さ�
     expect(m.scale.x).toBeLessThan(F * 1.1);
   }
 });
+
+// R0b fix4: 光の壁のときは表面を波打たせない（波の谷が前線 F の内へ最大 1.75% 沈み、球の面へ押されたビルが黒い染みとして突き出ていた）。
+// 脈打ち（じわじわ期）でも内へ縮めない。どのフレームでも、多角形の面のいちばん内が F + WALL_PAD より外
+test('fix4 光の壁: 頂点の波打ちは uWall で 0（シェーダーの式と JS の式が同じ）。じわじわ期の脈打ちの間も、壁の面は前線 F + WALL_PAD より外', async () => {
+  const { SPHERE_VERT, SPHERE_DISPLACE_GLSL, SURFACE_BUMP, sphereSurfaceScale, wallRadius, wallSag, WALL_PAD } = await import('../../src/render/explosionView.js');
+  // シェーダーの頂点の式は SPHERE_DISPLACE_GLSL そのもので、波の大きさに (1.0 - uWall) を掛ける
+  expect(SPHERE_VERT).toContain(`vec3 p = ${SPHERE_DISPLACE_GLSL};`);
+  expect(SPHERE_DISPLACE_GLSL).toBe(`position * (1.0 + bump * ${SURFACE_BUMP} * (1.0 - uWall) * smoothstep(0.0, 0.25, vDir.y + 0.1))`);
+  expect(SPHERE_VERT).toMatch(/uniform float[^;]*\buWall\b/);
+  let lo = Infinity, hi = -Infinity, loFree = Infinity;
+  for (let bump = -0.5; bump <= 0.5 + 1e-9; bump += 0.05) for (let y = -0.2; y <= 1 + 1e-9; y += 0.02) {
+    const k = sphereSurfaceScale(bump, y, 1);
+    lo = Math.min(lo, k); hi = Math.max(hi, k);
+    loFree = Math.min(loFree, sphereSurfaceScale(bump, y, 0));
+  }
+  expect(lo).toBe(1);
+  expect(hi).toBe(1);
+  expect(loFree).toBeCloseTo(1 - 0.5 * SURFACE_BUMP, 9); // 壁でないときは今までどおり波打つ
+  for (const tier of ['low', 'high']) {
+    const { scene, view } = make(tier);
+    const geo = view.sphereParams;
+    const list = [{ id: 1, shot: shot(700), front: 0 }];
+    view.setWall(1);
+    let mesh = null, n = 0;
+    for (let t = 0; t < 2.5; t += 1 / 60) {
+      run(view, list, 1 / 60);
+      if (!mesh) scene.traverse((o) => { if (o.material?.uniforms?.uWall && o.visible) mesh = o; });
+      const F = list[0].front;
+      if (!(F > 1)) continue;
+      n++;
+      expect(mesh.scale.x * (1 - wallSag(geo)), `${tier} t=${t.toFixed(2)}`).toBeGreaterThanOrEqual(F + WALL_PAD - 1e-6);
+      expect(mesh.scale.x).toBeGreaterThanOrEqual(wallRadius(F, geo) - 1e-6);
+    }
+    expect(n).toBeGreaterThan(60);
+  }
+});
+
+// R0b fix4: 光の壁の瓦礫と土煙の筋は、壁の明るさを WALL_FLOOR 倍より下げない（ほぼ黒い乗り手の影が形と明るさで読める）
+test('fix4 光の壁の瓦礫・土煙: 壁のときだけ。暗くする掛け算は max(WALL_FLOOR, …) で下限があり、WALL_FLOOR は 0.45 以上', async () => {
+  const { WALL_FLOOR, WALL_DEBRIS_GLSL } = await import('../../src/render/explosionView.js');
+  const { scene } = make('mid');
+  let frag = null;
+  scene.traverse((o) => { if (o.material?.uniforms?.uDebrisR) frag = o.material.fragmentShader; });
+  expect(frag).toContain(WALL_DEBRIS_GLSL);
+  expect(frag).toContain(`#define WALL_FLOOR_K ${WALL_FLOOR.toFixed(3)}`);
+  expect(WALL_FLOOR).toBeGreaterThanOrEqual(0.45);
+  // 壁でないときは通らない
+  expect(WALL_DEBRIS_GLSL.trim().startsWith('if (uWall > 0.0) {')).toBe(true);
+  // col を変える式は、下限つきの掛け算と、明るくする足し算だけ
+  const writes = WALL_DEBRIS_GLSL.split('\n').map((l) => l.trim()).filter((l) => /^col\s*[*+\-/]?=/.test(l));
+  expect(writes).toEqual([
+    'col *= max(WALL_FLOOR_K, 1.0 - (1.0 - WALL_FLOOR_K) * dark * uWall);',
+    'col += uBand * 1.4 * max(ember, 0.0) * uWall;',
+  ]);
+  // 掛け算の値は dark（0〜1 に clamp）と uWall（0〜1）のどれでも WALL_FLOOR 以上
+  expect(WALL_DEBRIS_GLSL).toContain('float dark = clamp(');
+  for (let dark = 0; dark <= 1; dark += 0.05) for (const w of [0, 0.5, 1]) {
+    expect(Math.max(WALL_FLOOR, 1 - (1 - WALL_FLOOR) * dark * w)).toBeGreaterThanOrEqual(WALL_FLOOR);
+  }
+});

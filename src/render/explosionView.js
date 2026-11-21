@@ -23,23 +23,57 @@ const PUFF_FX = { flash: 0.18, shake: 0.25 };
 const BURST_SHAKE = 0.007;    // 弾けた瞬間の揺れの一撃 (rad、最大の一発)
 const HUM_HZ = 5;             // じわじわ期の球の脈打ち
 
-const SPHERE_VERT = /* glsl */`
-uniform float uTime, uSeed, uRadius;
+// 表面の波打ち（半径に対する割合。bump は ±0.5）。R0b fix4: 光の壁（uWall 1）では波打たせない（谷が前線 F の内へ最大 1.75% 沈み、
+// 球の面へ押されたビルが壁から黒い染みとして突き出ていた）。JS の sphereSurfaceScale と同じ式
+export const SURFACE_BUMP = 0.035;
+export const SPHERE_DISPLACE_GLSL = `position * (1.0 + bump * ${SURFACE_BUMP} * (1.0 - uWall) * smoothstep(0.0, 0.25, vDir.y + 0.1))`;
+export function sphereSurfaceScale(bump, dirY, wall) {
+  const k = Math.min(1, Math.max(0, (dirY + 0.1) / 0.25));
+  return 1 + bump * SURFACE_BUMP * (1 - wall) * k * k * (3 - 2 * k);
+}
+export const SPHERE_VERT = /* glsl */`
+uniform float uTime, uSeed, uRadius, uWall;
 varying vec3 vWorld;
 varying vec3 vDir;
 ${NOISE_GLSL}
 void main() {
   vDir = normalize(position);
-  // 表面をわずかに波打たせて、輪郭を生きたものにする
+  // 表面をわずかに波打たせて、輪郭を生きたものにする（光の壁では波打たせない）
   float bump = xnoise3(vDir * 4.0 + vec3(0.0, -uTime * 1.2, uSeed)) - 0.5;
-  vec3 p = position * (1.0 + bump * 0.035 * smoothstep(0.0, 0.25, vDir.y + 0.1));
+  vec3 p = ${SPHERE_DISPLACE_GLSL};
   vec4 wp = modelMatrix * vec4(p, 1.0);
   vWorld = wp.xyz;
   gl_Position = projectionMatrix * viewMatrix * wp;
 }`;
 
+// R0b fix4: 光の壁（uWall 1）の模様に、外へ・上へ流れる暗いちぎれた瓦礫と土煙の筋（球の下半分と縁で濃い）と、瓦礫の縁の熾火。
+// 網は足さない（シェーダーだけ）。暗くしても壁の明るさの WALL_FLOOR 倍より下げない（ほぼ黒い乗り手の影が、形と明るさの両方で読める）
+export const WALL_FLOOR = 0.45;
+export const WALL_DEBRIS_GLSL = /* glsl */`
+  if (uWall > 0.0) {
+    // 角度で決めた模様（壁とともにふくらむ = 壁に運ばれて外へ）。最後の半径で 5 m ほどの瓦礫、縦に長い土煙の筋（上へ流れる）
+    float dk = uDebrisR / 5.0;
+    vec3 sq = vec3(vDir.x * dk * 0.6, vDir.y * dk * 0.12 - uTime * 0.9, vDir.z * dk * 0.6) + uSeed;
+    float streak = xnoise3(sq) * 0.65 + xnoise3(sq * 2.3 + 5.1) * 0.35;
+    // 瓦礫: 縦に引き伸ばし、土煙の筋でちぎる（丸い斑にしない）。上へ速く飛ぶ
+    vec3 cq = vec3(vDir.x * dk, vDir.y * dk * 0.45 - uTime * 1.6, vDir.z * dk) + uSeed * 0.7 + (streak - 0.5) * 1.4;
+    float chunk = xnoise3(cq) * 0.55 + xnoise3(cq * 2.6 + 1.3) * 0.3 + xnoise3(cq * 6.1 + 4.7) * 0.15;
+    // 球の下半分（地面の街を押しつぶしている所）と縁で濃い
+    float dens = mix(1.0, 0.3, smoothstep(0.1, 0.55, vDir.y)) + 0.35 * smoothstep(0.82, 0.98, rn);
+    float cut = 0.745 - 0.1 * dens;
+    float torn = smoothstep(cut, cut + 0.02, chunk) * (0.75 + 0.25 * xnoise3(cq * 3.0 + 9.2));
+    float dustS = smoothstep(0.5, 0.8, streak) * 0.55 * dens;
+    // 熾火: 瓦礫のそばから剥がれて上へ飛ぶ小さな火の粉（瓦礫の縁を一様に縁どらない）
+    vec3 eq = vec3(vDir.x * dk * 2.2, vDir.y * dk * 1.1 - uTime * 2.6, vDir.z * dk * 2.2) + uSeed * 1.3;
+    float ember = smoothstep(0.8, 0.9, xnoise3(eq)) * smoothstep(cut - 0.14, cut - 0.03, chunk) * (1.0 - torn) * min(1.0, dens + 0.3);
+    float dark = clamp(max(dustS, torn * min(1.0, dens + 0.25)), 0.0, 1.0);
+    col *= max(WALL_FLOOR_K, 1.0 - (1.0 - WALL_FLOOR_K) * dark * uWall);
+    col += uBand * 1.4 * max(ember, 0.0) * uWall;
+  }
+`;
 const SPHERE_FRAG = /* glsl */`
-uniform float uTime, uSeed, uRadius, uFade, uBirth, uScale, uCoreK, uWall;
+#define WALL_FLOOR_K ${WALL_FLOOR.toFixed(3)}
+uniform float uTime, uSeed, uRadius, uFade, uBirth, uScale, uCoreK, uWall, uDebrisR;
 uniform vec3 uCore, uDeep, uInner, uBand, uRimA, uRimB;
 varying vec3 vWorld;
 varying vec3 vDir;
@@ -73,7 +107,8 @@ void main() {
   float core = exp(-rn * rn * 34.0) * (0.85 + 0.6 * uBirth) * uCoreK;
   // 球の中身: 流れる熱の模様を3色の段で塗る（深い橙 → 琥珀 → 淡い黄の筋）。明るさは 1 未満に抑えて色を残す
   float tone = xcel(clamp(plasma * 1.25 - 0.18 + core * 0.6 + (1.0 - mu) * 0.15, 0.0, 0.999), 3.0, 0.05);
-  vec3 body = mix(uDeep, uInner, smoothstep(0.2, 0.45, tone));
+  // fix4: 光の壁では、いちばん深い段（uDeep そのもの）の島を出さない（壁の上の暗い染みに見え、突き出たビルと見分けにくい）
+  vec3 body = mix(uDeep, uInner, max(smoothstep(0.2, 0.45, tone), 0.45 * uWall));
   body = mix(body, uBand * 0.95, smoothstep(0.55, 0.8, tone));
   vec3 col = body * (0.7 + 0.3 * mu);
   float a = 0.6 + 0.3 * mu;
@@ -98,6 +133,7 @@ void main() {
   // 消えるとき: 表面がノイズでほどけていく
   float keep = uFade >= 0.999 ? 1.0 : smoothstep(1.0 - uFade - 0.12, 1.0 - uFade + 0.12, plasma * 0.85 + mu * 0.25);
   float k = keep * uFade;
+  ${WALL_DEBRIS_GLSL}
   // R0b fix3: 光の壁（uWall 1）: 不透明。中の街（球の面へ押されたビル）は透けない
   a = mix(a, 1.0, uWall);
   vec3 outC = col * a + vec3(0.8, 0.92, 1.0) * line * 2.4;
@@ -184,7 +220,7 @@ export function createExplosionView(scene, tierName, { sunDir = null, seed = 7 }
 
   function makeSphere() {
     const uniforms = {
-      uTime: { value: 0 }, uSeed: { value: 0 }, uRadius: { value: 1 }, uFade: { value: 1 }, uBirth: { value: 0 }, uScale: { value: 3 }, uCoreK: { value: 1 }, uWall: { value: 0 },
+      uTime: { value: 0 }, uSeed: { value: 0 }, uRadius: { value: 1 }, uFade: { value: 1 }, uBirth: { value: 0 }, uScale: { value: 3 }, uCoreK: { value: 1 }, uWall: { value: 0 }, uDebrisR: { value: 1 },
       ...sharedColors,
     };
     const mat = new THREE.ShaderMaterial({
@@ -318,12 +354,14 @@ export function createExplosionView(scene, tierName, { sunDir = null, seed = 7 }
         // 小爆発の衝撃波は、届いた先（軍勢を払える範囲）より外では土煙を立てない
         if (s.ringFront > prevRing && fade > 0.4 && !(s.small && s.done)) ringDust(s, s.ringFront - prevRing);
         // R0b fix3: 光の壁のときは不透明で深さを書き、前線より wallPad だけ外に置く（球の面へ押されたビルが多角形の球の面から出ない）
-        const rw = wallK > 0 ? wallRadius(r * pulse, sphereGeo.parameters) : r * pulse;
+        // fix4: 壁のときは脈打ちで内へ縮めない（縮むと、ちょうど前線の上に押されたビルが壁から出る）
+        const rw = wallK > 0 ? wallRadius(r * Math.max(1, pulse), sphereGeo.parameters) : r * pulse;
         s.mesh.scale.setScalar(rw);
         s.mesh.material.depthWrite = wallK > 0;
         const u = s.uniforms;
         u.uTime.value = time;
         u.uWall.value = wallK;
+        u.uDebrisR.value = s.radius;
         u.uRadius.value = rw;
         u.uFade.value = fade;
         u.uCoreK.value = coreK;

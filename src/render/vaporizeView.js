@@ -119,6 +119,7 @@ export function createVaporizeView({ boxes = 96, sparks = 1600, sparksPer = 40, 
   boxMesh.frustumCulled = false;
   boxMesh.renderOrder = 7;
   boxMesh.count = 0;
+  boxMesh.name = 'vaporizeBoxes'; // R0b fix4: 演出は箱だけを隠し、光の粒（熾火）は残す
   group.add(boxMesh);
 
   // 光の粒
@@ -138,6 +139,7 @@ export function createVaporizeView({ boxes = 96, sparks = 1600, sparksPer = 40, 
   const points = new THREE.Points(sGeo, sMat);
   points.frustumCulled = false;
   points.renderOrder = 8;
+  points.name = 'vaporizeEmbers';
   group.add(points);
 
   const m = new THREE.Matrix4();

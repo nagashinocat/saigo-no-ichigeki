@@ -408,9 +408,11 @@ test('fix2/fix3 撮る場所は放つ瞬間ではなく、白を描いた次の�
     lazy.cin.play(() => { calls++; return lp; }, shot, { retreat: () => { rCalls++; rAt = { white: lazy.cin.white, t: lazy.cin.time }; return lazy.plan.retreat; } });
     const dt = 1 / fps;
     expect(calls).toBe(0);
-    let whiteFrames = 0;
+    let whiteFrames = 0, frames = 0, planAt = 0;
     while (eager.cin.time < eager.cin.timeline.snap + 0.5) {
-      eager.cin.update(dt); lazy.cin.update(dt);
+      eager.cin.update(dt); lazy.cin.update(dt); frames++;
+      if (calls === 1 && !planAt) planAt = frames;
+      if (rCalls === 1 && !rAt.frame) rAt.frame = frames;
       if (lazy.cin.white) whiteFrames++;
       // 白の最初のフレーム（白を描く）までは決めない。その次のフレームで決める（まだ白の間）
       if (whiteFrames <= 1) expect(calls).toBe(0);
@@ -423,7 +425,9 @@ test('fix2/fix3 撮る場所は放つ瞬間ではなく、白を描いた次の�
     expect(lazy.cin.timeline.camHit).toBeCloseTo(eager.cin.timeline.camHit, 12);
     // fix3: 重い逃げる道は、撮る場所を決めた次の白のフレームで一度だけ（スローの最初のフレームで止まらない）
     expect(rCalls).toBe(1);
-    if (fps >= 30) expect(rAt.white).toBe(true);
+    // fix4: 20 fps でも白のうち（撮る場所を決めた次のフレーム。20 fps の白は 0.25・0.30・0.35・0.40 s の 4 フレーム）
+    expect(rAt.white, `${fps} fps`).toBe(true);
+    expect(rAt.frame, `${fps} fps`).toBe(planAt + 1);
     expect(lazy.cin.camera.position.distanceTo(eager.cin.camera.position)).toBeLessThan(1e-9);
   }
 });
@@ -584,8 +588,12 @@ test('fix2: 宇宙の火花は街じゅうの見回る者が波のように弾�
 test('fix3 光の壁: 軍勢の後ろのカット（swell・race）の間だけ blastWall 1（不透明な光の壁）。粉の板・物理の破片・光に溶ける箱は隠し、追うカットで戻す', () => {
   const group = new THREE.Group();
   const dust = new THREE.Object3D(); dust.name = 'dust';
-  const vapor = new THREE.Object3D(); vapor.name = 'vaporize';
-  group.add(dust, vapor);
+  // fix4: 光に溶ける組（vaporize）のうち、箱（vaporizeBoxes）だけを隠す。立ちのぼる光の粒（vaporizeEmbers）は残す
+  const vaporGroup = new THREE.Group(); vaporGroup.name = 'vaporize';
+  const vapor = new THREE.Object3D(); vapor.name = 'vaporizeBoxes';
+  const embers = new THREE.Object3D(); embers.name = 'vaporizeEmbers';
+  vaporGroup.add(vapor, embers);
+  group.add(dust, vaporGroup);
   const scene = new THREE.Scene(), debris = new THREE.Object3D(); debris.name = 'debris'; scene.add(debris);
   const enemyView = { setHeroYaw() {}, setFocus() {} };
   const explosionView = { group, screen: { flash: 0, time: 0, heat: null }, cameraInfo: { front: 0, shake: 0 } };
@@ -601,6 +609,8 @@ test('fix3 光の壁: 軍勢の後ろのカット（swell・race）の間だけ 
     const beat = cin.stage === 'swell' || cin.stage === 'race';
     expect(cin.blastWall, cin.stage).toBe(beat ? 1 : 0);
     if (beat) for (const o of [dust, vapor, debris]) expect(o.visible, `${o.name} ${cin.stage}`).toBe(false);
+    expect(vaporGroup.visible).toBe(true);
+    expect(embers.visible, `embers ${cin.stage}`).toBe(true);
     if (cin.stage === 'chase') for (const o of [dust, vapor, debris]) expect(o.visible).toBe(true);
   }
   cin.stop();
@@ -666,4 +676,53 @@ test('fix3 弾けてから光の壁が乗り手の半分を飲むまで、どの
   }
   if (process.env.R0B_LOG) console.log(JSON.stringify(log));
   for (const [seed, w, r, n] of log) expect(n, `seed ${seed} ${w} r=${r}`).toBeGreaterThanOrEqual(3);
+});
+
+// R0b fix4: 縦長の最大の一発で、手前の撮る一人が画面の端で体の半分ほど切れていた（1.8 / 2.9 s）。撮る場所を選ぶ側が縦横比を受け取り、
+// 横のずれ・左右（足りなければスローのレンズ）を、光の玉と撮る一人の体がまるごと入るように選ぶ
+test('fix4 スローの間ずっと（と弾けた直後）、光の玉の幅の 90% 以上と、手前の撮る一人の体の箱の 80% 以上が画面の中（縦長・横長、力 10/60/100、3 つの街）', async () => {
+  const { NEAR_FRAME } = await import('../../src/render/finalePlan.js');
+  const B = NEAR_FRAME.body;
+  const log = [];
+  for (const seed of [3, 7, 11]) {
+    const c = generateCity(seed);
+    for (const size of SIZES) {
+      for (const amount of [10, 60, 100]) {
+        const shot = shotOf(amount);
+        const enemyView = { setHeroYaw() {}, setFocus() {} };
+        const explosionView = { screen: { flash: 0, time: 0, heat: null }, cameraInfo: { front: 0, shake: 0 } };
+        const renderer = { getRenderTarget: () => null, setRenderTarget() {}, render() {}, getPixelRatio: () => 1, compile() {} };
+        const cin = createCinematic({ size }, enemyView, explosionView, { renderer, scene: new THREE.Scene() });
+        const plan = planFinale({ shot, buildings: c.buildings, enemies: ARMY, rng: createRng(3), lead: leadFor(shot.radius), aspect: size.w / size.h });
+        expect(plan.lens.ball).toBeGreaterThanOrEqual(BEAT_LENS.minBall - 1e-9);
+        expect(plan.lens.ball).toBeLessThanOrEqual(BEAT_LENS.ball + 1e-9);
+        cin.play(plan, shot);
+        const tl = cin.timeline, f0 = tl.creepFront, r0 = plan.riders[0];
+        advance(cin, tl.white + 0.05);
+        let worstR = 1, worstD = 1;
+        while (cin.time < tl.burst + 0.1) {
+          const cam = cin.camera;
+          const xs = [];
+          const cy = Math.cos(r0.yaw), sy = Math.sin(r0.yaw);
+          for (const x of [-B.halfW, B.halfW]) for (const z of [B.back, B.front]) for (const y of [0, B.h]) {
+            xs.push(project(cam, [r0.pos[0] + x * cy + z * sy, r0.pos[1] + y, r0.pos[2] - x * sy + z * cy]).x);
+          }
+          const a = Math.min(...xs), b = Math.max(...xs);
+          worstR = Math.min(worstR, (Math.min(1, b) - Math.max(-1, a)) / (b - a));
+          if (cin.time < tl.burst) {
+            const right = new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld, 0).setY(0).normalize();
+            const ds = [-1, 1].map((k) => right.clone().multiplyScalar(k * f0).setY(0.05 * f0).project(cam).x).sort((p, q) => p - q);
+            worstD = Math.min(worstD, (Math.min(1, ds[1]) - Math.max(-1, ds[0])) / (ds[1] - ds[0]));
+          }
+          advance(cin, 1 / 60);
+        }
+        log.push([seed, size.w, amount, +worstR.toFixed(3), +worstD.toFixed(3), +plan.lens.ball.toFixed(3)]);
+      }
+    }
+  }
+  if (process.env.R0B_LOG) console.log(JSON.stringify(log));
+  for (const [seed, w, amount, r, d] of log) {
+    expect(r, `rider seed ${seed} ${w} power ${amount}`).toBeGreaterThanOrEqual(0.8);
+    expect(d, `dome seed ${seed} ${w} power ${amount}`).toBeGreaterThanOrEqual(0.9);
+  }
 });

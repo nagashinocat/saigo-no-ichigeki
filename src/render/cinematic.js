@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { CONFIG } from '../config.js';
 import { createTimeline, FINALE } from './finaleTimeline.js';
-import { retreatPoint } from './finalePlan.js';
+import { retreatPoint, BEAT_LENS, beatLens, NEAR_FRAME, BEAT_PUSH, riderAzSpan } from './finalePlan.js';
 import { createSpaceView } from './spaceView.js';
 
 // 最後の一発の演出（画面全体を使う。仕様 12 章の絵コンテ 1〜5）。時間割は finaleTimeline.js、撮る場所は finalePlan.js。
@@ -61,16 +61,9 @@ export function chaseHoldDist(fCut, aspect, fovV, H = CHASE_HOLD) {
 // 引いたとき（wide）の、前線からの先の距離: add + k·front（前は 24 + 1.25·front）
 export const CHASE_WIDE = { add: 30, k: 1.7, rise: 0.2, sec: 1.45 }; // rise: 引ききったときの高さ（爆心からの距離に対する割合）
 
-// fix2: スローの間のレンズ（縦の画角、度）: スローの終わりに、じわじわ期の光の玉（半径 f0、カメラから d）が画面の高さの
-// ball 倍になる画角 2·atan(f0/d)/ball を、min〜max に収める。スローの始めは push 倍だけ広い（ゆっくり寄る）
-export const BEAT_LENS = { ball: 0.33, min: 18, max: 35, push: 0.08 };
-export function beatLens(f0, d, L = BEAT_LENS) {
-  const deg = THREE.MathUtils.radToDeg(2 * Math.atan(f0 / Math.max(1, d)));
-  return Math.min(L.max, Math.max(L.min, deg / L.ball));
-}
-// fix2: 手前の撮る一人（riders[0]）を、画面の下 1/3 の縦 y（NDC）に撮る。弾けたあとは横 ±x（NDC）の内に。
-// fix3: スローの間は、じわじわ期の終わりの光の玉の幅を横 ±dome の内に必ず入れ、撮る一人（半幅 halfW m）も入るなら入れる
-export const NEAR_FRAME = { y: -0.5, x: 0.85, dome: 0.97, halfW: 0.5 };
+// fix4: スローのレンズ（BEAT_LENS・beatLens）・撮る一人の画面の決まり（NEAR_FRAME）・押し込み（BEAT_PUSH）は、撮る場所を選ぶ側
+// （finalePlan.js）と同じものを使う（縦長で光の玉と撮る一人が並んで入るかを、撮る場所を選ぶときに確かめる）
+export { BEAT_LENS, beatLens, NEAR_FRAME, BEAT_PUSH };
 // 画面の縦横比ごとのレンズ（縦の画角、度）。縦長の画面は横が狭いので広め
 export const LENS = {
   // 2: 遠くの軍勢の後ろ。スローの間は長いレンズ（beatLens）、弾けて光の壁が迫るにつれて [1] へ広がる（[0] は使わない）
@@ -122,8 +115,6 @@ export const VEIL_GROW = 1.25;
 // 光の壁がカメラのこの距離（m。カメラの爆心からの距離の 8% まで）手前に来たところから白へ（球の面へ押されたビルが板になって
 // レンズの前を横切る前に）
 export const WHITE_AHEAD = 9;
-// スローの間にカメラを押し込む距離（m。fix2: 4 → 1.5。手前 17 m の撮る一人が押し込みで横へ流れない）
-export const BEAT_PUSH = 1.5;
 // 弾けてから画角が広がるまで（秒）と、弾けたあとに下げる露出
 export const BEAT_WIDEN = 0.25;
 export const BEAT_RACE_DARK = 0.25;
@@ -209,7 +200,7 @@ export function createCinematic(views, enemyView, explosionView, { renderer, sce
     resolveRetreat = null;
     return plan.retreat;
   }
-  const P = { cam: new THREE.Vector3(), look: new THREE.Vector3(), radial: new THREE.Vector3(), fwd: new THREE.Vector3(), right: new THREE.Vector3(), riderMid: new THREE.Vector3(), swellFov: 30 };
+  const P = { cam: new THREE.Vector3(), look: new THREE.Vector3(), radial: new THREE.Vector3(), fwd: new THREE.Vector3(), right: new THREE.Vector3(), riderMid: new THREE.Vector3(), swellFov: 30, lens: BEAT_LENS };
   const _pos = new THREE.Vector3(), _look = new THREE.Vector3(), _q = new THREE.Quaternion(), _e = new THREE.Euler();
   const _a = new THREE.Vector3(), _b = new THREE.Vector3(), _box = new THREE.Box3(), _frus = new THREE.Frustum(), _pm = new THREE.Matrix4();
   const _wc = new THREE.PerspectiveCamera();
@@ -225,10 +216,11 @@ export function createCinematic(views, enemyView, explosionView, { renderer, sce
 
   // 軍勢の後ろのカット（swell・race）の間に隠す、街の側の物: 爆発の粉の板（スローの間は爆心の光の玉を雲でおおい、迫ると画面全体を
   // 白い膜でおおう）と、壊れたビルから飛ぶ物理の破片。fix3: 光に溶ける箱（vaporize。溶けるビルの色の窓のない箱が、光の玉の根元の前に
-  // 灰色の箱として並んでいた）も。遠くで飲まれていくビルと光の壁はそのまま
+  // 灰色の箱として並んでいた）も。fix4: 溶ける箱（vaporizeBoxes）だけを隠し、立ちのぼる光の粒（熾火、vaporizeEmbers）は残す。
+  // 遠くで飲まれていくビルと光の壁はそのまま
   let worldFx = null;
   function setExplosionDust(on) {
-    worldFx ??= [explosionView.group?.getObjectByName?.('dust'), explosionView.group?.getObjectByName?.('vaporize'), scene?.getObjectByName?.('debris')].filter(Boolean);
+    worldFx ??= [explosionView.group?.getObjectByName?.('dust'), explosionView.group?.getObjectByName?.('vaporizeBoxes'), scene?.getObjectByName?.('debris')].filter(Boolean);
     for (const o of worldFx) o.visible = on;
   }
 
@@ -305,7 +297,7 @@ export function createCinematic(views, enemyView, explosionView, { renderer, sce
     _b.copy(P.riderMid).sub(_pos).normalize();
     _a.lerp(_b, BEAT_LOOK_RIDERS * wideAt).normalize();
     const f1 = lens(LENS.beat)[1];
-    const fovS = Math.min(BEAT_LENS.max, Math.max(BEAT_LENS.min, P.swellFov * (1 + BEAT_LENS.push * (1 - easeInOut(sw)))));
+    const fovS = Math.min(P.lens.max, Math.max(P.lens.min, P.swellFov * (1 + P.lens.push * (1 - easeInOut(sw)))));
     const fov = fovS + (f1 - fovS) * Math.max(0.8 * wideAt, smooth(near));
     // fix2: 手前の撮る一人（riders[0]）を画面の下 1/3（縦 NEAR_FRAME.y）に、横は ±NEAR_FRAME.x の内に（縦長の狭い画面では
     // 撮る一人の方へ少し振る）。光の壁が迫っても見上げない（画面の下の 1/3 で、屋上の並みと乗り手が飲まれていくのを見せ続ける）
@@ -320,15 +312,17 @@ export function createCinematic(views, enemyView, explosionView, { renderer, sce
       const dy = wrap(yawR - yaw), lim = Math.atan(NEAR_FRAME.x * tanH * Math.cos(pitchR - pitch));
       let shiftRace = 0;
       if (Math.abs(dy) > lim) shiftRace = dy - Math.sign(dy) * lim;
-      // fix3 スローの間: じわじわ期の終わりの光の玉（見かけの半径 hd）の幅を ±NEAR_FRAME.dome の内に必ず入れ、撮る一人（見かけの半幅 hr）も
-      // 入るなら入れる（両方が入らない縦長では、撮る一人が画面の端で切れる）
+      // fix3 スローの間: じわじわ期の終わりの光の玉（見かけの半径 hd）の幅を ±NEAR_FRAME.dome の内に必ず入れ、撮る一人も
+      // 入るなら入れる（両方が入らない縦長では、撮る一人が画面の端で切れる。fix4: 撮る場所を選ぶ側が、そうならない横のずれ・左右・レンズを選ぶ）。
+      // fix4: 撮る一人の幅は体の箱の角から（riderAzSpan。finalePlan の nearFitFrac と同じ）
       const limD = Math.atan(NEAR_FRAME.dome * tanH);
-      const hd = Math.asin(Math.min(1, tl.creepFront / Math.max(1, P.look.distanceTo(_pos)))), hr = Math.atan(NEAR_FRAME.halfW / Math.hypot(_b.x, _b.z));
+      const hd = Math.asin(Math.min(1, tl.creepFront / Math.max(1, P.look.distanceTo(_pos))));
+      const [rLo, rHi] = riderAzSpan([_pos.x, _pos.z], riders[0].pos, riders[0].yaw, yaw);
       const dDome = wrap(Math.atan2(P.look.z - _pos.z, P.look.x - _pos.x) - yaw);
-      const lo = Math.min(dDome - hd, dy - hr), hi = Math.max(dDome + hd, dy + hr);
+      const lo = Math.min(dDome - hd, rLo), hi = Math.max(dDome + hd, rHi);
       let shiftSwell;
       if (hi - lo <= 2 * limD) shiftSwell = hi > limD ? hi - limD : lo < -limD ? lo + limD : 0;
-      else shiftSwell = dy > dDome ? dDome - hd + limD : dDome + hd - limD;
+      else shiftSwell = rLo + rHi > 2 * dDome ? dDome - hd + limD : dDome + hd - limD;
       yaw += shiftSwell + (shiftRace - shiftSwell) * wideAt;
     }
     _look.set(Math.cos(pitch) * Math.cos(yaw), Math.sin(pitch), Math.cos(pitch) * Math.sin(yaw)).multiplyScalar(100).add(_pos);
@@ -478,7 +472,9 @@ export function createCinematic(views, enemyView, explosionView, { renderer, sce
     P.fwd.copy(P.radial).negate();
     P.right.set(-P.fwd.z, 0, P.fwd.x);
     // スローの終わり（BEAT_PUSH m 押し込んだ所）で、じわじわ期の光の玉が画面の高さの 1/3 ほどになるレンズ
-    P.swellFov = beatLens(tl.creepFront, _a.copy(P.cam).addScaledVector(P.fwd, BEAT_PUSH).length());
+    // fix4: 縦長で撮る一人がまるごと入らない所では、撮る場所を選ぶ側が光の玉を小さめにしたレンズ（plan.lens）
+    P.lens = p.lens ?? BEAT_LENS;
+    P.swellFov = beatLens(tl.creepFront, _a.copy(P.cam).addScaledVector(P.fwd, BEAT_PUSH).length(), P.lens);
     chaseR0 = Math.hypot(p.camPos[0], p.camPos[2]);
     const nearOf = (b) => Math.hypot(Math.max(0, Math.abs(b.x) - b.w / 2), Math.max(0, Math.abs(b.z) - b.d / 2));
     touch = veilBuilding && buildings ? buildings.map((b) => ({ near: nearOf(b), id: b.id, x: b.x, z: b.z, w: b.w, d: b.d, h: b.h })).filter((b) => b.near < s.radius).sort((a, b) => a.near - b.near) : [];
@@ -617,8 +613,9 @@ export function createCinematic(views, enemyView, explosionView, { renderer, sce
       }
       if (occluders.length) { for (const id of occluders) veil(id, 'hide'); occluders = []; }
       // fix3: 逃げる道（重い）は、撮る場所を決めたフレームの次の白のフレームで求める（白のうちに。スローの最初のフレームで止まらない）。
+      // fix4: 「次のフレーム」= このフレームの始まり t0 が、撮る場所を決めたフレームの終わり planFrame（その t）に等しい。
       // 白がもう終わっていれば、下のスローの間に求める
-      if (stage === 'white') { if (planFrame && t0 > planFrame) ensureRetreat(); screen.flash = 0; return; }
+      if (stage === 'white') { if (planFrame && t0 >= planFrame) ensureRetreat(); screen.flash = 0; return; }
       setExplosionDust(stage !== 'race' && stage !== 'swell');
       if (stage === 'swell' || stage === 'race') {
         cue('erupt'); // 白が晴れて爆発が始まる: 世界の音が戻り、遠い地鳴りがふくらむ
