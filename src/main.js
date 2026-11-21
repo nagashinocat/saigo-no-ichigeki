@@ -342,6 +342,7 @@ function lowerTier() {
   if (debugMode) window.__tier = tier;
   heroAura.setTier(tier);
   enemyView.setTier(tier);
+  style.tintFigures(enemyView.mesh.material.uniforms, tier); // low へ下がったら推進の光を飽和した緑へ（bloom がなくても緑に読める）
   applyPixelRatio();
   resize();
 }
@@ -379,7 +380,9 @@ function stepWorld(wdt, live, enemies, cam, focus, glowScale = 1) {
   explosionView.update(wdt, live, cam, ps, fronts.crater);
   cityView.update(wdt, { fronts: list, heat: explosionView.ground.heat, ember: explosionView.ground.ember });
   // 光が弱まった分だけ、主人公は光を背にした影絵になる（リプレイの最後のカット）
-  enemyView.sync(enemies, { fronts: list, pointScale: ps, glow: explosionView.ground.heat * glowScale, dt: wdt, pixelRatio: renderer.getPixelRatio(), silhouette: 1 - glowScale });
+  // 最後の一発の演出・リプレイ・時間切れの結末の間は、上空カメラ用の補助表示（目印・透かし）を出さない
+  const aids = !(cinematic.active || replay.active || blackhole.active);
+  enemyView.sync(enemies, { fronts: list, pointScale: ps, glow: explosionView.ground.heat * glowScale, dt: wdt, pixelRatio: renderer.getPixelRatio(), silhouette: 1 - glowScale, aids });
   heroAura.update(wdt, ps, 1 - glowScale);
 }
 

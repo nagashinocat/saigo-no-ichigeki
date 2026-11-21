@@ -2,6 +2,7 @@ import { CONFIG } from '../config.js';
 import { GRID } from '../world/cityGen.js';
 
 const DEAD_KEEP_SEC = 3;
+const LEAN_SEC = 0.12; // 傾きの見た目のなめらかさ（s）
 const P = GRID.PITCH;
 const DIRS = [[1, 0], [0, 1], [-1, 0], [0, -1]];
 const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
@@ -43,11 +44,14 @@ export function lineOfSight(x, z, buildings, margin = 0) {
 }
 
 // 軍勢。浮遊バイクで街の道路（26m 間隔の街区の間の道）をビュンビュン飛んで主人公を探し回り（search）、
-// 交差点で曲がる。主人公から spotDist m の内側で建物にさえぎられずに見えたら見つけて（chase）一直線に近づき、
-// 最後の数 m で減速して横に止まり、掴む（grab）。掴む枠がいっぱいなら queueDist m で待つ。
+// 交差点で曲がる。主人公から spotDist m の内側で建物にさえぎられずに見えたら見つけて（chase）、急に止まって短くにらみ、
+// 一直線に全速で突っ込み、最後の slowDist m だけ急ブレーキして横に飛びつき、掴む（grab）。
+// 掴む枠がいっぱいでも止まって待たない（持ち主の要望 2026-11-21 10:01「主人公の手前でまだ待ってるからそのまま突っ込んで」）:
+// そのまま突っ込み、掴んでいる者の外に重なって飛びつく（cling。力は減らさない）。枠が空けば、先に飛びついた者からすぐ掴む。
 // 爆発の前線に触れると倒れる（dead）。時間がたつほど多く湧く。判定（払う・爆発・掴む）は主人公からの水平の距離 dist。
 // 一人ごと: x, z（m）、dist、angle（主人公から見た向き）、heading（進む向き。x 軸から z 軸へ）、turn（曲がる速さ rad/s）、speed、
-//   searchTime（探した秒）、alert（気配を感じて主人公の方へ寄っていく）
+//   searchTime（探した秒）、alert（気配を感じて主人公の方へ寄っていく）、grabTime（掴んだ・飛びついてからの秒）、
+//   layer（飛びついた者の重なりの段 0, 1, …）、unpile（重なりから下りて掴んでからの秒）、lean（なめらかにした turn。見た目の傾き）
 // buildings: 見通しを確かめる建物（遊んでいる間は壊れない）
 export function createEnemies(rng, cfg = CONFIG, { buildings = [] } = {}) {
   const E = cfg.enemy;
@@ -60,7 +64,8 @@ export function createEnemies(rng, cfg = CONFIG, { buildings = [] } = {}) {
   const place = (e) => { e.dist = Math.hypot(e.x, e.z); e.angle = Math.atan2(e.z, e.x); };
   const target = (e) => { const [nx, nz] = roadNode(e.ni, e.nj); return [nx + e.lane[0], nz + e.lane[1]]; };
 
-  // 交差点で次に進む向きを選ぶ（戻らない。主人公に近づく向きを選びやすい。気配を感じた者は近づく向きだけ。roamDist の外へは出ない）
+  // 交差点で次に進む向きを選ぶ（戻らない。主人公に近づく向きを選びやすい。気配を感じた者は近づく向きだけ。roamDist の外へは出ない）。
+  // 主人公から同じ距離の交差点へ進む（広場を囲む道を回る）のも近づく向きに数える（広場の角で行き止まりにして引き返さない）
   function chooseNext(e) {
     const [cx, cz] = roadNode(e.ni, e.nj);
     const here = Math.hypot(cx, cz);
@@ -69,7 +74,7 @@ export function createEnemies(rng, cfg = CONFIG, { buildings = [] } = {}) {
       if (di === -e.di && dj === -e.dj) continue;
       const [nx, nz] = roadNode(e.ni + di, e.nj + dj);
       const d = Math.hypot(nx, nz);
-      const inward = d < here - 1e-6;
+      const inward = d < here + 1e-6;
       if (d > E.roamDist && !inward) continue;
       if (e.alert && !inward) continue;
       opts.push({ di, dj, w: inward ? E.inwardBias : 1 });
@@ -144,9 +149,10 @@ export function createEnemies(rng, cfg = CONFIG, { buildings = [] } = {}) {
     }
   }
 
-  // 見つけた者: 急に止まって主人公の方へ向き直り、spotPause 秒にらんでから（見つけた一拍）、主人公へ一直線に近づく
-  // （曲がりきれる速さで向きを変える）。最後の数 m で減速し、stop m で止まる
-  function chaseStep(e, dt, stop) {
+  // 見つけた者: 急に止まって主人公の方へ向き直り、spotPause 秒にらんでから（見つけた一拍）、主人公へ一直線に突っ込む
+  // （曲がりきれる速さで向きを変える）。減速は最後の slowDist m だけ（approachSpeed）。掴む距離 grabRange で止まる。
+  // 主人公からの距離は一度も増えない（向き直る途中の惰性で外へ向かう分は、主人公のまわりを回る向きへ逃がす）
+  function chaseStep(e, dt) {
     const toHero = Math.atan2(-e.z, -e.x);
     steer(e, toHero, e.dist < E.snapDist ? Math.PI * 8 : E.chaseTurnRate, dt);
     if (e.pause > 0) {
@@ -155,19 +161,22 @@ export function createEnemies(rng, cfg = CONFIG, { buildings = [] } = {}) {
     } else {
       e.speed = Math.min(approachSpeed(e.dist, cfg), e.speed + E.chaseAccel * dt); // 減速の曲線より速くならない
     }
-    // もう stop の内側にいる（近づく途中で掴む枠が埋まった）なら、その場で待つ（外へ押し戻さない）
-    if (e.dist <= stop) { e.speed = 0; return; }
+    if (e.dist <= E.grabRange) { e.speed = 0; return; } // もう掴む距離の内側（試しの置き方など）: 外へ押し戻さない
     const step = e.speed * dt;
     let nx = e.x + Math.cos(e.heading) * step, nz = e.z + Math.sin(e.heading) * step;
-    const nd = Math.hypot(nx, nz);
-    if (nd <= stop) {
-      const k = stop / Math.max(1e-9, e.dist);
+    let nd = Math.hypot(nx, nz);
+    if (nd > e.dist) { const k = e.dist / nd; nx *= k; nz *= k; nd = e.dist; }
+    if (nd <= E.grabRange) { // 掴む距離で止まる（今いる所から主人公へ向かう線の上。行き過ぎない）
+      const k = E.grabRange / Math.max(1e-9, e.dist);
       nx = e.x * k; nz = e.z * k;
       e.speed = 0;
     }
     e.x = nx; e.z = nz;
     place(e);
   }
+
+  // 飛びついた者に重なりの段を、飛びついた順に 0, 1, … と振り直す
+  const relayer = () => { let k = 0; for (const e of list) if (e.state === 'cling') e.layer = k++; };
 
   return {
     get list() { return list; },
@@ -176,8 +185,18 @@ export function createEnemies(rng, cfg = CONFIG, { buildings = [] } = {}) {
       list = list.filter((e) => e.state !== 'dead' || e.deadTime < DEAD_KEEP_SEC);
 
       let grabbing = list.reduce((n, e) => n + (e.state === 'grab' ? 1 : 0), 0);
+      // 枠が空いていれば、先に飛びついた者からすぐ掴む（もう主人公の横にいるので動かない）
       for (const e of list) {
-        if (e.state === 'grab') { e.grabTime += dt; continue; } // 掴んでからの秒（見た目が主人公の横へ寄るのに使う）
+        if (grabbing >= E.maxGrabbing) break;
+        if (e.state !== 'cling') continue;
+        e.state = 'grab'; e.unpile = 0; grabbing++; // layer は残す（重なりから下りる見た目）
+      }
+      for (const e of list) {
+        if (e.state === 'grab' || e.state === 'cling') { // 掴んでからの秒（見た目が主人公の横へ寄るのに使う）
+          e.grabTime += dt;
+          if (e.unpile != null) e.unpile += dt;
+          continue;
+        }
         if (e.state === 'dead') continue;
         if (e.x == null) { e.x = Math.cos(e.angle) * e.dist; e.z = Math.sin(e.angle) * e.dist; } // 角度と距離だけの者（試し）
         if (e.state === 'approach') e.state = 'chase';
@@ -185,11 +204,15 @@ export function createEnemies(rng, cfg = CONFIG, { buildings = [] } = {}) {
         e.speed ??= approachSpeed(e.dist, cfg);
         e.turn ??= 0;
         if (e.state === 'search') searchStep(e, dt);
+        if (e.state === 'chase') chaseStep(e, dt);
+        // 傾きの見た目に使う、なめらかにした曲がる速さ（交差点の一瞬の曲がりでちらつかない）
+        e.lean = (e.lean ?? e.turn) + (e.turn - (e.lean ?? e.turn)) * (1 - Math.exp(-dt / LEAN_SEC));
         if (e.state !== 'chase') continue;
-        const free = grabbing < E.maxGrabbing;
-        chaseStep(e, dt, free ? E.grabRange : Math.max(E.grabRange, E.queueDist));
-        if (free && e.dist <= E.grabRange + 1e-9) { e.state = 'grab'; e.grabTime = 0; e.speed = 0; e.turn = 0; grabbing++; }
+        if (e.dist > E.grabRange + 1e-9) continue;
+        e.grabTime = 0; e.speed = 0; e.turn = 0; e.lean = 0;
+        if (grabbing < E.maxGrabbing) { e.state = 'grab'; grabbing++; } else e.state = 'cling';
       }
+      relayer();
 
       // 区間の真ん中の速さで足す（台形と同じで、刻み幅によらず同じ数が湧く）
       acc += spawnRateAt(time + dt / 2, cfg) * dt;
@@ -208,6 +231,7 @@ export function createEnemies(rng, cfg = CONFIG, { buildings = [] } = {}) {
         e.deadTime = 0;
         killed++;
       }
+      if (killed) relayer();
       return killed;
     },
   };

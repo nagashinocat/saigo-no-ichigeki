@@ -12,6 +12,7 @@
 // --skip S: リプレイを、--at の時刻 S で飛ばす（画面のタップと同じ）。
 // --keep-holding: --press の後も離さない（最後の一発を放たない）。--puff N: そのあと小爆発を N 回（0.25 秒おき）押す。--at はその時点からの秒。
 // --timeout: そのあと残り時間を 0 にする（次の一歩で時間切れ → ブラックホールの結末）。--at はその時点からの秒。
+// --eval JS: 撮る前（--at の最初の一歩の前）にページで JS を走らせる（例: 上空カメラを寄せて近くから確かめる）。
 // 力は長押しの間だけ貯まる（CONFIG.power.chargePerSec）。--press が短すぎると離しても放たれない。
 import { chromium } from 'playwright';
 import { CONFIG } from '../src/config.js';
@@ -34,6 +35,7 @@ function parseArgs(argv) {
   const at = String(opt.at).split(',').filter(Boolean).map(Number);
   return { url: pos[0], out: pos[1], wait: Number(opt.wait), press: Number(opt.press), width: w, height: h,
     skip: opt.skip !== undefined ? Number(opt.skip) : null,
+    evalJs: opt.eval ?? null,
     step: !!opt.step, timeout: !!opt.timeout, fire: Number(opt.fire ?? 0), keepHolding: !!opt.keepHolding, puff: Number(opt.puff ?? 0), idle: Number(opt.idle), at, from: opt.from, perf: Number(opt.perf), cpu: Number(opt.cpu),
     hand: opt.hand ? String(opt.hand).split(',').map(Number) : null, handRelease: opt['hand-release'] !== undefined ? Number(opt['hand-release']) : null };
 }
@@ -58,8 +60,9 @@ async function stepped(page) {
   const step = (sec) => page.evaluate((s) => window.__debug.step(s), sec);
   await page.evaluate(() => window.__debug.pause());
   if (args.idle > 0) {
-    await page.evaluate(() => { window.__game.pressStart(); window.__game.pressEnd(); }); // 始めるだけ（貯めずに離すと撃たない）
+    await page.evaluate(() => { document.getElementById('start').hidden = true; window.__game.pressStart(); window.__game.pressEnd(); }); // 始めるだけ（貯めずに離すと撃たない）
     await step(args.idle);
+    await page.evaluate(() => document.querySelector('.hud-hint')?.classList.remove('show')); // 始めるだけの「まだ足りない」は消す
   }
   // --fire A: 力を A にして、すぐに離す（軍勢に掴まれて減らないので、演出を決まった大きさで撮れる）
   if (args.fire > 0) {
@@ -108,6 +111,7 @@ async function stepped(page) {
     console.log('  slowest frames [index, ms]', JSON.stringify(slow));
     return;
   }
+  if (args.evalJs) await page.evaluate(args.evalJs);
   let t = 0, skipped = false;
   for (const target of args.at.length ? args.at : [0]) {
     if (args.skip !== null && !skipped && target > args.skip) {

@@ -54,8 +54,9 @@ test('探す: 道路に沿って searchSpeed で飛び、交差点で曲がる�
   // 長く探した者は、縦の道にも横の道にも入っている（交差点で曲がる）
   const turned = [...seen.values()].filter((s) => s.dx > P && s.dz > P).length;
   expect(turned).toBeGreaterThan(seen.size * 0.3);
-  expect(E.searchSpeed).toBeGreaterThanOrEqual(14);
-  expect(E.searchSpeed).toBeLessThanOrEqual(18);
+  // 持ち主の要望（2026-11-21 10:01「群勢もっと早くして」）: 探す速さは 22〜26 m/s
+  expect(E.searchSpeed).toBeGreaterThanOrEqual(22);
+  expect(E.searchSpeed).toBeLessThanOrEqual(26);
 });
 
 test('lineOfSight: 主人公までの線分が建物の足元にさえぎられるか', () => {
@@ -82,8 +83,9 @@ test('見つける: spotDist の内側で建物にさえぎられずに見えた
   const [nx] = roadNode(0, 0); // 広場のすぐ外の道（x = 13）
   // 広場のまわりの道を -z へ進む者（主人公が見える）
   const a = solo({ x: nx, z: 20, heading: -Math.PI / 2, ni: 0, nj: -1, di: 0, dj: -1 });
-  for (let i = 0; i < 10; i++) a.e.update(1 / 30);
+  for (let i = 0; i < 30 && a.x.state === 'search'; i++) a.e.update(1 / 30);
   expect(a.x.state).toBe('chase');
+  expect(a.x.dist).toBeLessThanOrEqual(E.spotDist + 1e-9);
   // 同じ場所でも、間に建物があれば見つけない
   const wall = { x: 6, z: 9, w: 3, d: 3, dist: Math.hypot(6, 9) };
   const b = solo({ x: nx, z: 20, heading: -Math.PI / 2, ni: 0, nj: -1, di: 0, dj: -1 }, { searchSpeed: 0, accel: 0 }, [wall]);
@@ -97,33 +99,55 @@ test('見つける: spotDist の内側で建物にさえぎられずに見えた
   expect(c.x.state).toBe('search');
 });
 
-test('見つけたら: 止まって一拍にらみ、主人公へ一直線に近づき（離れない）、最後に減速して掴む', () => {
+test('気配を感じた者は、広場の角の交差点で引き返さず、広場を囲む道を回る（そこで主人公を見つける）', () => {
+  const [nx, nz] = roadNode(0, 0); // 広場の角（13, 13）
+  // 外から広場の角へ向かう、気配を感じた者（近づく向きしか選ばない）
+  const { e, x } = solo({ x: nx, z: nz + P, heading: -Math.PI / 2, ni: 0, nj: 0, di: 0, dj: -1, alert: true });
+  let t = 0;
+  while (x.state === 'search' && t < 3) { e.update(1 / 60); t += 1 / 60; expect(x.dj).not.toBe(1); }
+  expect(x.state).toBe('chase');
+  expect(t).toBeLessThan(2);
+});
+
+test('見つけたら: 急に止まって短い一拍にらみ、主人公へ一直線に全速で突っ込み（離れない）、最後の 1〜2 m だけ急ブレーキして掴む', () => {
   const [nx] = roadNode(0, 0);
   const { e, x } = solo({ x: nx, z: 20, heading: -Math.PI / 2, ni: 0, nj: -1, di: 0, dj: -1 });
   while (x.state === 'search') e.update(1 / 60);
-  let prev = x.dist, t = 0, still = 0, top = 0;
+  let prev = x.dist, t = 0, still = 0, top = 0, spotAt = null, stopT = 0;
   const speeds = [];
   while (x.state === 'chase' && t < 20) {
     e.update(1 / 60); t += 1 / 60;
     // 見つけてから掴むまで、主人公からの距離は一度も増えない（ブレーキで止まる間の惰性も含む）
     expect(x.dist).toBeLessThanOrEqual(prev + 1e-9);
     expect(x.dist).toBeGreaterThanOrEqual(E.grabRange - 1e-9);
-    if (x.speed < 0.5) still += 1 / 60;
+    if (spotAt == null && x.speed < 0.5) { spotAt = t; }
+    if (spotAt == null) stopT = t;
+    if (x.speed < 0.5 && top === 0) still += 1 / 60;
     if (still > 0) top = Math.max(top, x.speed); // 一拍のあと
     speeds.push([prev, x.speed]); // この一歩の速さは、一歩の前の距離で決まる
     prev = x.dist;
   }
   expect(x.state).toBe('grab');
   expect(x.dist).toBeCloseTo(E.grabRange, 9);
-  expect(still).toBeGreaterThanOrEqual(E.spotPause * 0.9); // 見つけた一拍
+  // 見つけた一拍: 急に止まり（0.5 秒以内）、にらむのは短い（0.4〜0.5 秒）
+  expect(stopT).toBeLessThan(0.5);
+  expect(still).toBeGreaterThanOrEqual(E.spotPause * 0.9);
+  expect(still).toBeLessThan(E.spotPause + 0.1);
+  expect(E.spotPause).toBeGreaterThanOrEqual(0.4);
+  expect(E.spotPause).toBeLessThanOrEqual(0.5);
+  // 持ち主の要望: 近づく速さは 16〜20 m/s。主人公の手前で減速しきらず、そのまま突っ込む
   expect(top).toBeLessThanOrEqual(E.speed + 1e-9);
-  expect(E.speed).toBeGreaterThanOrEqual(8);
-  expect(E.speed).toBeLessThanOrEqual(10);
-  // 減速の曲線より速くない（最後の数 m で減速する）
+  expect(top).toBeGreaterThan(E.speed * 0.9);
+  expect(E.speed).toBeGreaterThanOrEqual(16);
+  expect(E.speed).toBeLessThanOrEqual(20);
+  // 減速の曲線より速くない。減速するのは最後の 2 m だけ（その外では全速の 9 割以上を保つ）
   for (const [d, v] of speeds) if (d < E.grabRange + E.slowDist && v > 0) expect(v).toBeLessThanOrEqual(approachSpeed(d) + 1e-9);
+  const late = speeds.filter(([d]) => d > E.grabRange + 2 && d < E.grabRange + 4);
+  expect(late.length).toBeGreaterThan(0);
+  for (const [, v] of late) expect(v).toBeGreaterThan(E.speed * 0.9);
 });
 
-test('grabRange に入ると grab になり、update が掴んでいる数を返す（最大 maxGrabbing）。あふれた者は queueDist で待ち、枠が空けば寄って掴む', () => {
+test('掴む枠が埋まっていても止まって待たない: あふれた者もそのまま突っ込み、掴んでいる者の外に重なって飛びつく（cling）。枠が空けば、いちばん先に飛びついた者がすぐ掴む', () => {
   const e = createEnemies(createRng(3), cfgWith({ spawnPerSec: 100, spawnDist: [10, 10], speed: 100, slowMin: 1, chaseAccel: 1e4 }));
   let n = 0;
   for (let i = 0; i < 20; i++) n = e.update(0.1);
@@ -131,29 +155,32 @@ test('grabRange に入ると grab になり、update が掴んでいる数を返
   const grab = e.list.filter((x) => x.state === 'grab');
   expect(grab.length).toBe(E.maxGrabbing);
   for (const g of grab) expect(g.dist).toBeCloseTo(E.grabRange, 9);
-  const waiting = e.list.filter((x) => x.state === 'chase' && Math.abs(x.dist - E.queueDist) < 1e-9);
-  expect(waiting.length).toBeGreaterThan(0);
-  expect(E.queueDist).toBeGreaterThan(E.grabRange);
-  // 掴んでいた一人が倒れると、待っていた一人が（離れずに）寄って掴む
-  const w = waiting[0];
+  // 順番待ちの輪はない: 掴めなかった者は主人公のすぐ横（掴む距離）まで来て飛びつき、止まって待つ者はいない
+  expect(E.queueDist).toBeUndefined();
+  const clingers = e.list.filter((x) => x.state === 'cling');
+  expect(clingers.length).toBeGreaterThan(0);
+  for (const c of clingers) { expect(c.dist).toBeCloseTo(E.grabRange, 9); expect(c.grabTime).toBeGreaterThanOrEqual(0); }
+  expect(new Set(clingers.map((c) => c.layer))).toEqual(new Set(clingers.map((_, i) => i))); // 重なる段は 0, 1, 2 …
+  const waiting = e.list.filter((x) => x.state === 'chase' && x.speed === 0 && x.pause == null);
+  expect(waiting.length).toBe(0);
+  // 掴んでいた一人が倒れると、いちばん先に飛びついた者が（動かずに）すぐ掴む。掴んでいる数は変わらない
+  const first = clingers.find((c) => c.layer === 0);
   grab[0].state = 'dead'; grab[0].deadTime = 0;
-  let prev = w.dist;
-  for (let i = 0; i < 60 && w.state !== 'grab'; i++) {
-    e.update(1 / 60);
-    expect(w.dist).toBeLessThanOrEqual(prev + 1e-9);
-    prev = w.dist;
-  }
-  expect(w.state).toBe('grab');
+  const d0 = first.dist;
+  n = e.update(1 / 60);
+  expect(first.state).toBe('grab');
+  expect(first.dist).toBe(d0);
+  expect(n).toBe(E.maxGrabbing);
+  expect(first.unpile).toBeGreaterThanOrEqual(0); // 重なりから下りる見た目のための秒
 });
 
-test('近づく途中（queueDist の内側）で掴む枠が埋まっても、外へ押し戻されずその場で待ち、枠が空けば寄って掴む', () => {
+test('近づく途中で掴む枠が埋まっても、外へ押し戻されず、その場で止まらずに突っ込んで飛びつき、枠が空けば掴む', () => {
   const e = createEnemies(createRng(3), cfgWith({ spawnPerSec: 0 }));
   // 5 人が掴んでいて枠は残り 1。3m に来ている者と、もう掴む寸前の者
   for (let i = 0; i < E.maxGrabbing - 1; i++) e.list.push({ id: 100 + i, angle: i, dist: E.grabRange, state: 'grab', grabTime: 1 });
   const w = { id: 1, angle: 0.5, dist: 3, state: 'chase' };
   const last = { id: 2, angle: 2.5, dist: E.grabRange + 0.01, state: 'chase' };
   e.list.push(w, last);
-  expect(3).toBeLessThan(E.queueDist);
   let prev = w.dist;
   for (let i = 0; i < 60; i++) {
     e.update(1 / 60);
@@ -161,17 +188,33 @@ test('近づく途中（queueDist の内側）で掴む枠が埋まっても、�
     prev = w.dist;
   }
   expect(last.state).toBe('grab'); // 6 つ目の枠は埋まった
-  expect(w.state).toBe('chase');
-  expect(w.dist).toBeGreaterThan(E.grabRange);
-  expect(w.speed).toBe(0);
-  // 枠が空けば、離れずに寄って掴む
+  expect(w.state).toBe('cling'); // 待たずに飛びついた
+  expect(w.dist).toBeCloseTo(E.grabRange, 9);
+  // 枠が空けば、離れずに掴む
   last.state = 'dead'; last.deadTime = 0;
-  for (let i = 0; i < 120 && w.state !== 'grab'; i++) {
-    e.update(1 / 60);
-    expect(w.dist).toBeLessThanOrEqual(prev + 1e-12);
-    prev = w.dist;
-  }
+  e.update(1 / 60);
+  expect(w.dist).toBeLessThanOrEqual(prev + 1e-12);
   expect(w.state).toBe('grab');
+});
+
+test('もう掴む距離の内側にいる者は外へ押し戻されない（その場で掴む・飛びつく）', () => {
+  const e = createEnemies(createRng(3), cfgWith({ spawnPerSec: 0 }));
+  for (let i = 0; i < E.maxGrabbing - 1; i++) e.list.push({ id: 100 + i, angle: i, dist: E.grabRange, state: 'grab', grabTime: 1 });
+  const a = { id: 1, angle: 0.5, dist: 2, state: 'chase' }, b = { id: 2, angle: 2.5, dist: 1.5, state: 'chase' };
+  e.list.push(a, b);
+  e.update(1 / 60);
+  expect(a.state).toBe('grab'); expect(a.dist).toBeCloseTo(2, 9);
+  expect(b.state).toBe('cling'); expect(b.dist).toBeCloseTo(1.5, 9);
+});
+
+test('飛びついた者（cling）も爆発の前線で倒れ、掴む数には入らない', () => {
+  const e = createEnemies(createRng(3), cfgWith({ spawnPerSec: 0 }));
+  for (let i = 0; i < E.maxGrabbing; i++) e.list.push({ id: 100 + i, angle: i, dist: E.grabRange, state: 'grab', grabTime: 1 });
+  e.list.push({ id: 1, angle: 0.5, dist: E.grabRange + 0.01, state: 'chase' });
+  expect(e.update(1 / 60)).toBe(E.maxGrabbing);
+  expect(e.list.find((x) => x.id === 1).state).toBe('cling');
+  expect(e.applyBlastFront(5)).toBe(E.maxGrabbing + 1);
+  expect(e.update(1 / 60)).toBe(0);
 });
 
 test('applyBlastFront: front 内の軍勢は dead、掴んでいた者も外れる', () => {
@@ -264,16 +307,16 @@ function reachTimes(seeds) {
   return out;
 }
 
-test('届くまでの秒の分布: 中央は前（一直線に近づいた頃の約 12 秒）と同じほど。探し回る分だけ長い者もいるが、迷い続けない', () => {
-  const ts = reachTimes([1, 2, 3, 4, 5, 6]);
+test('届くまでの秒の分布: 前（中央 約 11 秒）より速く届く（持ち主の要望「群勢もっと早くして」）。探し回る分だけ長い者もいるが、迷い続けない', () => {
+  const ts = reachTimes([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
   expect(ts.length).toBeGreaterThan(300);
   const mean = ts.reduce((a, b) => a + b, 0) / ts.length;
-  expect(mean).toBeGreaterThan(10.5); // 前は平均 12.3 秒（10.7〜14 秒）
-  expect(mean).toBeLessThan(14);
-  expect(q(ts, 0.5)).toBeGreaterThan(9.5);
-  expect(q(ts, 0.5)).toBeLessThan(13.5);
-  expect(q(ts, 0.1)).toBeGreaterThan(7);
-  expect(q(ts, 0.9)).toBeLessThan(23);
-  expect(Math.max(...ts)).toBeLessThan(35);
+  expect(mean).toBeGreaterThan(7.5); // 2026-11-21 の速さ: 平均 9.1 秒（中央 7.9 秒）。前は平均 12.1 秒（中央 10.7 秒）
+  expect(mean).toBeLessThan(11);
+  expect(q(ts, 0.5)).toBeGreaterThan(6);
+  expect(q(ts, 0.5)).toBeLessThan(10);
+  expect(q(ts, 0.1)).toBeGreaterThan(2.5);
+  expect(q(ts, 0.9)).toBeLessThan(20);
+  expect(Math.max(...ts)).toBeLessThan(30);
   expect(ts.back).toBeLessThanOrEqual(1e-9); // 見つけてからは一度も離れない
 });

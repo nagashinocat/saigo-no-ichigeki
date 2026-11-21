@@ -31,6 +31,8 @@ export const DUSK = {
   figureGround: new THREE.Color(0.46, 0.30, 0.36),
   // 浮遊バイクの推進の光（淡い緑のまま明るく。窓の明かりより明るく、bloom の閾値を超える）
   thrust: new THREE.Color(0.55, 1.0, 0.82).multiplyScalar(1.6),
+  // low の段（bloom なし）: 淡い緑のまま明るくするとトーンマップで白く飛ぶので、飽和した緑へ寄せ、明るさは控える（にじまなくても緑に読める）
+  thrustLow: new THREE.Color(0.12, 1.0, 0.38),
 };
 
 // 窓の明かり（sRGB で決めた色。シェーダーの srgb() と同じく線形へ直して明るさを測る）
@@ -670,9 +672,11 @@ export function createStyle(tierName) {
       lampPool: makeLampPoolMaterial(),
     },
     // 軍勢・主人公の陰影の色（enemyView の uniform。材質どうしで共有しているので値だけ書き換える）を夕方の光に合わせる
-    tintFigures(u) {
+    // t: 画質の段（省けば作ったときの段）。途中で段が下がったときは、その段を渡して合わせ直す
+    tintFigures(u, t = tierName) {
       const set = (k, c) => { if (u[k]?.value?.isColor) u[k].value.copy(c); };
-      set('uSun', DUSK.figureSun); set('uSky', DUSK.figureSky); set('uGround', DUSK.figureGround); set('uThrust', DUSK.thrust);
+      set('uSun', DUSK.figureSun); set('uSky', DUSK.figureSky); set('uGround', DUSK.figureGround);
+      set('uThrust', t === 'low' ? DUSK.thrustLow : DUSK.thrust);
     },
   };
 }

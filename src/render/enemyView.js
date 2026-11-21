@@ -10,6 +10,9 @@ import { bikePose, BIKE } from './bikePose.js';
 // バイクの置き方（浮く高さ・掴むときの位置・吹き飛び）は bikePose.js。真下の地面には、浮いているのがわかる影と推進の光の溜まりを落とす。
 // 上空カメラ（広場まで約 110m）でも 2m の人は 6px ほどにしかならないので、遠いほど大きく描き（最大 ENEMY_LOOK.maxBoost 倍）、
 // ビルに隠れた者は、隠れた部分だけ暗い青の影絵で上に重ねる（深さが奥のときだけ描くもう一つのパス）。
+// スピード感（持ち主の要望 2026-11-21「バイクのスピード感出して」）: 尾の輪から後ろへ伸びる推進の光の尾（速さに比例、曲がる道すじに
+// 沿って曲がる）と、乗り手の肩の脇を流れる風の細い線を、全部のバイクで一つの instanced の網（加算）で描く。乗り手は速いほど前へかがみ、
+// 地面の光の溜まりも後ろへ伸びる。
 
 export const ENEMY_LOOK = {
   height: 1.8,      // m
@@ -35,6 +38,7 @@ attribute vec3 aPivot;
 attribute vec3 aCol;
 attribute vec4 aAnim; // x: 揺れの位相, y: 手を伸ばす 0〜1, z: 大きさ, w: 残り（倒れて消える）
 attribute vec3 aPose; // x: 大きく描く中心を主人公へ寄せる 0〜1, y: 推進の光 0〜1, z: 頭の向き（首まわり、rad。演出の一人だけ）
+attribute vec2 aMove; // x: 速さ（探す速さを 1）, y: 尾の曲がり（1/m）
 uniform float uTime, uPx, uMinPx, uMaxBoost, uHeight;
 varying vec3 vN, vW, vCol;
 varying float vPart, vFar, vThrust;
@@ -58,7 +62,7 @@ void main() {
     }
     if (a != 0.0 || b != 0.0) { p = aPivot + rotZ(rotX(p - aPivot, a), b); n = rotZ(rotX(n, a), b); }
     vec3 hip = vec3(${RIDER.hip.map((v) => v.toFixed(4)).join(', ')});
-    float lean = mix(${RIDER.lean.toFixed(4)}, 0.15, g) + 0.03 * sin(uTime * 2.3 + aAnim.x);
+    float lean = mix(${RIDER.lean.toFixed(4)}, 0.15, g) + 0.03 * sin(uTime * 2.3 + aAnim.x) + 0.32 * clamp(aMove.x, 0.0, 1.2) * ride; // 速いほど前へかがむ
     float side = 0.32 * g; // 主人公（右手側 -x）へ身を乗り出す
     p = hip + rotZ(rotX(p - hip, lean), side);
     n = rotZ(rotX(n, lean), side);
@@ -109,16 +113,23 @@ void main() {
 // 浮いている者の真下の地面: やわらかい影と、推進の光が落ちる淡い緑の溜まり（前後の輪の下）。浮くほど影は広く薄い
 const SHADOW_VERT = /* glsl */`
 attribute vec4 aShadow; // x: 地面からの高さ, y: 大きく描く中心を主人公へ寄せる, z: 推進の光, w: 残り
+attribute vec2 aMove;
 uniform float uPx, uMinPx, uMaxBoost, uHeight;
 varying vec2 vUv;
 varying vec3 vS;
+varying float vBack, vTrail;
 ${BOOST_GLSL}
 void main() {
   vUv = uv * 2.0 - 1.0;
   vec3 origin = (modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
   float boost = boostFor(origin + vec3(0.0, aShadow.x + uHeight * 0.5, 0.0));
   float spread = 1.0 + 0.12 * aShadow.x;
-  vec4 wp = modelMatrix * instanceMatrix * vec4(position * boost * spread * aShadow.w, 1.0);
+  // 速いほど、板の後ろ半分を後ろへ伸ばす（光の溜まりが尾を引く）
+  vTrail = clamp(aMove.x, 0.0, 1.2);
+  vBack = clamp(-position.z / 1.5, 0.0, 1.0);
+  vec3 q = position;
+  if (q.z < 0.0) q.z *= 1.0 + 1.6 * vTrail;
+  vec4 wp = modelMatrix * instanceMatrix * vec4(q * boost * spread * aShadow.w, 1.0);
   vec3 anchor = mix(origin, vec3(0.0, origin.y, 0.0), aShadow.y);
   wp.xyz += (origin - anchor) * (boost - 1.0);
   vS = aShadow.xyz;
@@ -126,18 +137,22 @@ void main() {
 }`;
 const SHADOW_FRAG = /* glsl */`
 uniform vec3 uThrust;
+uniform float uPool; // 光の溜まりの大きさと明るさ（low の段は bloom がないので大きく明るく）
 varying vec2 vUv;
 varying vec3 vS;
+varying float vBack, vTrail;
 void main() {
   float r = length(vUv);
   if (r > 1.0) discard;
   float fade = 1.0 / (1.0 + 0.35 * vS.x);
-  float shade = (1.0 - smoothstep(0.2, 1.0, r)) * 0.5 * fade;
+  float shade = (1.0 - smoothstep(0.2, 1.0, r)) * 0.5 * fade * (1.0 - 0.5 * vTrail * vBack);
   // 前後の輪の真下（板の長い向きが前後）
-  float pool = 0.0;
-  pool += 1.0 - smoothstep(0.0, 0.32, length(vUv - vec2(0.0, 0.46)));
-  pool += 1.0 - smoothstep(0.0, 0.38, length(vUv - vec2(0.0, -0.5)));
-  float glow = pool * vS.z * (0.5 + 0.5 * fade);
+  float pool = 0.0, ps = sqrt(uPool);
+  pool += 1.0 - smoothstep(0.0, 0.32 * ps, length(vUv - vec2(0.0, 0.46)));
+  pool += 1.0 - smoothstep(0.0, 0.38 * ps, length(vUv - vec2(0.0, -0.5)));
+  // 速いときは、後ろへ伸びた半分に細い光の筋（尾が地面に落とす光）
+  pool += vTrail * vBack * (1.0 - smoothstep(0.08, 0.35, abs(vUv.x))) * (1.0 - smoothstep(0.6, 1.0, vBack)) * 0.8;
+  float glow = pool * vS.z * (0.5 + 0.5 * fade) * uPool;
   gl_FragColor = vec4(uThrust * glow * 0.9, shade + glow * 0.35);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
@@ -231,6 +246,91 @@ void main() {
   #include <colorspace_fragment>
 }`;
 
+// 推進の光の尾と風の線（加算）。形はバイクの空間の帯で、aTr（x: 尾の付け根 0 → 先 1, y: 帯の横 -1〜1, z: 種類）から頂点シェーダーで組む。
+// 種類 0 / 1: 尾の輪から後ろへ伸びる光の尾（0 は水平の帯で上空から、1 は縦の帯で横から見える）。長さは速さに比例（大きく描いても
+// 長さは本当の m のまま、幅だけ大きく描く）。曲がるときは、通ってきた道すじ（横へ 曲がり · 距離² / 2）に沿って曲がる。
+// 種類 2: 乗り手の肩の脇を後ろへ流れる風の細い線（速いときだけ）
+export const TRAIL = { len: 7.5, width: 0.3, wind: 0.55 };
+const TRAIL_VERT = /* glsl */`
+attribute vec3 aTr;
+attribute vec4 aAnim;
+attribute vec3 aPose;
+attribute vec2 aMove;
+uniform float uTime, uPx, uMinPx, uMaxBoost, uHeight;
+varying float vT, vSide, vKind, vA;
+${BOOST_GLSL}
+void main() {
+  float sp = clamp(aMove.x, 0.0, 1.2);
+  float t = aTr.x, side = aTr.y, kind = aTr.z;
+  vec3 origin = (modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
+  float boost = boostFor((modelMatrix * instanceMatrix * vec4(0.0, uHeight * 0.5, 0.0, 1.0)).xyz);
+  float k = aAnim.z * boost * aAnim.w;
+  vec3 p;
+  if (kind < 1.5) {
+    // 尾: 尾の輪（0, 0.3, -1.32）から後ろへ
+    float len = ${TRAIL.len.toFixed(3)} * sp;
+    float s = t * len;
+    float w = ${TRAIL.width.toFixed(3)} * mix(1.0, 0.25, t) * k;
+    vec3 base = vec3(0.0, 0.3, -1.32) * k;
+    p = base + vec3(-0.5 * aMove.y * s * s, 0.0, -s);
+    if (kind < 0.5) p.x += side * w; else p.y += side * w;
+    vA = smoothstep(0.05, 0.25, sp);
+  } else {
+    // 風の線: 肩の脇（±0.42, 0.95）を、前から後ろへ流れる細い線（速いときだけ。時間で流れる）
+    float len = ${TRAIL.len.toFixed(3)} * ${TRAIL.wind.toFixed(3)} * sp;
+    float s = t * len;
+    float x = (side > 0.0 ? 0.42 : -0.42) * k;
+    p = vec3(x - 0.5 * aMove.y * s * s, 0.95 * k + 0.012 * k * (abs(side) - 1.5) * 4.0, 0.5 * k - s);
+    vA = smoothstep(0.55, 0.95, sp);
+  }
+  vT = t; vSide = side; vKind = kind;
+  vec4 wp = modelMatrix * instanceMatrix * vec4(p, 1.0);
+  vec3 anchor = mix(origin, (modelMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz, aPose.x);
+  wp.xyz += (origin - anchor) * (boost - 1.0);
+  vA *= aAnim.w * clamp(aPose.y, 0.0, 1.5);
+  gl_Position = projectionMatrix * viewMatrix * wp;
+}`;
+const TRAIL_FRAG = /* glsl */`
+uniform vec3 uThrust;
+uniform float uTime, uTrailGain;
+varying float vT, vSide, vKind, vA;
+void main() {
+  float a, t = clamp(vT, 0.0, 1.0); // 補間で 1 をわずかに超えると pow が NaN になり、bloom が画面全体へ広げてしまう
+  if (vKind < 1.5) {
+    // 付け根が明るく、先へ向かって消える。帯の中心が明るい
+    float core = 1.0 - smoothstep(0.0, 1.0, abs(vSide));
+    a = pow(1.0 - t, 1.6) * core * (0.75 + 0.25 * sin(uTime * 40.0 - t * 18.0));
+  } else {
+    // 風の線: 流れる切れ目（前から後ろへ）
+    float dash = smoothstep(0.2, 0.6, fract(t * 3.0 - uTime * 6.0));
+    a = 0.35 * (1.0 - t) * dash;
+  }
+  a *= vA;
+  if (!(a >= 0.003)) discard;
+  gl_FragColor = vec4(uThrust * uTrailGain * a, 1.0);
+  #include <tonemapping_fragment>
+  #include <colorspace_fragment>
+}`;
+
+// 尾と風の線の形（1 台分）: 種類 0・1 の帯は付け根から先へ TRAIL_SEG 区切り、種類 2 は左右の 2 本の細い帯
+const TRAIL_SEG = 8;
+function buildTrailGeometry() {
+  const tr = [], idx = [];
+  const strip = (kind, s0, s1) => {
+    const first = tr.length / 3;
+    for (let i = 0; i <= TRAIL_SEG; i++) { const t = i / TRAIL_SEG; tr.push(t, s0, kind, t, s1, kind); }
+    for (let i = 0; i < TRAIL_SEG; i++) { const a = first + i * 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
+  };
+  strip(0, -1, 1); strip(1, -1, 1);
+  strip(2, 1, 2); strip(2, -1, -2); // 風の線（side の符号で左右、|side| 1〜2 で細い幅）
+  const g = new THREE.BufferGeometry();
+  const n = tr.length / 3;
+  g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(n * 3), 3)); // 位置は aTr から組む
+  g.setAttribute('aTr', new THREE.BufferAttribute(new Float32Array(tr), 3));
+  g.setIndex(idx);
+  return g;
+}
+
 function figureUniforms(sunDir) {
   return {
     uTime: { value: 0 }, uPx: { value: 500 }, uMinPx: { value: ENEMY_LOOK.minPx }, uMaxBoost: { value: ENEMY_LOOK.maxBoost },
@@ -240,6 +340,7 @@ function figureUniforms(sunDir) {
     uGround: { value: new THREE.Color(0.55, 0.4, 0.42) }, uBlast: { value: new THREE.Color(1.0, 0.78, 0.5) },
     uEye: { value: new THREE.Color(1.0, 0.93, 0.8) }, uXray: { value: srgb('#5d6f95') },
     uMarker: { value: 11 }, uThrust: { value: new THREE.Color(0.55, 1.0, 0.82) },
+    uPool: { value: 1 }, uTrailGain: { value: 1 },
   };
 }
 
@@ -359,6 +460,10 @@ export function buildEyeCloseup(enemyId) {
 }
 
 // heroBody: 主人公の体（buildHeroBody の戻り値）。省けば画質の段の細かさで組み立てる
+// low の段は bloom がないので、地面の光の溜まりを大きく明るくし、尾も少し明るくする（推進の光の色は style.tintFigures が飽和した緑へ寄せる）
+const POOL = { low: 1.9, mid: 1, high: 1 };
+const TRAIL_GAIN = { low: 1.25, mid: 0.9, high: 0.9 };
+
 export function createEnemyView(scene, tier, { sunDir = new THREE.Vector3(0.8, 0.42, -0.45).normalize(), heroBody = null } = {}) {
   const uniforms = figureUniforms(sunDir);
   const group = new THREE.Group();
@@ -372,6 +477,9 @@ export function createEnemyView(scene, tier, { sunDir = new THREE.Vector3(0.8, 0
   const pose = new THREE.InstancedBufferAttribute(new Float32Array(CAPACITY * 3), 3);
   pose.setUsage(THREE.DynamicDrawUsage);
   geo.setAttribute('aPose', pose);
+  const move = new THREE.InstancedBufferAttribute(new Float32Array(CAPACITY * 2), 2);
+  move.setUsage(THREE.DynamicDrawUsage);
+  geo.setAttribute('aMove', move);
   const mat = new THREE.ShaderMaterial({ uniforms, vertexShader: FIGURE_VERT, fragmentShader: FIGURE_FRAG });
   const mesh = new THREE.InstancedMesh(geo, mat, CAPACITY);
   mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
@@ -389,14 +497,34 @@ export function createEnemyView(scene, tier, { sunDir = new THREE.Vector3(0.8, 0
   xray.name = 'soldiers-xray';
   // 透かしの重ねはバイクの頂点（1 台 6000 弱）をもう一度描くので high だけ。mid / low では隠れた者は目印の点（markersHidden）で示す
   const xrayFor = (t) => t === 'high';
+  let curTier = tier, aidsOn = true;
   xray.visible = xrayFor(tier);
   group.add(mesh, xray);
+  const applyTier = (t) => { uniforms.uPool.value = POOL[t] ?? 1; uniforms.uTrailGain.value = TRAIL_GAIN[t] ?? 1; };
+  applyTier(tier);
+
+  // 推進の光の尾と風の線（全部のバイクで一つの網。軍勢と同じ位置・同じ属性を使う）
+  const trailGeo = buildTrailGeometry();
+  trailGeo.setAttribute('aAnim', anim);
+  trailGeo.setAttribute('aPose', pose);
+  trailGeo.setAttribute('aMove', move);
+  const trails = new THREE.InstancedMesh(trailGeo, new THREE.ShaderMaterial({
+    uniforms, vertexShader: TRAIL_VERT, fragmentShader: TRAIL_FRAG,
+    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+  }), CAPACITY);
+  trails.instanceMatrix = mesh.instanceMatrix;
+  trails.frustumCulled = false;
+  trails.count = 0;
+  trails.renderOrder = 2;
+  trails.name = 'bike-trails';
+  group.add(trails);
 
   // 浮いている者の真下の影と推進の光の溜まり（地面に貼る板。長い向きが前後）
   const shadowGeo = new THREE.PlaneGeometry(1.3, 3.0).rotateX(-Math.PI / 2);
   const shadowAttr = new THREE.InstancedBufferAttribute(new Float32Array(CAPACITY * 4), 4);
   shadowAttr.setUsage(THREE.DynamicDrawUsage);
   shadowGeo.setAttribute('aShadow', shadowAttr);
+  shadowGeo.setAttribute('aMove', move);
   const shadows = new THREE.InstancedMesh(shadowGeo, new THREE.ShaderMaterial({
     uniforms, vertexShader: SHADOW_VERT, fragmentShader: SHADOW_FRAG,
     transparent: true, premultipliedAlpha: true, depthWrite: false,
@@ -449,10 +577,10 @@ export function createEnemyView(scene, tier, { sunDir = new THREE.Vector3(0.8, 0
   let focusMesh = null, focusAnim = null, focusPose = null;
 
   return {
-    group, hero, mesh, shadows, tier, // 形は画質の段では変えない（透かしの重ねだけ high のみ）
+    group, hero, mesh, shadows, trails, tier, // 形は画質の段では変えない（透かしの重ねだけ high のみ。low は光の溜まりを大きく明るく）
     heroBuildMs: body.buildMs, // 主人公の体を組み立てた時間（ms。同じ段の 2 回目からは組み立てずに使い回す）
     // 画質の段が途中で下がったとき（主人公の体は起動したときの段の細かさのまま。組み直さない）
-    setTier(t) { xray.visible = xrayFor(t); },
+    setTier(t) { curTier = t; xray.visible = aidsOn && xrayFor(t); applyTier(t); },
     // 主人公の体を差し替える（起動時は粗い体で始め、細かい体ができたら差し替える）。
     // 属性は同じなので材質（シェーダー）はそのまま。前の体の GPU の buffer は手放す（体のデータは buildHeroBody が覚えている）
     setHeroBody(b) {
@@ -467,9 +595,13 @@ export function createEnemyView(scene, tier, { sunDir = new THREE.Vector3(0.8, 0
     get heroBody() { return body; },
     // 毎フレーム: 軍勢の一覧を姿に写す。fronts は地面と同じ球の一覧（えぐれた地面の上に立つ）、
     // pointScale は 1m を画素へ直す係数（距離 1m のとき）、glow は爆発の明るさ（0〜1）、
-    // silhouette は主人公を光を背にした影絵にする強さ（0〜1。リプレイの最後のカット）
-    sync(enemies, { fronts = [], pointScale = 500, glow = 0, dt = 0, pixelRatio = 1, silhouette = 0 } = {}) {
+    // silhouette は主人公を光を背にした影絵にする強さ（0〜1。リプレイの最後のカット）、
+    // aids は上空カメラ用の補助表示（目印・隠れた者の目印・建物の陰の透かし・主人公の透かし）を出すか（最後の一発の演出・リプレイの間は false）
+    sync(enemies, { fronts = [], pointScale = 500, glow = 0, dt = 0, pixelRatio = 1, silhouette = 0, aids = true } = {}) {
       time += dt;
+      aidsOn = aids;
+      markers.visible = markersHidden.visible = heroXray.visible = aids;
+      xray.visible = aids && xrayFor(curTier);
       heroUniforms.uSil.value = Math.min(1, silhouette * 1.2); // リプレイの影絵（0.9）で真っ黒に
       heroUniforms.uWindK.value = 1 + 0.5 * silhouette; // 光の中では熱風が強い
       uniforms.uTime.value = time;
@@ -478,7 +610,7 @@ export function createEnemyView(scene, tier, { sunDir = new THREE.Vector3(0.8, 0
       uniforms.uMinPx.value = ENEMY_LOOK.minPx * pixelRatio; // pointScale は画素の px なので、基準も CSS の px から直す
       uniforms.uGlow.value = glow;
       let n = 0;
-      const a = anim.array, po = pose.array, sh = shadowAttr.array;
+      const a = anim.array, po = pose.array, sh = shadowAttr.array, mo = move.array;
       const place = (b, id, fade) => {
         _p.set(b.x, b.y, b.z);
         _q.setFromEuler(_e.set(b.pitch, b.yaw, b.roll, 'YXZ'));
@@ -495,6 +627,8 @@ export function createEnemyView(scene, tier, { sunDir = new THREE.Vector3(0.8, 0
         po[n * 3] = b.anchor;
         po[n * 3 + 1] = b.thrust;
         po[n * 3 + 2] = b.head ?? 0;
+        mo[n * 2] = b.trail ?? 0;
+        mo[n * 2 + 1] = b.curve ?? 0;
         sh[n * 4] = Math.max(0, b.y - ground);
         sh[n * 4 + 1] = b.anchor;
         sh[n * 4 + 2] = b.thrust;
@@ -523,12 +657,12 @@ export function createEnemyView(scene, tier, { sunDir = new THREE.Vector3(0.8, 0
           focusAnim.needsUpdate = focusPose.needsUpdate = true;
         } else if (n < CAPACITY) place({ anchor: 0, ...fp }, focus.id ?? 0.5, 1);
       }
-      mesh.count = xray.count = shadows.count = n;
+      mesh.count = xray.count = shadows.count = trails.count = n;
       markerGeo.setDrawRange(0, n);
       markerPos.needsUpdate = true;
       mesh.instanceMatrix.needsUpdate = true;
       shadows.instanceMatrix.needsUpdate = true;
-      anim.needsUpdate = pose.needsUpdate = shadowAttr.needsUpdate = true;
+      anim.needsUpdate = pose.needsUpdate = shadowAttr.needsUpdate = move.needsUpdate = true;
       _p.set(0, 0, 0); // 主人公は浮いている（足元の地面が下がっても y=0）
       hero.setMatrixAt(0, _m.compose(_p, _q.setFromEuler(_e.set(0, heroYaw, 0)), _s));
       hero.instanceMatrix.needsUpdate = true;
@@ -544,6 +678,7 @@ export function createEnemyView(scene, tier, { sunDir = new THREE.Vector3(0.8, 0
       focusPose = new THREE.InstancedBufferAttribute(new Float32Array(3), 3);
       g.setAttribute('aAnim', focusAnim);
       g.setAttribute('aPose', focusPose);
+      g.setAttribute('aMove', new THREE.InstancedBufferAttribute(new Float32Array(2), 2)); // 演出の一人は尾を引かず、前かがみは決めた姿勢のまま
       if (!focusMesh) {
         focusMesh = new THREE.InstancedMesh(g, mat, 1);
         focusMesh.frustumCulled = false;

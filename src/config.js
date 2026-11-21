@@ -20,18 +20,19 @@ export const CONFIG = {
   // 浮遊バイクは spawnDist（近い上空カメラの画面の端のすぐ外〜少し内）の道路に湧き、道路に沿って searchSpeed m/s で探し回る
   // （交差点で曲がる。主人公に近づく向きは inwardBias 倍の重みで選ぶ。roamDist の外へは出ない。laneSpread: 道の中心線からのずれ）。
   // spotDist の内側で建物にさえぎられずに見えたら（spotEvery 秒ごとに確かめる。sightMargin: 建物の足元を広げる）見つけ、
-  // 急に止まって spotPause 秒にらみ（見つけた一拍）、speed m/s へ chaseAccel で上げて一直線に近づく
-  // （掴む手前の slowDist m で slowMin 倍まで減速、grabRange で掴む。枠が埋まっていれば queueDist で待つ）。
+  // 急に止まって（brake）spotPause 秒にらみ（見つけた一拍）、speed m/s へ chaseAccel で上げて一直線に突っ込む
+  // （最後の slowDist m だけ slowMin 倍まで急ブレーキ、grabRange で掴む。枠が埋まっていても待たず、掴んでいる者の外に重なって飛びつく）。
   // 探して alertAfter 秒たつか、毎秒 alertRate の確率で（湧いたときに alertAtSpawn の確率で）気配を感じ、主人公に近づく道だけを選ぶ。
   // turnRate / chaseTurnRate: 曲がる速さ（rad/s）、lookAhead: 道の中心線からのずれをこの m 先で戻す、snapDist の内側では主人公へまっすぐ向く。accel / brake: m/s²。
-  // 釣り合い（scripts/balance-sim.mjs）: 届くまでの秒は平均 12 秒（前と同じ）で、探し回る分だけ長い者もいる。spotDist を払う半径（22m）の
-  // 少し外にしたので、払ったあと次に掴まれるまでの間が前と同じほどになり、最善の操作で満タンになる時刻も前（約 50 秒）とほぼ同じ
+  // 釣り合い（scripts/balance-sim.mjs）: 持ち主の要望（2026-11-21「群勢もっと早くして」）で探す 24 m/s・突っ込む 18 m/s にしたため、
+  // 届くまでの秒は平均 9 秒（前は 12 秒）。広場を囲む道（13m）から見つける近さ（spotDist 14m）にし、湧く数と一人あたりの減り方を
+  // 下げて、最善の操作で満タンになる時刻を前（約 50 秒）と同じほどに保つ（「ギリギリのスリル」）
   enemy:   {
-    spawnPerSec: 0.8, spawnRamp: 3.5, rampSec: 60, drainPerSec: 1, maxGrabbing: 6,
+    spawnPerSec: 0.3, spawnRamp: 3.5, rampSec: 60, drainPerSec: 0.3, maxGrabbing: 6,
     spawnDist: [50, 66], roamDist: 75, laneSpread: 1.6,
-    searchSpeed: 16, inwardBias: 0.8, turnRate: 7, lookAhead: 3, accel: 14, brake: 24,
-    spotDist: 26, spotEvery: 0.15, sightMargin: 0.8, alertAfter: 12, alertRate: 0.05, alertAtSpawn: 0.1,
-    spotPause: 1, speed: 9, chaseAccel: 5, chaseTurnRate: 5, snapDist: 6, slowDist: 12, slowMin: 0.35, grabRange: 2.5, queueDist: 3.75,
+    searchSpeed: 24, inwardBias: 0.8, turnRate: 16, lookAhead: 2.5, accel: 30, brake: 60,
+    spotDist: 14, spotEvery: 0.15, sightMargin: 0.8, alertAfter: 12, alertRate: 0.05, alertAtSpawn: 0.1,
+    spotPause: 0.45, speed: 18, chaseAccel: 60, chaseTurnRate: 8, snapDist: 6, slowDist: 1.5, slowMin: 0.3, grabRange: 2.5,
   },
   score:   { comboStep: 0.1, comboMax: 3 },
 };

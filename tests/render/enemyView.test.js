@@ -170,3 +170,78 @@ test('演出の一人の体（setRiderBody）があれば、その一人は inst
   expect(fm.visible).toBe(false);
   expect(view.mesh.count).toBe(2);
 });
+
+test('スピード感: 推進の光の尾は一つの instanced の網（バイクごとに描く回数を増やさない）。軍勢と同じ位置を使い、尾の長さと曲がりは bikePose の trail / curve', async () => {
+  const { bikePose } = await import('../../src/render/bikePose.js');
+  const scene = new THREE.Scene();
+  const view = createEnemyView(scene, 'mid', { sunDir: new THREE.Vector3(0.3, 1, 0.2).normalize() });
+  const list = [
+    { id: 1, x: 13, z: -30, dist: Math.hypot(13, 30), angle: Math.atan2(-30, 13), state: 'search', heading: Math.PI / 2, speed: 24, turn: 0, lean: 6 },
+    { id: 2, angle: 2.0, dist: 2.5, state: 'grab', grabTime: 1 },
+  ];
+  view.sync(list, {});
+  const trails = scene.getObjectByName('bike-trails');
+  expect(trails.isInstancedMesh).toBe(true);
+  expect(trails.instanceMatrix).toBe(view.mesh.instanceMatrix);
+  expect(trails.count).toBe(view.mesh.count);
+  expect(trails.material.blending).toBe(THREE.AdditiveBlending);
+  expect(trails.material.depthWrite).toBe(false);
+  expect(trails.material.uniforms.uThrust).toBe(view.mesh.material.uniforms.uThrust); // 推進の光と同じ色（夕方の色合わせが効く）
+  const mv = view.mesh.geometry.attributes.aMove;
+  expect(mv.itemSize).toBe(2);
+  expect(trails.geometry.attributes.aMove).toBe(mv);
+  for (const [i, e] of list.entries()) {
+    const b = bikePose(e, [], 0);
+    expect(mv.getX(i)).toBeCloseTo(b.trail, 6);
+    expect(mv.getY(i)).toBeCloseTo(b.curve, 6);
+  }
+  expect(mv.getX(0)).toBeCloseTo(1, 6);
+  expect(mv.getX(1)).toBe(0);
+  // 乗り手は速いほど前へかがむ（頂点シェーダーが aMove を読む）
+  expect(view.mesh.material.vertexShader).toContain('aMove');
+});
+
+test('演出・リプレイの間は、上空カメラ用の補助表示（目印・隠れた者の目印・建物の陰の透かし・主人公の透かし）を隠す（sync の aids）', () => {
+  const sunDir = new THREE.Vector3(0.3, 1, 0.2).normalize();
+  const list = [{ id: 1, angle: 0.3, dist: 40, state: 'approach' }];
+  const names = ['soldier-markers', 'soldier-markers-hidden', 'soldiers-xray', 'hero-xray'];
+  for (const tier of ['low', 'mid', 'high']) {
+    const scene = new THREE.Scene();
+    const view = createEnemyView(scene, tier, { sunDir });
+    view.sync(list, {});
+    const before = names.map((n) => scene.getObjectByName(n).visible);
+    view.sync(list, { aids: false });
+    for (const n of names) expect(scene.getObjectByName(n).visible, `${tier} ${n}`).toBe(false);
+    expect(view.mesh.visible).toBe(true);
+    view.sync(list, { aids: true });
+    expect(names.map((n) => scene.getObjectByName(n).visible), tier).toEqual(before);
+    // 隠している間に段が下がっても、戻したときは今の段どおり
+    view.sync(list, { aids: false });
+    view.setTier('low');
+    expect(scene.getObjectByName('soldiers-xray').visible).toBe(false);
+    view.sync(list, { aids: true });
+    expect(scene.getObjectByName('soldiers-xray').visible).toBe(false);
+    expect(scene.getObjectByName('soldier-markers').visible).toBe(true);
+  }
+});
+
+test('low の段（bloom なし）では、地面の推進の光の溜まりを大きく明るくする（段が下がったときも）', () => {
+  const sunDir = new THREE.Vector3(0.3, 1, 0.2).normalize();
+  const u = (t) => createEnemyView(new THREE.Scene(), t, { sunDir }).shadows.material.uniforms.uPool.value;
+  expect(u('low')).toBeGreaterThan(u('mid') * 1.4);
+  expect(u('high')).toBe(u('mid'));
+  const view = createEnemyView(new THREE.Scene(), 'mid', { sunDir });
+  view.setTier('low');
+  expect(view.shadows.material.uniforms.uPool.value).toBe(u('low'));
+});
+
+test('演出の一人の専用の体にも aMove がある（尾は引かず、前かがみは決めた姿勢のまま）', async () => {
+  const { buildRiderBody } = await import('../../src/render/riderBody.js');
+  const view = createEnemyView(new THREE.Scene(), 'low', { sunDir: new THREE.Vector3(0.3, 1, 0.2).normalize() });
+  view.setRiderBody(buildRiderBody({ detail: 'low' }));
+  view.setFocus({ id: 1, pose: { x: 1, y: 1, z: 1, yaw: 0, pitch: 0, roll: 0, reach: 0, thrust: 1, keep: 1 } });
+  view.sync([{ id: 1, angle: 0, dist: 20, state: 'approach' }], {});
+  const mv = view.focusMesh.geometry.attributes.aMove;
+  expect(mv.itemSize).toBe(2);
+  expect(mv.getX(0)).toBe(0);
+});

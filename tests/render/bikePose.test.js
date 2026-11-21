@@ -60,18 +60,17 @@ test('掴む: バイクは主人公の横（水平 clingRadius）に y≈0 で�
   }
 });
 
-test('近づく → 掴むは切れ目なくつながる: 最後の数 m で横を向き、掴んだら grabSettle 秒で横へ寄る。枠が埋まっていれば queueDist の輪で待つ', () => {
+test('近づく → 掴むは切れ目なくつながる: 最後の数 m で横を向き、掴んだら grabSettle 秒で横へ寄る。順番待ちの輪はない', () => {
+  expect(E.queueDist).toBeUndefined();
+  expect(BIKE.queueY).toBeUndefined();
   for (const id of ids) {
     const a = bikePose(rider(id, E.grabRange), [], 3);
     const g0 = bikePose(rider(id, E.grabRange, 'grab', { grabTime: 0 }), [], 3);
     expect(Math.hypot(a.x - g0.x, a.y - g0.y, a.z - g0.z)).toBeLessThan(1e-9);
     expect(angDiff(a.yaw, g0.yaw)).toBeLessThan(1e-9);
-    // 待つ者は判定の距離 queueDist のところ（掴む者の外。重なりにくい）。高さは主人公の近く
-    const w = bikePose(rider(id, E.queueDist), [], 3);
-    expect(Math.hypot(w.x, w.z)).toBeCloseTo(E.queueDist, 6);
-    expect(E.queueDist).toBeGreaterThan(BIKE.clingRadius + 2);
-    expect(w.y).toBeGreaterThanOrEqual(BIKE.queueY[0] - BIKE.bob - 0.3);
-    expect(w.y).toBeLessThanOrEqual(BIKE.queueY[1] + BIKE.bob + 0.3);
+    // 主人公のすぐ手前の高さは主人公の近く
+    expect(a.y).toBeGreaterThanOrEqual(BIKE.nearY[0] - BIKE.bob - 0.3);
+    expect(a.y).toBeLessThanOrEqual(BIKE.nearY[1] + BIKE.bob + 0.3);
     // 寄っていく間、主人公へ近づき続ける
     let prev = Infinity;
     for (let t = 0; t <= BIKE.grabSettle + 0.05; t += 0.05) {
@@ -92,7 +91,55 @@ test('近づく → 掴むは切れ目なくつながる: 最後の数 m で横�
     const along = bikePose({ ...rider(id, 40), heading: h }, [], 3);
     expect(Math.sin(along.yaw)).toBeCloseTo(Math.cos(h), 9);
     expect(Math.cos(along.yaw)).toBeCloseTo(Math.sin(h), 9);
+    // 突っ込んでくる: 横を向くのも主人公の高さへ寄せるのも、掴む距離のすぐ手前から（遠くから減速して待つ見た目にしない）
+    expect(BIKE.turnDist).toBeLessThanOrEqual(4);
+    const before = bikePose({ ...rider(id, E.grabRange + BIKE.turnDist + 0.5), heading: id * 0.7 + Math.PI }, [], 3);
+    expect(angDiff(before.yaw, Math.PI / 2 - (id * 0.7 + Math.PI))).toBeLessThan(1e-6);
   }
+});
+
+test('枠が埋まっていて飛びついた者（cling）は、掴んでいる者の外の上に重なる。段ごとに高く、手を伸ばし、切れ目なくつながる', () => {
+  for (const id of ids) {
+    const a = bikePose(rider(id, E.grabRange), [], 3);
+    const c0 = bikePose(rider(id, E.grabRange, 'cling', { grabTime: 0, layer: 0 }), [], 3);
+    expect(Math.hypot(a.x - c0.x, a.y - c0.y, a.z - c0.z)).toBeLessThan(1e-9); // 飛びついた瞬間は近づいていた所
+    const g = bikePose(rider(id, E.grabRange, 'grab', { grabTime: 2 }), [], 3);
+    const c = bikePose(rider(id, E.grabRange, 'cling', { grabTime: 2, layer: 0 }), [], 3);
+    const c2 = bikePose(rider(id, E.grabRange, 'cling', { grabTime: 2, layer: 2 }), [], 3);
+    expect(Math.hypot(c.x, c.z)).toBeGreaterThan(BIKE.clingRadius + 0.4);
+    expect(Math.hypot(c.x, c.z)).toBeLessThan(E.grabRange + 1);
+    expect(c.y).toBeGreaterThan(g.y + 0.6);
+    expect(c2.y).toBeGreaterThan(c.y + 0.4);
+    expect(c.reach).toBe(1);
+    expect(c.trail).toBe(0);
+    // 枠が空いて掴む（unpile）: その瞬間は重なっていた所、すぐ（0.3 秒ほどで）掴む者の場所へ下りる
+    const p0 = bikePose(rider(id, E.grabRange, 'grab', { grabTime: 2, layer: 2, unpile: 0 }), [], 3);
+    expect(Math.hypot(p0.x - c2.x, p0.y - c2.y, p0.z - c2.z)).toBeLessThan(1e-9);
+    const p1 = bikePose(rider(id, E.grabRange, 'grab', { grabTime: 2.4, layer: 2, unpile: 0.4 }), [], 3);
+    const g1 = bikePose(rider(id, E.grabRange, 'grab', { grabTime: 2.4 }), [], 3);
+    expect(Math.hypot(p1.x - g1.x, p1.y - g1.y, p1.z - g1.z)).toBeLessThan(1e-9);
+  }
+});
+
+test('スピード感: 推進の光の尾（trail）は速さに比例し、速いほど車体が前へ傾く。見つけて急に止まる間は鼻先が上がる', () => {
+  const base = { id: 3, x: 13, z: -30, dist: Math.hypot(13, 30), angle: Math.atan2(-30, 13), state: 'search', heading: Math.PI / 2, turn: 0 };
+  const fast = bikePose({ ...base, speed: E.searchSpeed }, [], 1);
+  const slow = bikePose({ ...base, speed: 4 }, [], 1);
+  const still = bikePose({ ...base, speed: 0 }, [], 1);
+  expect(fast.trail).toBeCloseTo(1, 6);
+  expect(still.trail).toBe(0);
+  expect(slow.trail).toBeCloseTo(4 / E.searchSpeed, 6);
+  expect(fast.pitch - still.pitch).toBeGreaterThan(0.12); // 正の pitch は鼻先が下がる
+  const charge = bikePose({ ...base, state: 'chase', speed: E.speed }, [], 1);
+  expect(charge.trail).toBeCloseTo(E.speed / E.searchSpeed, 6);
+  const brake = bikePose({ ...base, state: 'chase', pause: 0.4, speed: 15 }, [], 1);
+  expect(brake.pitch).toBeLessThan(-0.1);
+  // 尾は曲がる道すじに沿って曲がる（曲がりの強さ = 曲がる速さ / 速さ）
+  const bend = bikePose({ ...base, speed: 20, turn: 8 }, [], 1);
+  expect(bend.curve).toBeCloseTo(8 / 20, 6);
+  // 掴んでいる者・倒れた者は尾を引かない
+  expect(bikePose(rider(2, E.grabRange, 'grab', { grabTime: 1, speed: 0 }), [], 1).trail).toBe(0);
+  expect(bikePose(rider(2, 20, 'dead', { deadTime: 0.2, speed: 18 }), [], 1).trail).toBe(0);
 });
 
 test('位置は x, z のまま（道路を飛ぶ者）。曲がるときは内へ傾く', () => {
@@ -101,9 +148,12 @@ test('位置は x, z のまま（道路を飛ぶ者）。曲がるときは内�
   expect(p.x).toBe(13);
   expect(p.z).toBe(-30);
   const right = bikePose({ ...e, turn: 6 }, [], 1), left = bikePose({ ...e, turn: -6 }, [], 1);
-  expect(right.roll - p.roll).toBeGreaterThan(0.2);   // 右へ曲がる（heading が増える）→ 右（-x）へ傾く
-  expect(left.roll - p.roll).toBeLessThan(-0.2);
+  expect(right.roll - p.roll).toBeGreaterThan(0.5);   // 右へ曲がる（heading が増える）→ 右（-x）へ深く傾く
+  expect(left.roll - p.roll).toBeLessThan(-0.5);
   expect(Math.abs(bikePose({ ...e, turn: 1e3 }, [], 1).roll - p.roll)).toBeLessThanOrEqual(BIKE.bankMax + 1e-9);
+  expect(BIKE.bankMax).toBeGreaterThanOrEqual(0.7); // 曲がるときの深い傾き（持ち主の要望「バイクのスピード感」）
+  // 傾きは、なめらかにした曲がる速さ（lean）があればそれで決まる（交差点の一瞬の曲がりでちらつかない）
+  expect(bikePose({ ...e, turn: 0, lean: 6 }, [], 1).roll).toBeCloseTo(right.roll, 9);
 });
 
 // 描かれる位置（enemyView の頂点シェーダーと同じ: 中心を anchor だけ主人公へ寄せて boost 倍に大きく描く）

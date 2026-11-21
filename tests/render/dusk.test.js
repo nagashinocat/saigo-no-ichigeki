@@ -68,6 +68,40 @@ test('tintFigures: 軍勢と主人公の陰影の色を夕方の光に合わせ�
   expect(() => s.tintFigures({ uSun: { value: new THREE.Color() } })).not.toThrow();
 });
 
+// three の NeutralToneMapping（renderer.toneMapping）と同じ式
+function neutral([r, g, b]) {
+  const start = 0.8 - 0.04, desat = 0.15;
+  const x = Math.min(r, g, b), off = x < 0.08 ? x - 6.25 * x * x : 0.04;
+  let c = [r - off, g - off, b - off];
+  const peak = Math.max(...c);
+  if (peak < start) return c;
+  const d = 1 - start, np = 1 - (d * d) / (peak + d - start);
+  c = c.map((v) => v * (np / peak));
+  const k = 1 - 1 / (desat * (peak - np) + 1);
+  return c.map((v) => v * (1 - k) + np * k);
+}
+
+test('low の段（bloom なし）では、推進の光は飽和した緑へ寄せ、トーンマップのあとも白く飛ばずに緑が残る', () => {
+  const s = createStyle('low');
+  const u = { uThrust: { value: new THREE.Color() } };
+  s.tintFigures(u);
+  expect(u.uThrust.value.equals(DUSK.thrustLow)).toBe(true);
+  for (const k of [1.6, 2.8]) { // シェーダーの近く（1.6 倍）と遠く（2.8 倍）
+    const [r, g, b] = neutral([DUSK.thrustLow.r * k, DUSK.thrustLow.g * k, DUSK.thrustLow.b * k]);
+    expect(g).toBeGreaterThan(0.8);
+    expect(Math.max(r, b)).toBeLessThan(g * 0.6);
+    // 前の色（淡い緑）は白っぽく飛んでいた
+    const [r0, g0, b0] = neutral([DUSK.thrust.r * k, DUSK.thrust.g * k, DUSK.thrust.b * k]);
+    expect(Math.max(r0, b0)).toBeGreaterThan(g0 * 0.65);
+  }
+  // 途中で段が下がったとき: 段を渡して色を合わせ直せる
+  const m = createStyle('mid');
+  m.tintFigures(u, 'low');
+  expect(u.uThrust.value.equals(DUSK.thrustLow)).toBe(true);
+  m.tintFigures(u);
+  expect(u.uThrust.value.equals(DUSK.thrust)).toBe(true);
+});
+
 test('宇宙の地球の夕日は、街の空の夕日と同じ方角・同じ低さ', () => {
   const s = createStyle('low');
   const sv = createSpaceView('low');

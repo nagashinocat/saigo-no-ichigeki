@@ -3,27 +3,35 @@ import { groundHeight } from './sphereDeform.js';
 
 // 浮遊バイクに乗った軍勢の一人の置き方（見た目だけ。判定は enemies.js の水平の距離 e.dist のまま）。
 // 位置は e.x, e.z（ないときは e.angle, e.dist から）。
-// - 探す・近づく: 進む向き（e.heading）を向き、曲がるとき（e.turn rad/s）は内へ傾く。地面（穴の上なら穴の面）から hover m 浮いて、わずかに揺れる。
-//   最後の数 m で横を向き、浮いている主人公の近くの高さへ上がる/下がる。掴む枠が埋まっていれば、主人公のまわりの輪（queueDist）で待つ。
+// - 探す・近づく: 進む向き（e.heading）を向き、曲がるとき（e.lean、なければ e.turn rad/s）は内へ深く傾く。速いほど鼻先を下げて前へ傾き、
+//   見つけて急に止まる間は鼻先が上がる。地面（穴の上なら穴の面）から hover m 浮いて、わずかに揺れる。
+//   主人公の手前で減速して待たず、掴む距離のすぐ手前（turnDist）で横を向き、主人公の近くの高さへ寄せながら飛びつく。
 // - 掴む: grabSettle 秒で、いた所から主人公の横（水平 clingRadius）へ寄り、y≈0 で止まる。車体は主人公の向きと直角。
 //   乗り手の右手側に主人公がいて手を伸ばす。
+// - 飛びつく（cling。掴む枠が埋まっていた者）: 掴む者と同じく寄ったうえで、掴んでいる者の外の上に重なる（e.layer の段ごとに高く）。
+//   枠が空いて掴むと（e.unpile 秒）、unpileSec で掴む者の場所へ下りる。
 // - 倒れる: バイクごと外へ吹き飛び、回りながら上がって落ち、deadFling 秒で消える。
-// 返す値: x, y, z（バイクの底の中心）、yaw（y 軸まわり。0 で +z を向く）、pitch、roll、
-//   reach（手を伸ばす 0〜1）、anchor（大きく描くときの中心を主人公へ寄せる 0〜1。anchorFor）、thrust（推進の光 0〜1。見つけた一拍は 1.8 まで）、keep（大きさ。消えるとき 0 へ）
+// 返す値: x, y, z（バイクの底の中心）、yaw（y 軸まわり。0 で +z を向く）、pitch（正で鼻先が下がる）、roll、
+//   reach（手を伸ばす 0〜1）、anchor（大きく描くときの中心を主人公へ寄せる 0〜1。anchorFor）、thrust（推進の光 0〜1。見つけた一拍は 1.8 まで）、keep（大きさ。消えるとき 0 へ）、
+//   trail（推進の光の尾の長さ 0〜。速さ / 探す速さ）、curve（尾の曲がり 1/m。曲がる速さ / 速さ）
 export const BIKE = {
   hover: [2, 4],      // m。地面からの浮く高さ（人ごとにばらつく）
   bob: 0.18,          // m。上下の揺れ
   clingRadius: 1.35,  // m。掴むとき、主人公からバイクの中心線までの水平の距離
-  queueY: [0.3, 1.7], // m。主人公のすぐ近くで待つ者の高さ（人ごとにばらつき、待つ者が重なりにくい）
-  grabSettle: 0.45,   // s。掴んだら、この秒で主人公の横へ寄る
-  turnDist: 6,        // m。掴む距離のこの手前から横を向く
-  descendDist: 12,    // m。掴む距離のこの手前から、主人公の高さへ寄せる
+  nearY: [0.3, 1.7],  // m。主人公のすぐ手前（掴む距離）での高さ（人ごとにばらつく）
+  grabSettle: 0.35,   // s。掴んだら、この秒で主人公の横へ寄る
+  turnDist: 3.5,      // m。掴む距離のこの手前から横を向く（突っ込んできて最後に横を向いて飛びつく）
+  descendDist: 8,     // m。掴む距離のこの手前から、主人公の高さへ寄せる
+  // 飛びついた者（cling）の重なり: 掴む者より pileOut m 外、pileUp m 上（段ごとに pileStep m 高く。3 段で一回り）。unpileSec で下りる
+  pileOut: 0.75, pileUp: 0.95, pileStep: 0.55, unpileSec: 0.3,
+  // スピード感: 速さ（探す速さを 1）あたりの鼻先の下がり（rad）。見つけて急に止まる間は brakePitch まで鼻先が上がる
+  speedPitch: 0.2, brakePitch: 0.26,
   nearFloor: -1,      // m。主人公の近く（nearDist 以内）では、深い穴の上でもこれより下がらない
   nearDist: 8,
   // nearDist より外では、下限が 1m あたりこれだけ下がる（8m 先で最大の穴の深さより下になり、穴の面に沿う）。
   // 穴は最後の一発でしかできず、その内側の者は倒れるので、深い穴の壁を駆け上がる場面はふつう起きない
   floorSlope: 60,
-  bank: 0.05, bankMax: 0.45, // 曲がる速さ（rad/s）あたりの傾き（rad）と、その上限
+  bank: 0.1, bankMax: 0.8, // 曲がる速さ（rad/s）あたりの傾き（rad）と、その上限（曲がるときの深い傾き）
   // 大きく描くときの中心を主人公へ寄せる範囲（anchorFor）: anchorNear m より内では主人公を中心にし、anchorFar m で自分の足元へ戻す
   anchorNear: 4, anchorFar: 12,
   deadFling: 1.1,     // s
@@ -49,7 +57,8 @@ const posOf = (e) => (e.x != null ? [e.x, e.z] : [Math.cos(e.angle) * e.dist, Ma
 
 // 探している・近づいている者（と倒れた瞬間の者）の置き方
 function approachPose(e, fronts, time, cfg) {
-  const grab = cfg.enemy.grabRange;
+  const E = cfg.enemy;
+  const grab = E.grabRange;
   const h = hash(e.id);
   const [x, z] = posOf(e);
   const r = Math.hypot(x, z), ang = Math.atan2(z, x);
@@ -60,36 +69,50 @@ function approachPose(e, fronts, time, cfg) {
   const floor = BIKE.nearFloor - BIKE.floorSlope * Math.max(0, r - BIKE.nearDist);
   const hover = BIKE.hover[0] + (BIKE.hover[1] - BIKE.hover[0]) * h;
   const far = Math.max(ground, floor) + hover;
-  const queue = BIKE.queueY[0] + (BIKE.queueY[1] - BIKE.queueY[0]) * hash(e.id + 3);
+  const near = BIKE.nearY[0] + (BIKE.nearY[1] - BIKE.nearY[0]) * hash(e.id + 3);
   const bob = BIKE.bob * Math.sin(time * 2.1 + h * 37) * (1 - 0.6 * settle);
-  const y = far + (queue - far) * settle + bob;
+  const y = far + (near - far) * settle + bob;
   // 進む向き（heading は x 軸から z 軸へ。ないときは主人公の方）→ 最後に横（主人公が右手側）
   const go = e.heading != null ? Math.PI / 2 - e.heading : -ang - Math.PI / 2;
   const yaw = go + wrap(-ang - go) * turn;
-  const bank = Math.max(-BIKE.bankMax, Math.min(BIKE.bankMax, BIKE.bank * (e.turn ?? 0)));
+  const w = e.lean ?? e.turn ?? 0;
+  const bank = Math.max(-BIKE.bankMax, Math.min(BIKE.bankMax, BIKE.bank * w));
   const roll = 0.05 * Math.sin(time * 1.7 + h * 23) * (1 - settle) + bank * (1 - turn) - 0.32 * Math.sin(Math.PI * turn); // 曲がる・横を向くとき、内へ傾く
+  // 速さ: 尾の長さと前傾。見つけて急に止まる間（にらむ前）は鼻先を上げてブレーキ
+  const v = e.state === 'dead' ? 0 : Math.max(0, e.speed ?? 0);
+  const trail = v / E.searchSpeed;
+  const braking = e.state === 'chase' && e.pause > 0 ? Math.min(1, v / 8) : 0;
+  const pitch = ((0.06 + BIKE.speedPitch * Math.min(trail, 1.2)) * (1 - braking) - BIKE.brakePitch * braking) * (1 - settle);
   return {
-    x, y, z, yaw, pitch: 0.06 * (1 - settle), roll,
+    x, y, z, yaw, pitch, roll,
     reach: smooth(grab + 2, grab, dist) * 0.5, anchor: anchorFor(r), thrust: (1 - 0.4 * turn) * spotted(e, time), keep: 1,
+    trail, curve: v > 1e-6 ? (e.lean ?? e.turn ?? 0) / Math.max(v, 4) : 0,
   };
 }
 
-// 掴んでいる者（grabTime: 掴んでからの秒。ないときは寄り終えたものとする）
+// 掴んでいる者・飛びついた者（grabTime: 掴んでからの秒。ないときは寄り終えたものとする）
 function grabPose(e, fronts, time, cfg) {
   const p = approachPose(e, fronts, time, cfg);
   const k = smooth(0, BIKE.grabSettle, e.grabTime ?? BIKE.grabSettle);
   const h = hash(e.id);
   const r0 = Math.hypot(p.x, p.z);
-  const r = r0 + (BIKE.clingRadius - r0) * k;
-  const y = p.y + (0.04 * Math.sin(time * 5.3 + h * 11) - p.y) * k;
+  let r = r0 + (BIKE.clingRadius - r0) * k;
+  let y = p.y + (0.04 * Math.sin(time * 5.3 + h * 11) - p.y) * k;
+  // 重なり: 飛びついた者（layer がある）は掴む者の外の上。枠が空いて掴んだ者（unpile）は下りる
+  const pile = e.layer != null ? k * (e.unpile != null ? 1 - smooth(0, BIKE.unpileSec, e.unpile) : 1) : 0;
+  if (pile > 0) {
+    r += BIKE.pileOut * pile;
+    y += (BIKE.pileUp + BIKE.pileStep * (e.layer % 3) + 0.05 * Math.sin(time * 6.1 + h * 13)) * pile;
+  }
   return {
     ...p, x: (p.x / r0) * r, y, z: (p.z / r0) * r,
-    roll: p.roll * (1 - k), pitch: 0, reach: p.reach + (1 - p.reach) * k, thrust: p.thrust - 0.05 * k, anchor: anchorFor(r),
+    roll: p.roll * (1 - k), pitch: p.pitch * (1 - k) - 0.25 * pile, reach: p.reach + (1 - p.reach) * k, thrust: p.thrust - 0.05 * k, anchor: anchorFor(r),
+    trail: 0, curve: 0,
   };
 }
 
 export function bikePose(e, fronts = [], time = 0, cfg = CONFIG) {
-  if (e.state === 'grab') return grabPose(e, fronts, time, cfg);
+  if (e.state === 'grab' || e.state === 'cling') return grabPose(e, fronts, time, cfg);
   if (e.state === 'dead') {
     const k = (e.deadTime ?? 0) / BIKE.deadFling;
     if (k >= 1) return null;
@@ -102,7 +125,7 @@ export function bikePose(e, fronts = [], time = 0, cfg = CONFIG) {
       x: (p.x / r0) * r, z: (p.z / r0) * r,
       y: p.y + 14 * k - 10 * k * k,
       pitch: p.pitch - 5 * k, roll: p.roll + spin * 7 * k,
-      reach: 0, thrust: Math.max(0, 1 - 3 * k), keep: 1 - k * k,
+      reach: 0, thrust: Math.max(0, 1 - 3 * k), keep: 1 - k * k, trail: 0, curve: 0,
       anchor: p.anchor * (1 - smooth(0, 0.5, k)), // 主人公を中心に大きく描くのをやめていく（遠くへ飛んだ者が大きく描かれすぎない）
     };
   }
