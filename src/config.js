@@ -11,7 +11,9 @@ export const CONFIG = {
   // 最後の一発の半径（貯めた力 / power.max で決まる）。S8: max 440 → 720（街の端 680 m と、見回る軍勢の一番外
   // （maxEnemyReach、約 603 m）より十分先まで。最大溜めなら街のどこにいる軍勢も必ず巻き込む）
   // fix1（持ち主 15:33「軍勢は街の全体に」）: 見回る者が街の端まで行くので max 720 → 730（maxEnemyReach 約 685 m + 40 m より先）
-  radius:  { min: 10, max: 730, exponent: 0.75 },
+  // R0 fix1（制作側の判断「撃退には ほぼ満タン（97% 以上）が要る」）: knee（97%）までは kneeRadius（635 m、街の端の見回る者の
+  // 多くより内）まで前と同じ形、そこから満タンで max まで一気に広がる（charge.js radiusFor）
+  radius:  { min: 10, max: 730, exponent: 0.75, knee: 0.97, kneeRadius: 635 },
   // 爆発は「じわじわ → 突然弾ける」: creepSec/burstSec は最大の一発での秒数（小さい一発は sqrt で縮む）
   // fadeSec: 前線が届いてから球が消えるまで（上空カメラが全体の構図で球を見せる間）
   // （この creep/burst は払うの曲線。最後の一発のじわじわ期も同じ creepSec / creepFrac）
@@ -38,18 +40,20 @@ export const CONFIG = {
   // 釣り合い（scripts/balance-sim.mjs）: 持ち主の「ギリギリのスリル」= 最善の操作で満タンが最後の数秒、払わなければ届かない。
   // R0（持ち主 22:15「かなり簡単だからもっとスピード上げて集まってくるように」、制作側の判断で目標は最善の操作で満タンが p50 約 54 秒・
   // 撃退成功 7〜8 割）: 探す 24 → 30 m/s、突っ込む 18 → 32 m/s、見つける距離 17 → 28 m、残り 20 秒から広場の近くの見回る者も加わる。
-  // 湧き方（序盤 0.5/秒 → 40〜52 秒で 5.5/秒、60 秒で約 100）はそのまま。掴まれると一人 1.1/秒（6 人で 6.6/秒）、払うは 3。
+  // 湧き方（序盤 0.5/秒 → 40〜52 秒で 5.5/秒、60 秒で約 100）はそのまま。掴まれると一人 1.4/秒（6 人で 8.4/秒）、払うは 3。
+  // fix1: 撃退には ほぼ満タンが要る（radius の knee）。満タンの時刻 p50 は届いた回だけで数えて 53.6 秒、最善の放ち方（L=99）で撃退成功 22/30
   // 数は .superpowers/sdd/2026-11-21-machi-hakai-round5/task-R0-report.md
   enemy:   {
-    spawnPerSec: 0.5, surgeStart: 40, surgeEnd: 52, surgeMul: 11, drainPerSec: 1.1, maxGrabbing: 6,
+    spawnPerSec: 0.5, surgeStart: 40, surgeEnd: 52, surgeMul: 11, drainPerSec: 1.4, maxGrabbing: 6,
     spawnDist: [50, 66], roamDist: 75, laneSpread: 1.6,
     searchSpeed: 30, inwardBias: 0.8, turnRate: 16, lookAhead: 2.5, accel: 30, brake: 70,
     spotDist: 28, spotEvery: 0.15, sightMargin: 0.8, alertAfter: 12, alertRate: 0.05, alertAtSpawn: 0.1,
     speed: 32, chaseAccel: 60, chaseTurnRate: 8, snapDist: 6, slowDist: 0.5, slowMin: 0.35, grabRange: 2.5,
     // R0（持ち主 22:15「まだ主人公前で止まる感じ」）: 掴んだ者は orbitSpeed m/s で主人公のまわりを回りながら吸う。
     // 枠が埋まっていて群がる者は swarmRing（r0 m から perRing 人ごとに step m 外、maxRing 回りまで）を speed m/s で回り、
-    // 輪より外にいれば inSpeed m/s で内へ寄る
-    orbitSpeed: 12,
+    // 輪より外にいれば inSpeed m/s で内へ寄る。orbitSpeed は描く輪（bikePose の clingRadius 1.35 m、引っ張る揺れで 1.21 m まで）でも
+    // 6 m/s より速く見える速さ（角速度 orbitSpeed / grabRange = 6 rad/s、描く速さ 7.3 m/s 以上。fix1: 12 → 15）
+    orbitSpeed: 15,
     swarm: { r0: 4.2, step: 1.4, perRing: 6, maxRing: 5, speed: 14, inSpeed: 8 },
     // S8: 広くなった街を見回る者（enemies.js）。始めから count 人が、探す者の外から街の端まで（patrolBand）の道路を speed m/s で走り回る
     // （持ち主 15:33「軍勢は街の全体にいた方が良い」で 26 → 70 人、帯を街の端まで）。主人公を探さず掴みにも来ない（釣り合いは前のまま）。

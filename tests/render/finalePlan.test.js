@@ -14,9 +14,9 @@ const ARMY = [enemy(1, 0.3, 40), enemy(2, 2.1, 30), enemy(3, 4.0, 3, 'grab'), en
 const lead = (r) => 20 + 0.6 * r;
 const inside = (p, b, m = 0) => Math.abs(p[0] - b.x) < b.w / 2 + m && Math.abs(p[2] - b.z) < b.d / 2 + m && p[1] < b.h + m;
 
-function cases() {
+function cases(seeds = [3, 7, 11]) {
   const out = [];
-  for (const seed of [3, 7, 11]) {
+  for (const seed of seeds) {
     const city = generateCity(seed);
     for (const shot of SHOTS) for (let r = 1; r <= 6; r++) {
       out.push({ city, shot, plan: planFinale({ shot, buildings: city.buildings, enemies: ARMY, rng: createRng(r), lead: lead(shot.radius) }) });
@@ -140,8 +140,9 @@ test('逃げる道を後回しにできる: retreat: false なら null で、あ
   }
 });
 
-test('逃げる道: カメラの位置から始まり、ビルを通らず、地面より上で、爆心から離れていく（その一発の半径 + 先を行く距離まで）', () => {
-  for (const { city, shot, plan } of cases()) {
+// 種ごとに分ける（3 つの種をまとめると、全部のテストを並べて走らせたときに 5 秒の時間切れになることがあった。確かめる中身は同じ）
+test.each([3, 7, 11])('逃げる道（種 %i）: カメラの位置から始まり、ビルを通らず、地面より上で、爆心から離れていく（その一発の半径 + 先を行く距離まで）', (seed) => {
+  for (const { city, shot, plan } of cases([seed])) {
     const path = plan.retreat;
     expect(retreatPoint(path, 0)).toEqual(plan.camPos);
     const end = shot.radius + lead(shot.radius);

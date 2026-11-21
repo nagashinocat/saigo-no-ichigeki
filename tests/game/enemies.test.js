@@ -150,6 +150,9 @@ test('見つけたら（R0、持ち主 22:15「まだ主人公前で止まる感
   // 突っ込む速さは探す速さ以上（見つけて遅くならない）
   expect(top).toBeLessThanOrEqual(E.speed + 1e-9);
   expect(E.speed).toBeGreaterThanOrEqual(E.searchSpeed);
+  // 持ち主 22:15「もっとスピード上げて」: 突っ込む速さは 30〜36 m/s（前は 16〜20 m/s の 18）
+  expect(E.speed).toBeGreaterThanOrEqual(30);
+  expect(E.speed).toBeLessThanOrEqual(36);
   // 減速の曲線より速くない。減速しても 6 m/s より遅くならない
   for (const [d, v] of speeds) if (d < E.grabRange + E.slowDist) expect(v).toBeLessThanOrEqual(approachSpeed(d) + 1e-9);
   expect(approachSpeed(E.grabRange)).toBeGreaterThanOrEqual(6);
@@ -518,4 +521,28 @@ test('R0: 主人公から 25 m 以内の軍勢は、どのフレームでも 6 m
   expect(frames).toBeGreaterThan(10000);
   expect(grabFrames).toBeGreaterThan(1000);
   expect(clingFrames).toBeGreaterThan(1000);
+});
+
+test('R0 fix1: 群がる段と掴む順は、群がった順（あとから狩りに加わった見回る者が、先に群がった者の前に割り込まない）', () => {
+  const e = createEnemies(createRng(3), cfgWith({ spawnPerSec: 0 }));
+  for (let i = 0; i < E.maxGrabbing; i++) e.list.push({ id: 200 + i, angle: i, dist: E.grabRange, state: 'grab', grabTime: 1 });
+  const a = { id: 1, angle: 0.5, dist: swarmRing(0) + 0.05, state: 'chase' };
+  const b = { id: 2, angle: 2.5, dist: swarmRing(1) + 0.05, state: 'chase' };
+  e.list.push(a, b);
+  e.update(1 / 60);
+  expect([a.state, b.state]).toEqual(['cling', 'cling']);
+  expect([a.layer, b.layer]).toEqual([0, 1]);
+  // 見回る者は list の前の方にいる（始めに置かれる）。あとから群がっても、段は一番上（後ろ）
+  const p = { id: 100003, patrol: true, hunting: true, angle: 4, dist: swarmRing(2) + 0.05, state: 'chase' };
+  e.list.unshift(p);
+  e.update(1 / 60);
+  expect(p.state).toBe('cling');
+  expect([a.layer, b.layer, p.layer]).toEqual([0, 1, 2]);
+  for (let i = 0; i < 30; i++) { e.update(1 / 60); expect([a.layer, b.layer, p.layer]).toEqual([0, 1, 2]); }
+  // 枠が空けば、先に群がった a が掴む（見回る者ではない）
+  const g0 = e.list.find((x) => x.state === 'grab'); g0.state = 'dead'; g0.deadTime = 0;
+  e.update(1 / 60);
+  expect(a.state).toBe('grab');
+  expect(p.state).toBe('cling');
+  expect([b.layer, p.layer]).toEqual([0, 1]);
 });

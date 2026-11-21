@@ -222,6 +222,42 @@ test('iOS の消音スイッチ: 最初の操作で音のセッションを play
     createAudio({ nav: { userAgent: 'Android', maxTouchPoints: 5 }, makeMedia: (s) => { made3.push(s); return {}; } }).unlock();
     createAudio({ nav: { userAgent: 'Windows', platform: 'Win32', maxTouchPoints: 0 }, makeMedia: (s) => { made3.push(s); return {}; } }).unlock();
     expect(made3).toHaveLength(0);
+    // macOS の Safari（タッチのない Mac）にも audioSession はあるが、playback にすると他のタブ・アプリの音を止めるので触らない
+    const mac = { userAgent: 'Macintosh', platform: 'MacIntel', maxTouchPoints: 0, audioSession: { type: 'auto' } };
+    const am = createAudio({ nav: mac, makeMedia: () => { throw new Error('使わない'); } });
+    am.unlock();
+    expect(mac.audioSession.type).toBe('auto');
+    expect(am.sessionPending).toBe(false);
+    // iPad（デスクトップの UA・タッチあり）の audioSession は playback に
+    const ipad = { userAgent: 'Macintosh', platform: 'MacIntel', maxTouchPoints: 5, audioSession: { type: 'auto' } };
+    createAudio({ nav: ipad }).unlock();
+    expect(ipad.audioSession.type).toBe('playback');
+  } finally {
+    delete globalThis.window;
+  }
+});
+
+test('古い iOS: 無音の <audio> の play() が断られたら、音が鳴らせるようになった後の操作でも、鳴るまで play() をやり直す', async () => {
+  const { createAudio } = await import('../../src/audio/audio.js');
+  globalThis.window = { AudioContext: function AC() { return fakeCtx(); } };
+  try {
+    let tries = 0;
+    const el = { loop: false, setAttribute() {}, pause() {}, play() { tries++; return tries < 3 ? Promise.reject(new Error('NotAllowedError')) : Promise.resolve(); } };
+    const a = createAudio({ nav: { userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_7 like Mac OS X)', maxTouchPoints: 5 }, makeMedia: () => el });
+    await a.unlock();
+    await Promise.resolve(); await Promise.resolve();
+    expect(tries).toBe(1);
+    expect(a.sessionPending).toBe(true); // 断られた: まだ操作を待つ
+    await a.unlock();
+    await Promise.resolve(); await Promise.resolve();
+    expect(tries).toBe(2);
+    expect(a.sessionPending).toBe(true);
+    await a.unlock();
+    await Promise.resolve(); await Promise.resolve();
+    expect(tries).toBe(3);
+    expect(a.sessionPending).toBe(false); // 鳴った: もうやり直さない
+    await a.unlock();
+    expect(tries).toBe(3);
   } finally {
     delete globalThis.window;
   }

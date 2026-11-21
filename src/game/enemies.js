@@ -282,8 +282,11 @@ export function createEnemies(rng, cfg = CONFIG, { buildings = [], patrolRng = n
     place(e);
   }
 
-  // 飛びついた者に重なりの段を、飛びついた順に 0, 1, … と振り直す
-  const relayer = () => { let k = 0; for (const e of list) if (e.state === 'cling') e.layer = k++; };
+  // 群がった者を群がった順に（swarmSeq。試しで直に置いた者は前）並べ、段を 0, 1, … と振り直す（数を返す）。
+  // list の並び（見回る者は始めから前にいる）では決めない: あとから群がった見回る者が段 0 に割り込み、皆の高さと掴む順が入れ替わらないように
+  let swarmSeq = 0;
+  const clingers = () => list.filter((e) => e.state === 'cling').sort((a, b) => (a.swarmSeq ?? -1) - (b.swarmSeq ?? -1));
+  const relayer = () => { const cs = clingers(); cs.forEach((e, k) => { e.layer = k; }); return cs.length; };
   if (patrolRng && E.patrol?.count > 0) for (let k = 0; k < E.patrol.count; k++) list.push(spawnPatrol());
 
   return {
@@ -293,14 +296,12 @@ export function createEnemies(rng, cfg = CONFIG, { buildings = [], patrolRng = n
       list = list.filter((e) => e.state !== 'dead' || e.deadTime < DEAD_KEEP_SEC);
 
       let grabbing = list.reduce((n, e) => n + (e.state === 'grab' ? 1 : 0), 0);
-      // 枠が空いていれば、先に群がった者からすぐ掴む（回りながら掴む者の輪へ内へ寄る）
-      for (const e of list) {
+      // 枠が空いていれば、先に群がった者からすぐ掴む（回りながら掴む者の輪へ内へ寄る）。順は群がった順（swarmSeq）
+      for (const e of clingers()) {
         if (grabbing >= E.maxGrabbing) break;
-        if (e.state !== 'cling') continue;
         e.state = 'grab'; e.unpile = 0; grabbing++; // layer は残す（群がりから下りる見た目）
       }
-      let clinging = 0;
-      for (const e of list) if (e.state === 'cling') e.layer = clinging++;
+      let clinging = relayer();
       // R0: 残り 20 秒からは、広場の近くの見回る者も狩りに加わる（気配を感じた者として、主人公に近づく道だけを選ぶ）
       const PJ = E.patrol;
       if (PJ?.joinAt != null && time >= PJ.joinAt) {
@@ -337,7 +338,7 @@ export function createEnemies(rng, cfg = CONFIG, { buildings = [], patrolRng = n
         // 着いた瞬間から回り始める（速さ・向きは回る者のもの）。外へは出ない
         e.speed = Math.max(e.speed, free ? E.orbitSpeed : E.swarm.speed);
         e.heading = wrap(e.angle + Math.PI / 2);
-        if (free) { e.state = 'grab'; grabbing++; } else { e.state = 'cling'; e.layer = clinging++; }
+        if (free) { e.state = 'grab'; grabbing++; } else { e.state = 'cling'; e.swarmSeq = swarmSeq++; e.layer = clinging++; }
       }
       relayer();
 

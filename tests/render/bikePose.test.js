@@ -141,6 +141,9 @@ test('掴んで回る者（R0）: 回る向きへ深く傾き、推進の光が�
     const rs = ps.map((p) => Math.hypot(p.x, p.z));
     expect(Math.max(...rs) - Math.min(...rs)).toBeGreaterThan(0.1); // 引っ張る揺れ
     expect(Math.max(...rs)).toBeLessThan(BIKE.clingRadius + BIKE.tug + 1e-9);
+    // 上空の画面で回る光の筋に見える長さの尾（持ち主の画面で止まった光の円盤に見えない。fix1: 0.5 → 1.0 · 速さ / 探す速さ）
+    expect(ps[0].trail).toBeCloseTo(E.orbitSpeed / E.searchSpeed, 6);
+    expect(ps[0].trail).toBeGreaterThanOrEqual(0.45);
   }
 });
 
@@ -158,7 +161,8 @@ test('スピード感: 推進の光の尾（trail）は速さに比例し、速�
   // 尾は曲がる道すじに沿って曲がる（曲がりの強さ = 曲がる速さ / 速さ）
   const bend = bikePose({ ...base, speed: 20, turn: 8 }, [], 1);
   expect(bend.curve).toBeCloseTo(8 / 20, 6);
-  // 掴んでいる者・倒れた者は尾を引かない
+  // 掴んで回る者（R0）は回る速さに比例した尾を引く（探す速さで 1）。止まっている者・倒れた者は尾を引かない
+  expect(bikePose(rider(2, E.grabRange, 'grab', { grabTime: 1, speed: E.orbitSpeed }), [], 1).trail).toBeCloseTo(E.orbitSpeed / E.searchSpeed, 6);
   expect(bikePose(rider(2, E.grabRange, 'grab', { grabTime: 1, speed: 0 }), [], 1).trail).toBe(0);
   expect(bikePose(rider(2, 20, 'dead', { deadTime: 0.2, speed: 18 }), [], 1).trail).toBe(0);
 });
@@ -234,4 +238,37 @@ test('見つけた瞬間（R0）: 止まらず、推進の光が一瞬強まっ�
   expect(bikePose({ ...e, state: 'search' }, [], 0.1).thrust).toBe(1);
   // 鼻先は上がらない（ブレーキの見た目はない）
   expect(bikePose(e, [], 0.1).pitch).toBeGreaterThan(0.1);
+});
+
+// fix1: 描かれる位置（bikePose）でも、主人公から 25 m 以内の軍勢はどのフレームでも 6 m/s 以上で動く。掴む者は判定の半径
+// （grabRange 2.5 m）より内（clingRadius 1.35 m）に描くので、回る角速度が同じでも描かれる速さは遅い。そこも 6 m/s 以上
+test('R0 fix1: 描かれる位置でも、主人公から 25 m 以内の軍勢はどのフレームでも 6 m/s 以上で動く（掴む者・群がる者も）', async () => {
+  const { createGame } = await import('../../src/game/game.js');
+  let frames = 0, grabFrames = 0, minV = Infinity;
+  for (const seed of [1, 2]) for (const puff of [false, true]) {
+    const g = createGame({ seed });
+    g.pressStart();
+    const DT = 1 / 30;
+    const prev = new Map();
+    let t = 0;
+    for (; t < CONFIG.roundSeconds - DT; t += DT) {
+      if (puff) { const n = g.enemies.list.filter((e) => e.state !== 'dead' && e.dist <= 4).length; if (g.grabbing >= 1 || n >= 1) g.puff(); }
+      g.update(DT);
+      for (const e of g.enemies.list) {
+        if (e.state === 'dead') { prev.delete(e.id); continue; }
+        const p = bikePose(e, [], t + DT);
+        const q = prev.get(e.id);
+        prev.set(e.id, p);
+        if (!q || e.dist > 25) continue;
+        const v = Math.hypot(p.x - q.x, p.z - q.z) / DT;
+        frames++;
+        if (e.state === 'grab') grabFrames++;
+        minV = Math.min(minV, v);
+        if (v < 6) throw new Error(`seed ${seed} puff ${puff} t=${t.toFixed(2)} id ${e.id} ${e.state} dist ${e.dist.toFixed(2)} drawn ${v.toFixed(2)} m/s`);
+      }
+    }
+  }
+  expect(frames).toBeGreaterThan(5000);
+  expect(grabFrames).toBeGreaterThan(1000);
+  expect(minV).toBeGreaterThanOrEqual(6);
 });

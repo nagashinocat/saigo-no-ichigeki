@@ -275,7 +275,10 @@ void main() {
     float s = t * len;
     float w = ${TRAIL.width.toFixed(3)} * mix(1.0, 0.25, t) * k;
     vec3 base = vec3(0.0, 0.3, -1.32) * k;
-    p = base + vec3(-0.5 * aMove.y * s * s, 0.0, -s);
+    // 曲がる道すじ（曲がり aMove.y 1/m）の円弧に沿って後ろへ（主人公のまわりを回る者の尾が輪に沿う。曲がりが小さければ放物線と同じ）
+    float a = aMove.y * s;
+    vec2 arc = abs(aMove.y) > 1e-3 ? vec2(-(1.0 - cos(a)) / aMove.y, -sin(a) / aMove.y) : vec2(-0.5 * aMove.y * s * s, -s);
+    p = base + vec3(arc.x, 0.0, arc.y);
     if (kind < 0.5) p.x += side * w; else p.y += side * w;
     vA = smoothstep(0.05, 0.25, sp);
   } else {

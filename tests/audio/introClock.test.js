@@ -66,7 +66,7 @@ test('待つ時間は実時間で数える（TAP の直後の準備で長くな�
 });
 
 test('dt で進んだあとに鳴らせるようになった（あとの操作で resume）: 絵の今の時刻に合わせ、次の拍から組む（過去の時刻の音を組まない）', () => {
-  const { ctx, calls, clock, grid } = rig();
+  const { clock, grid } = rig();
   clock.begin(0);
   clock.tick(1000, 0); // dt へ
   expect(clock.mode).toBe('dt');
@@ -86,7 +86,6 @@ test('dt で進んだあとに鳴らせるようになった（あとの操作�
     expect(Math.abs(k - Math.round(k))).toBeLessThan(1e-6);
     expect(c.t0 + c.from).toBeGreaterThan(r.ctx.currentTime); // 最初の音は未来の時刻
   }
-  void ctx; void calls;
 });
 
 test('鳴っている途中で止まった（iOS の interrupted など）: 組んだ音を切って dt へ、戻ったら次の拍から組み直す', () => {

@@ -120,8 +120,8 @@ function grabPose(e, fronts, time, cfg) {
     reach: p.reach * (1 - k) + (clinging ? 0.6 : 1) * k,
     thrust: p.thrust * (1 - k) + (1.45 - 0.2 * clinging + 0.35 * Math.sin(time * 17 + h * 9)) * k,
     anchor: anchorFor(r),
-    // 尾は回る道すじに沿って短く（主人公を囲む光の輪に見える長さ）
-    trail: (0.5 * v) / E.searchSpeed, curve: v > 1e-6 ? Math.sign(w) / Math.max(r, 0.8) : 0,
+    // 尾は回る道すじ（描く輪）に沿って曲がる。長さは速さ / 探す速さ（fix1: 0.5 倍では上空の画面で止まった光の円盤に見えたので 1 倍）
+    trail: v / E.searchSpeed, curve: v > 1e-6 ? Math.sign(w) / Math.max(r, 0.8) : 0,
   };
 }
 

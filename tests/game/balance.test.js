@@ -3,33 +3,44 @@ import { createGame } from '../../src/game/game.js';
 import { CONFIG } from '../../src/config.js';
 
 // 持ち主が選んだ釣り合い（「ギリギリのスリル」: 最善の操作で満タンが最後の数秒、払わなければ負ける）。scripts/balance-sim.mjs と同じ自動の操作。
-// R0（持ち主 22:15「かなり簡単だからもっとスピード上げて集まってくるように」）: 最善の操作でも満タンは p50 約 54 秒（52〜56）、
-// 撃退成功は 7〜8 割（上手に遊んでも失敗することがある）。sim の最善は「ずっと長押しし、2 人に掴まれるか 14m 以内に 2 人来たら払う」
-// （seed 1〜30 で 24/30 が満タンに届き、満タンの時刻 p50 53.2 秒）。前（R0 の前）は 30/30・p50 50.6 秒
-const BEST = { grab: 2, near: 14, crowd: 2 };
-function play(seed, { grab = BEST.grab, near = BEST.near, crowd = BEST.crowd } = {}) {
+// R0（持ち主 22:15「かなり簡単だからもっとスピード上げて集まってくるように」）。fix1 の制作側の判断:
+//  - 満タンの時刻の p50 は、満タンに届いた回だけで数えて 52〜56 秒
+//  - 撃退成功は、最善の放ち方（力が L に届いた瞬間に放つ、L は 85〜100 のうち一番よいもの）で 7〜8 割
+//  - 撃退には ほぼ満タン（97% より上）が要る（radiusFor の knee）
+// sim の最善は「ずっと長押しし、1 人に掴まれるか 8m 以内に 1 人来たら払う」（seed 1〜30 で 22/30 が満タンに届き、届いた回の p50 53.6 秒。
+// 最善の放ち方は L=99 で 22/30 = 73%）。R0 の前は 30/30・p50 50.6 秒、L=90 で 27/30 が撃退成功（43 秒で放って勝てた）
+const BEST = { grab: 1, near: 8, crowd: 1 };
+function play(seed, { grab = BEST.grab, near = BEST.near, crowd = BEST.crowd, spam = false } = {}) {
   const g = createGame({ seed });
   g.pressStart();
   const DT = 1 / 30;
   let t = 0;
   while (g.phase === 'playing' && t < CONFIG.roundSeconds - DT / 2) {
     const n = g.enemies.list.filter((e) => e.state !== 'dead' && e.dist <= near).length;
-    if (g.grabbing >= grab || n >= crowd) g.puff();
+    if (spam || g.grabbing >= grab || n >= crowd) g.puff();
     g.update(DT); t += DT;
     if (g.power.value >= CONFIG.power.max - 1e-6) return { full: t, end: g.power.value };
   }
   return { full: Infinity, end: g.power.value };
 }
 
-test('R0: 最善に近い操作でも、満タンは終わりの数秒前（中央 48〜58 秒、seed 1〜12 で 51.4 秒）。たいていは届くが、届かない回もある', () => {
-  const ts = Array.from({ length: 12 }, (_, i) => play(i + 1).full).sort((a, b) => a - b);
-  const reached = ts.filter(Number.isFinite).length;
-  expect(reached).toBeGreaterThanOrEqual(8);
-  expect(reached).toBeLessThanOrEqual(11); // 上手に遊んでも失敗することがある
-  const med = ts[Math.floor(ts.length / 2)];
-  expect(med).toBeGreaterThan(48);
-  expect(med).toBeLessThan(58);
-  expect(ts.filter((t) => t > 54 && Number.isFinite(t)).length).toBeGreaterThanOrEqual(3); // 最後の数秒で届く回が多い
+test('R0: 最善に近い操作でも、満タンは終わりの数秒前（届いた回の中央 52〜56 秒、seed 1〜12 で 52.7 秒）。たいていは届くが、届かない回もある', () => {
+  const ts = Array.from({ length: 12 }, (_, i) => play(i + 1).full);
+  const got = ts.filter(Number.isFinite).sort((a, b) => a - b);
+  expect(got.length).toBeGreaterThanOrEqual(8);
+  expect(got.length).toBeLessThanOrEqual(11); // 上手に遊んでも失敗することがある
+  const med = got[Math.floor(got.length / 2)];
+  expect(med).toBeGreaterThanOrEqual(52);
+  expect(med).toBeLessThanOrEqual(56);
+});
+
+test('R0 fix1: 払い続ける（払える力があればいつでも払う）のは最善ではない: 満タンに届かず、60 秒の力も最善の操作よりずっと少ない', () => {
+  const seeds = Array.from({ length: 12 }, (_, i) => i + 1);
+  const spam = seeds.map((s) => play(s, { spam: true }));
+  const best = seeds.map((s) => play(s));
+  expect(spam.filter((r) => Number.isFinite(r.full)).length).toBe(0);
+  expect(best.filter((r) => Number.isFinite(r.full)).length).toBeGreaterThan(spam.filter((r) => Number.isFinite(r.full)).length);
+  for (const r of spam) expect(r.end).toBeLessThan(30);
 });
 
 test('払わずに長押しし続けるだけでは満タンに届かず、60 秒の力は 70 より十分少ない（払わなければ負ける）', () => {
@@ -63,14 +74,19 @@ function releaseAtLevel(seed, level) {
   return null; // 届かないまま時間切れ（ブラックホール）
 }
 
-test('S9: 最善に近い操作で満タンで放てば必ず撃退成功（R0: 届かない回もある）。7 割で放つと街の外側の見回る者が残って撃退失敗（ギリギリまで貯める意味がある）', () => {
+test('S9 / R0 fix1: 最善に近い操作で満タンで放てば必ず撃退成功（届かない回もある）。96% で放つと街の外側の見回る者が残って撃退失敗（ほぼ満タンまで貯める意味がある）', () => {
   const seeds = Array.from({ length: 8 }, (_, i) => i + 1);
   const full = seeds.map((s) => releaseAtLevel(s, CONFIG.power.max));
   expect(full.filter((o) => o?.clear).length).toBeGreaterThanOrEqual(6);
   for (const o of full) if (o) expect(o.clear).toBe(true); // 満タンに届けば必ず撃退成功（届かなければ時間切れ）
-  for (const s of seeds) {
-    const o = releaseAtLevel(s, 70);
-    expect(o.clear).toBe(false);
-    expect(o.survivors.some((v) => v.patrol)).toBe(true);
+  for (const level of [70, 90, 96]) {
+    for (const s of seeds) {
+      const o = releaseAtLevel(s, level);
+      if (!o) continue; // そこまで届かない回
+      expect(o.clear, `L=${level} seed ${s}`).toBe(false);
+      expect(o.survivors.some((v) => v.patrol)).toBe(true);
+    }
   }
+  // 99% なら、届いた回はみな撃退成功（満タンの少し手前で放っても勝てる）
+  for (const s of seeds) { const o = releaseAtLevel(s, 99); if (o) expect(o.clear).toBe(true); }
 });

@@ -175,14 +175,17 @@ export function isIOSLike(nav) {
 export function createAudio({ nav = globalThis.navigator, makeMedia = (src) => new Audio(src) } = {}) {
   let silenceEnd = 0;
   // iOS の消音スイッチ（ベルの切り替え）: Web Audio だけでは「周囲の音」のセッションで、消音にすると鳴らない。
-  // 最初の操作で、音のセッションを「再生」にする（Safari 17 以降は audioSession、それより前は無音の <audio> を鳴らし続ける）
-  let sessionPrimed = false, silentEl = null;
+  // 最初の操作で、音のセッションを「再生」にする（Safari 17 以降は audioSession、それより前は無音の <audio> を鳴らし続ける）。
+  // audioSession は iOS / iPadOS だけ（macOS の Safari にもあるが、playback にすると他のタブ・アプリの音を止める）。
+  // session: 'none'（まだ）→ 'trying'（<audio> の play() の返事待ち）→ 'done'。play() を断られたら 'none' に戻し、
+  // 鳴るまで次の操作でやり直す（AudioContext が鳴らせるようになった後も。introGesture は sessionPending の間 unlock を呼ぶ）
+  let session = 'none', silentEl = null;
   function primeSession() {
-    if (sessionPrimed) return;
+    if (session !== 'none') return;
+    if (!isIOSLike(nav)) { session = 'done'; return; }
     try {
-      if (nav?.audioSession) { nav.audioSession.type = 'playback'; sessionPrimed = true; return; }
+      if (nav?.audioSession) { nav.audioSession.type = 'playback'; session = 'done'; return; }
     } catch { /* 続けて <audio> を試す */ }
-    if (!isIOSLike(nav)) { sessionPrimed = true; return; }
     try {
       const el = silentEl ?? makeMedia(silentWavDataUri());
       if (!silentEl) {
@@ -191,9 +194,9 @@ export function createAudio({ nav = globalThis.navigator, makeMedia = (src) => n
         el.setAttribute?.('playsinline', '');
         el.setAttribute?.('aria-hidden', 'true');
       }
-      sessionPrimed = true; // 断られたら次の操作でもう一度
-      Promise.resolve(el.play?.()).catch(() => { sessionPrimed = false; });
-    } catch { sessionPrimed = true; /* <audio> が使えない: あきらめる */ }
+      session = 'trying';
+      Promise.resolve(el.play?.()).then(() => { session = 'done'; }, () => { session = 'none'; }); // 断られたら次の操作でもう一度
+    } catch { session = 'done'; /* <audio> が使えない: あきらめる */ }
   }
   let ctx = null, master = null, hum = null, rumbleNode = null, noiseBuf = null, brownBuf = null;
   // 最後の一発の演出: 世界の音（master）と演出の音（cine: 心臓の鼓動・地鳴り）は、どちらも out のこもりを通る
@@ -348,6 +351,8 @@ export function createAudio({ nav = globalThis.navigator, makeMedia = (src) => n
       return Promise.resolve(p).then(() => ctx.state === 'running', () => false);
     },
     get running() { return !!ctx && ctx.state === 'running'; },
+    // iOS の音のセッション（無音の <audio>）がまだ鳴っていない: 操作のたびに unlock を呼んでほしい
+    get sessionPending() { return session !== 'done'; },
     // BGM の出口（unlock の前は null）
     get bgmOutput() { return ctx && bgmBus ? { ctx, dest: bgmBus } : null; },
     // 導入の音の出口（unlock の前は null）
@@ -369,7 +374,7 @@ export function createAudio({ nav = globalThis.navigator, makeMedia = (src) => n
     },
     resume() {
       hidden = false;
-      if (silentEl && sessionPrimed) Promise.resolve(silentEl.play?.()).catch(() => { sessionPrimed = false; });
+      if (silentEl && session === 'done') Promise.resolve(silentEl.play?.()).catch(() => { session = 'none'; });
       if (ctx && ctx.state !== 'running' && ctx.state !== 'closed') Promise.resolve(ctx.resume()).catch(() => {});
     },
     // level 0〜1。0 で止まる
