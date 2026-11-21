@@ -15,7 +15,7 @@ const offRoad = (x, z) => {
 const q = (xs, p) => { const s = [...xs].sort((a, b) => a - b); return s[Math.min(s.length - 1, Math.floor(p * s.length))]; };
 
 test('軍勢は spawnPerSec で、spawnDist ほどの距離の道路の上に湧き、探す（search）', () => {
-  const e = createEnemies(createRng(1), cfgWith({ spawnPerSec: 1.2, spawnRamp: 1, searchSpeed: 0, alertRate: 0 }));
+  const e = createEnemies(createRng(1), cfgWith({ spawnPerSec: 1.2, surgeMul: 1, searchSpeed: 0, alertRate: 0 }));
   e.update(10); // 約12体
   expect(e.list.length).toBe(12);
   expect(new Set(e.list.map((x) => x.id)).size).toBe(12);
@@ -109,30 +109,38 @@ test('気配を感じた者は、広場の角の交差点で引き返さず、�
   expect(t).toBeLessThan(2);
 });
 
+test('見つける距離は、広場を囲む道（の一番外の車線）より余裕をもって外まで届く（届かないと誰も主人公を見つけられない）', () => {
+  const ring = roadNode(0, 0)[0]; // 広場を囲む道の中心線までの距離（13m）
+  expect(E.spotDist).toBeGreaterThan(ring + E.laneSpread + 1);
+  // 広場を囲む道のいちばん外の車線を通る者も、道の真ん中あたりで見つける
+  const { e, x } = solo({ x: ring + E.laneSpread, z: 20, heading: -Math.PI / 2, ni: 0, nj: -1, di: 0, dj: -1, lane: [E.laneSpread, 0] });
+  for (let i = 0; i < 60 && x.state === 'search'; i++) e.update(1 / 60);
+  expect(x.state).toBe('chase');
+});
+
 test('見つけたら: 急に止まって短い一拍にらみ、主人公へ一直線に全速で突っ込み（離れない）、最後の 1〜2 m だけ急ブレーキして掴む', () => {
   const [nx] = roadNode(0, 0);
   const { e, x } = solo({ x: nx, z: 20, heading: -Math.PI / 2, ni: 0, nj: -1, di: 0, dj: -1 });
   while (x.state === 'search') e.update(1 / 60);
-  let prev = x.dist, t = 0, still = 0, top = 0, spotAt = null, stopT = 0;
+  // 見つけた瞬間からにらむ時間を数える（急ブレーキと重なる）。一拍は全部で spotPause 秒
+  let prev = x.dist, t = 0, top = 0, launch = null, launchSpeed = null;
   const speeds = [];
   while (x.state === 'chase' && t < 20) {
     e.update(1 / 60); t += 1 / 60;
     // 見つけてから掴むまで、主人公からの距離は一度も増えない（ブレーキで止まる間の惰性も含む）
     expect(x.dist).toBeLessThanOrEqual(prev + 1e-9);
     expect(x.dist).toBeGreaterThanOrEqual(E.grabRange - 1e-9);
-    if (spotAt == null && x.speed < 0.5) { spotAt = t; }
-    if (spotAt == null) stopT = t;
-    if (x.speed < 0.5 && top === 0) still += 1 / 60;
-    if (still > 0) top = Math.max(top, x.speed); // 一拍のあと
+    if (launch == null && !(x.pause > 0)) { launch = t; launchSpeed = x.speed; }
+    if (launch != null) top = Math.max(top, x.speed);
     speeds.push([prev, x.speed]); // この一歩の速さは、一歩の前の距離で決まる
     prev = x.dist;
   }
   expect(x.state).toBe('grab');
   expect(x.dist).toBeCloseTo(E.grabRange, 9);
-  // 見つけた一拍: 急に止まり（0.5 秒以内）、にらむのは短い（0.4〜0.5 秒）
-  expect(stopT).toBeLessThan(0.5);
-  expect(still).toBeGreaterThanOrEqual(E.spotPause * 0.9);
-  expect(still).toBeLessThan(E.spotPause + 0.1);
+  // 見つけた一拍: 見つけた瞬間から spotPause 秒（0.4〜0.5 秒）で走り出す。その間に急ブレーキでほぼ止まっている
+  expect(launch).toBeGreaterThan(E.spotPause - 1 / 30);
+  expect(launch).toBeLessThan(E.spotPause + 1 / 30);
+  expect(launchSpeed).toBeLessThan(E.searchSpeed * 0.25);
   expect(E.spotPause).toBeGreaterThanOrEqual(0.4);
   expect(E.spotPause).toBeLessThanOrEqual(0.5);
   // 持ち主の要望: 近づく速さは 16〜20 m/s。主人公の手前で減速しきらず、そのまま突っ込む
@@ -254,28 +262,37 @@ test('死んだ敵は deadTime が進み、3秒後に list から消える', () 
   expect(e.list.find((x) => x.id === id)).toBeUndefined();
 });
 
-test('湧く速さは時間とともに増え、rampSec（60秒）で spawnRamp 倍（3〜4倍）になり、その後は増えない', () => {
-  expect(E.rampSec).toBe(CONFIG.roundSeconds);
-  expect(E.spawnRamp).toBeGreaterThanOrEqual(3);
-  expect(E.spawnRamp).toBeLessThanOrEqual(4);
-  expect(spawnRateAt(0)).toBeCloseTo(E.spawnPerSec);
-  expect(spawnRateAt(30)).toBeCloseTo(E.spawnPerSec * (1 + E.spawnRamp) / 2);
-  expect(spawnRateAt(60)).toBeCloseTo(E.spawnPerSec * E.spawnRamp);
-  expect(spawnRateAt(90)).toBeCloseTo(E.spawnPerSec * E.spawnRamp);
+// 持ち主の決定（2026-11-21「終盤ほど一気に増やす」）: 序盤は少なく平らに、残り 20 秒ほどから一気に増えて群れになる。60 秒で約 100
+const totalSpawn = (t0, t1, cfg = CONFIG) => { let n = 0; for (let t = t0; t < t1; t += 0.01) n += spawnRateAt(t + 0.005, cfg) * 0.01; return n; };
+
+test('湧く速さ: 序盤は spawnPerSec で平ら、surgeStart（残り 20 秒ほど）から surgeEnd へ一気に surgeMul 倍まで増え、その後は保つ', () => {
+  expect(E.surgeStart).toBeGreaterThanOrEqual(36);
+  expect(E.surgeStart).toBeLessThanOrEqual(42);
+  expect(E.surgeEnd).toBeGreaterThan(E.surgeStart);
+  expect(E.surgeEnd).toBeLessThanOrEqual(CONFIG.roundSeconds - 4);
+  for (const t of [0, 10, 20, 30, E.surgeStart]) expect(spawnRateAt(t)).toBeCloseTo(E.spawnPerSec, 9);
+  expect(spawnRateAt(E.surgeEnd)).toBeCloseTo(E.spawnPerSec * E.surgeMul, 9);
+  expect(spawnRateAt(90)).toBeCloseTo(E.spawnPerSec * E.surgeMul, 9);
+  expect(E.surgeMul).toBeGreaterThan(6); // 群れ
   let prev = 0;
-  for (let t = 0; t <= 60; t += 5) { expect(spawnRateAt(t)).toBeGreaterThan(prev); prev = spawnRateAt(t); }
+  for (let t = 0; t <= 70; t += 0.5) { expect(spawnRateAt(t)).toBeGreaterThanOrEqual(prev - 1e-12); prev = spawnRateAt(t); }
+  // spawnPerSec 0 なら一人も湧かない（試しの設定）。surgeMul 1 なら平ら
+  expect(spawnRateAt(55, cfgWith({ spawnPerSec: 0 }))).toBe(0);
+  expect(spawnRateAt(55, cfgWith({ surgeMul: 1 }))).toBeCloseTo(E.spawnPerSec, 9);
 });
 
-test('はじめの10秒より、最後の10秒のほうが3倍近く多く湧く', () => {
+test('60 秒で湧くのは約 100（前の約 108 と同じほど）。序盤 40 秒は 3 割未満で、残り 20 秒に 7 割以上が湧く', () => {
+  const all = totalSpawn(0, 60), early = totalSpawn(0, 40);
+  expect(all).toBeGreaterThan(90);
+  expect(all).toBeLessThan(115);
+  expect(early / all).toBeLessThan(0.3);
+  // 実際に湧く数（刻み幅によらない）
   const e = createEnemies(createRng(5), cfgWith({ spawnDist: [500, 500], searchSpeed: 0, accel: 0 }));
-  for (let i = 0; i < 100; i++) e.update(0.1);
-  const first = e.list.length;
   for (let i = 0; i < 400; i++) e.update(0.1);
-  const before = e.list.length;
-  for (let i = 0; i < 100; i++) e.update(0.1);
-  const last = e.list.length - before;
-  expect(last / first).toBeGreaterThan(2.6);
-  expect(last / first).toBeLessThan(4);
+  const first40 = e.list.length;
+  for (let i = 0; i < 200; i++) e.update(0.1);
+  expect(e.list.length).toBeGreaterThan(90);
+  expect(e.list.length - first40).toBeGreaterThan(e.list.length * 0.7);
 });
 
 test('近づくほど速度を落とす: 遠くでは speed、掴む手前では slowMin 倍まで遅くなる（距離は水平）', () => {
@@ -311,12 +328,12 @@ test('届くまでの秒の分布: 前（中央 約 11 秒）より速く届く�
   const ts = reachTimes([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
   expect(ts.length).toBeGreaterThan(300);
   const mean = ts.reduce((a, b) => a + b, 0) / ts.length;
-  expect(mean).toBeGreaterThan(7.5); // 2026-11-21 の速さ: 平均 9.1 秒（中央 7.9 秒）。前は平均 12.1 秒（中央 10.7 秒）
-  expect(mean).toBeLessThan(11);
-  expect(q(ts, 0.5)).toBeGreaterThan(6);
-  expect(q(ts, 0.5)).toBeLessThan(10);
-  expect(q(ts, 0.1)).toBeGreaterThan(2.5);
-  expect(q(ts, 0.9)).toBeLessThan(20);
+  expect(mean).toBeGreaterThan(5); // 2026-11-21 の速さ（fix 1）: 平均 6.9 秒（中央 5.6 秒）。前は平均 12.1 秒（中央 10.7 秒）
+  expect(mean).toBeLessThan(9);
+  expect(q(ts, 0.5)).toBeGreaterThan(4);
+  expect(q(ts, 0.5)).toBeLessThan(8);
+  expect(q(ts, 0.1)).toBeGreaterThan(2);
+  expect(q(ts, 0.9)).toBeLessThan(18);
   expect(Math.max(...ts)).toBeLessThan(30);
   expect(ts.back).toBeLessThanOrEqual(1e-9); // 見つけてからは一度も離れない
 });

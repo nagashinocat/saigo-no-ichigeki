@@ -18,7 +18,8 @@ export function replayTargets(city) {
 export function createReplaySim({ shot, targets, enemies = [], cfg = CONFIG }) {
   const byKey = new Map(targets.map((t) => [t.id, t.target]));
   const blast = createBlast(shot, targets.map(({ id, dist }) => ({ id, dist })), cfg);
-  const list = enemies.map((e) => ({ ...e }));
+  // 止まった姿で写す（リプレイの間、軍勢は動かないので、速さで描く推進光の尾や曲がりの傾きを残さない）
+  const list = enemies.map((e) => ({ ...e, speed: 0, turn: 0, lean: 0 }));
   let time = 0;
   const live = [{ id: REPLAY_BLAST_ID, shot, front: 0 }];
 

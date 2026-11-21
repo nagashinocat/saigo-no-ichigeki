@@ -215,7 +215,7 @@ test('長押ししながら小爆発を押せ、押した分だけ最後の一�
 });
 
 test('掴まれている数 × drainPerSec で貯めた力が減る。0 になってもゲームは続く', () => {
-  const cfg = { ...CONFIG, enemy: { ...CONFIG.enemy, spawnPerSec: 10, spawnRamp: 1, spawnDist: [3, 3] } };
+  const cfg = { ...CONFIG, enemy: { ...CONFIG.enemy, spawnPerSec: 10, surgeMul: 1, spawnDist: [3, 3] } };
   const g = createGame({ seed: 1, cfg });
   const log = record(g, ['over']);
   hold(g, 1);
@@ -273,7 +273,8 @@ test('over の後は pressStart も update も何もしない', () => {
 });
 
 test('最後の一発の間（finale）はタイマー・軍勢・力が止まり、爆発だけが進む', () => {
-  const cfg = { ...CONFIG, enemy: { ...CONFIG.enemy, spawnPerSec: 4, spawnDist: [200, 260] } };
+  // 遠くに湧いて動かない軍勢（速い軍勢は 27 秒の長押しの間に届いて力を吸い切ってしまうので、止めておく）
+  const cfg = { ...CONFIG, enemy: { ...CONFIG.enemy, spawnPerSec: 4, spawnDist: [200, 260], searchSpeed: 0, accel: 0 } };
   const g = createGame({ seed: 1, cfg });
   hold(g, secFor(80));
   g.pressEnd();

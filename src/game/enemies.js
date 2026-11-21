@@ -7,11 +7,12 @@ const P = GRID.PITCH;
 const DIRS = [[1, 0], [0, 1], [-1, 0], [0, -1]];
 const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
 
-// 湧く速さ（体/秒）。始まりから rampSec 秒で spawnRamp 倍へ一直線に増え、その後は保つ
+// 湧く速さ（体/秒）。持ち主の決定（2026-11-21「終盤ほど一気に増やす」）: 序盤は spawnPerSec で平ら、surgeStart 秒から surgeEnd 秒へ
+// なめらかに（smoothstep）一気に surgeMul 倍まで増え、その後は保つ
 export function spawnRateAt(t, cfg = CONFIG) {
   const E = cfg.enemy;
-  const k = Math.min(1, Math.max(0, t / E.rampSec));
-  return E.spawnPerSec * (1 + (E.spawnRamp - 1) * k);
+  const k = Math.min(1, Math.max(0, (t - E.surgeStart) / (E.surgeEnd - E.surgeStart)));
+  return E.spawnPerSec * (1 + (E.surgeMul - 1) * k * k * (3 - 2 * k));
 }
 
 // 見つけたあと近づく速さ（m/s）。掴む手前の slowDist m で、なめらかに slowMin 倍まで落とす。距離は主人公からの水平の距離
@@ -149,15 +150,15 @@ export function createEnemies(rng, cfg = CONFIG, { buildings = [] } = {}) {
     }
   }
 
-  // 見つけた者: 急に止まって主人公の方へ向き直り、spotPause 秒にらんでから（見つけた一拍）、主人公へ一直線に突っ込む
+  // 見つけた者: 急ブレーキで止まりながら主人公の方へ向き直ってにらみ（見つけた瞬間から spotPause 秒の一拍）、主人公へ一直線に突っ込む
   // （曲がりきれる速さで向きを変える）。減速は最後の slowDist m だけ（approachSpeed）。掴む距離 grabRange で止まる。
   // 主人公からの距離は一度も増えない（向き直る途中の惰性で外へ向かう分は、主人公のまわりを回る向きへ逃がす）
   function chaseStep(e, dt) {
     const toHero = Math.atan2(-e.z, -e.x);
     steer(e, toHero, e.dist < E.snapDist ? Math.PI * 8 : E.chaseTurnRate, dt);
-    if (e.pause > 0) {
+    if (e.pause > 0) { // 見つけた一拍: 見つけた瞬間から spotPause 秒、急ブレーキしながら向き直ってにらむ
       accel(e, 0, dt);
-      if (e.speed < 0.5) e.pause -= dt;
+      e.pause -= dt;
     } else {
       e.speed = Math.min(approachSpeed(e.dist, cfg), e.speed + E.chaseAccel * dt); // 減速の曲線より速くならない
     }

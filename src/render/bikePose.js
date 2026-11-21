@@ -8,7 +8,7 @@ import { groundHeight } from './sphereDeform.js';
 //   主人公の手前で減速して待たず、掴む距離のすぐ手前（turnDist）で横を向き、主人公の近くの高さへ寄せながら飛びつく。
 // - 掴む: grabSettle 秒で、いた所から主人公の横（水平 clingRadius）へ寄り、y≈0 で止まる。車体は主人公の向きと直角。
 //   乗り手の右手側に主人公がいて手を伸ばす。
-// - 飛びつく（cling。掴む枠が埋まっていた者）: 掴む者と同じく寄ったうえで、掴んでいる者の外の上に重なる（e.layer の段ごとに高く）。
+// - 飛びつく（cling。掴む枠が埋まっていた者）: 掴む者と同じく寄ったうえで、掴んでいる者の外の上に重なる（e.layer の段ごとに高く、3 段ごとに一回り外へ）。
 //   枠が空いて掴むと（e.unpile 秒）、unpileSec で掴む者の場所へ下りる。
 // - 倒れる: バイクごと外へ吹き飛び、回りながら上がって落ち、deadFling 秒で消える。
 // 返す値: x, y, z（バイクの底の中心）、yaw（y 軸まわり。0 で +z を向く）、pitch（正で鼻先が下がる）、roll、
@@ -24,6 +24,7 @@ export const BIKE = {
   descendDist: 8,     // m。掴む距離のこの手前から、主人公の高さへ寄せる
   // 飛びついた者（cling）の重なり: 掴む者より pileOut m 外、pileUp m 上（段ごとに pileStep m 高く。3 段で一回り）。unpileSec で下りる
   pileOut: 0.75, pileUp: 0.95, pileStep: 0.55, unpileSec: 0.3,
+  pileRingOut: 0.45, pileRingUp: 0.3, // 3 段ごとの一回り（最大 3 回り）
   // スピード感: 速さ（探す速さを 1）あたりの鼻先の下がり（rad）。見つけて急に止まる間は brakePitch まで鼻先が上がる
   speedPitch: 0.2, brakePitch: 0.26,
   nearFloor: -1,      // m。主人公の近く（nearDist 以内）では、深い穴の上でもこれより下がらない
@@ -101,8 +102,9 @@ function grabPose(e, fronts, time, cfg) {
   // 重なり: 飛びついた者（layer がある）は掴む者の外の上。枠が空いて掴んだ者（unpile）は下りる
   const pile = e.layer != null ? k * (e.unpile != null ? 1 - smooth(0, BIKE.unpileSec, e.unpile) : 1) : 0;
   if (pile > 0) {
-    r += BIKE.pileOut * pile;
-    y += (BIKE.pileUp + BIKE.pileStep * (e.layer % 3) + 0.05 * Math.sin(time * 6.1 + h * 13)) * pile;
+    const ring = Math.min(3, Math.floor(e.layer / 3)); // 3 段で一回り。次の回りはもう一回り外の上（大きな山でも段どうしが重ならない）
+    r += (BIKE.pileOut + BIKE.pileRingOut * ring) * pile;
+    y += (BIKE.pileUp + BIKE.pileStep * (e.layer % 3) + BIKE.pileRingUp * ring + 0.05 * Math.sin(time * 6.1 + h * 13)) * pile;
   }
   return {
     ...p, x: (p.x / r0) * r, y, z: (p.z / r0) * r,

@@ -110,6 +110,11 @@ test('枠が埋まっていて飛びついた者（cling）は、掴んでいる
     expect(Math.hypot(c.x, c.z)).toBeLessThan(E.grabRange + 1);
     expect(c.y).toBeGreaterThan(g.y + 0.6);
     expect(c2.y).toBeGreaterThan(c.y + 0.4);
+    // 大きな山（4 段目から）は、同じ高さに戻らず、もう一回り外の上に重なる（段どうしが重ならない）
+    const c3 = bikePose(rider(id, E.grabRange, 'cling', { grabTime: 2, layer: 3 }), [], 3);
+    expect(c3.y).toBeGreaterThan(c.y + 0.25);
+    expect(Math.hypot(c3.x, c3.z)).toBeGreaterThan(Math.hypot(c.x, c.z) + 0.2);
+    expect(Math.hypot(c3.x, c3.z)).toBeLessThan(E.grabRange + 2.5);
     expect(c.reach).toBe(1);
     expect(c.trail).toBe(0);
     // 枠が空いて掴む（unpile）: その瞬間は重なっていた所、すぐ（0.3 秒ほどで）掴む者の場所へ下りる

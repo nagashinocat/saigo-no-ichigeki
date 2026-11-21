@@ -73,3 +73,12 @@ test('同じ写しから二度起こすと、同じ時刻に同じ命中', () =>
   };
   expect(run()).toEqual(run());
 });
+
+test('リプレイの軍勢は止まった姿で写す（速さ 0。止まっているのに推進光の尾を引かない）。元の軍勢は変えない', () => {
+  const enemies = [{ id: 1, angle: 0, dist: 30, state: 'search', speed: 24, turn: 3, lean: 2 }];
+  const sim = createReplaySim({ shot: { radius: 100, amount: 50, isBig: true }, targets: [], enemies });
+  expect(sim.enemies[0].speed).toBe(0);
+  expect(sim.enemies[0].turn).toBe(0);
+  expect(sim.enemies[0].lean).toBe(0);
+  expect(enemies[0].speed).toBe(24);
+});
