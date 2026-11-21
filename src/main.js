@@ -182,6 +182,8 @@ function warmBoth(fn) {
   renderer.setRenderTarget(null);
 }
 warmBoth(() => explosionView.warmup(renderer, views.cityCamera));
+// 街の材質（ビル・飾り・看板・光の溜まり）も両方の段の分を前もって作る（段が下がって描き方が変わった瞬間に止まらないように）
+warmBoth(() => cityView.warmup(renderer, views.cityCamera, cityScene));
 // 最後の一発: 放つ瞬間から、時間が戻るまで世界の音は消える（鳴るのは心臓の鼓動だけ。音の段取りは演出が cue で知らせる）
 game.on('shot', (shot) => {
   bgm.stop(); // 放った瞬間にぴたりと止める（演出の無音・鼓動・爆音のため）
@@ -349,6 +351,7 @@ function lowerTier() {
   if (debugMode) window.__tier = tier;
   heroAura.setTier(tier);
   enemyView.setTier(tier);
+  cityView.setTier(tier); // 看板のちらつき（low では止める）と明るさ（bloom がなくなる）
   style.tintFigures(enemyView.mesh.material.uniforms, tier); // low へ下がったら推進の光を飽和した緑へ（bloom がなくても緑に読める）
   applyPixelRatio();
   resize();
@@ -564,6 +567,7 @@ if (debugMode) {
   window.__game = game;
   window.__tier = tier;
   window.__cityView = cityView;
+  window.__renderer = renderer; // 描画の回数・三角形の数を測る（renderer.info）
   window.__destruction = destruction;
   window.__explosionView = explosionView;
   window.__views = views;

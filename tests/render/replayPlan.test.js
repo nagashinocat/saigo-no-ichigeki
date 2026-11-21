@@ -32,9 +32,12 @@ test('side: 前線に沿う道の上の屋根より高く、street と違う向�
     const p = planReplay({ radius, buildings, heroYaw: 0.4 });
     expect(Math.abs(p.side.az - p.street.az)).toBeGreaterThan(0.5);
     const ux = Math.cos(p.side.az), uz = Math.sin(p.side.az);
+    // カメラが通る半径の範囲（前線に沿って r0 から r1 まで）の屋根より高い。S7 で街の奥に目印の超高層（200m 超）が立ったので、
+    // 通らない奥のビルは見ない（前の箱だけの街では、奥のビルはどれもカメラより低かった）
+    const r0 = Math.max(10, Math.min(radius * 0.8, p.street.dist - 3)), r1 = radius * 1.05 + 40;
     for (const b of buildings) {
-      const t = b.x * ux + b.z * uz, across = Math.abs(-b.x * uz + b.z * ux);
-      if (t > 0 && across < REPLAY_PLAN.sideClear) expect(p.side.height).toBeGreaterThan(b.h);
+      const t = b.x * ux + b.z * uz, across = Math.abs(-b.x * uz + b.z * ux), r = Math.hypot(b.x, b.z);
+      if (t > 0 && across < REPLAY_PLAN.sideClear && r >= r0 - 20 && r <= r1 + 20) expect(p.side.height).toBeGreaterThan(b.h);
     }
     expect(planReplay({ radius, buildings, heroYaw: 0.4 })).toEqual(p);
     expect(p.hero.az).toBeCloseTo(0.4 + REPLAY_PLAN.heroAz, 9);

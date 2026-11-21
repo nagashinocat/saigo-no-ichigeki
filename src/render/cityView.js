@@ -4,18 +4,26 @@ import { createRng } from '../rng.js';
 import { GRID } from '../world/cityGen.js';
 import { CONFIG } from '../config.js';
 import { packFronts } from './sphereDeform.js';
+import { dressCity, DENSITY, CLUTTER_DENSITY, NEON } from './cityDress.js';
 
-// 街の見た目: 地面、ビル（種類ごとに InstancedMesh）、屋上の設備、道路沿いの車・街灯・看板。
+// 街の見た目: 地面、ビル（種類ごとに InstancedMesh。1 棟は形の部品（cityGen の parts）の数だけインスタンスを持つ）、
+// 屋上や壁の飾り・看板・ネオン・店先の光の溜まり（cityDress.js。種類ごとに 1 つの InstancedMesh）、道路沿いの車・街灯・看板。
+// 1 棟の部品と飾りは、つぶれるときは同じ時刻・同じ速さで（aCrush）一つのビルとしてつぶれ、隠すときは一緒に隠す。
 // 壊れたビルや props は、インスタンスの拡大率を0にして隠す。
 // 爆発の球に沿ったゆがみ（ビルが球の面へ押し付けられてつぶれる・地面が球の形にえぐれる）は style.js のシェーダーが描く。
 
 const KINDS = ['house', 'office', 'tower'];
 const CAR_COLORS = ['#f4f4f2', '#c9ccd2', '#26282e', '#b8322e', '#2f5d9e', '#e8b93a', '#5f7f6a', '#8d8f94'];
-const SIGN_COLORS = ['#ff5f7a', '#4fd6ff', '#ffd25a', '#7dff9a', '#ff9a3c', '#c99bff'];
+// 道路沿いの看板もネオンの色から（バイクの緑と重ねない）
+const SIGN_COLORS = Object.values(NEON).map((c) => '#' + new THREE.Color(...c).getHexString());
 
 const unitBox = () => new THREE.BoxGeometry(1, 1, 1).translate(0, 0.5, 0);
 // ビルの箱は、球の線に沿って曲がれるよう細かく分ける（縦を多めに）
 const BUILDING_SEGMENTS = { high: [4, 14, 4], mid: [3, 10, 3], low: [2, 6, 2] };
+// 低い家（20m 未満。商店の並びの一軒ずつなど）は曲がりが小さいので縦の分け方を少なく（S7 で部品が増えた分の三角形を抑える）
+const HOUSE_V = { high: 6, mid: 4, low: 3 };
+// 平面の影（mid / low）はつぶれの形だけ追えばよいので、粗い箱で描く
+const SHADOW_SEGMENTS = [1, 3, 1];
 // 地面: 中心が細かい放射状のメッシュ（えぐれの縁がなめらかな円になるように）。街の外は粗く地平まで
 const GROUND_RINGS = { high: [190, 320], mid: [140, 240], low: [90, 160] };
 const GROUND_FINE_R = CONFIG.cityRadius + 150;
@@ -97,35 +105,54 @@ export function createCityView(city, style, tier) {
   const u = style.uniforms;
   u.uRingStep.value = groundGeo.step;
 
-  // ビル（種類ごとに箱の形を持ち、つぶれ始めた時刻をインスタンスごとの aCrush に書く）
+  // ビル（種類ごとに箱の形を持ち、つぶれ始めた時刻を部品ごとの aCrush、屋根の形を aShape に書く）
   const segs = BUILDING_SEGMENTS[tier] ?? BUILDING_SEGMENTS.mid;
-  const byId = new Map(); // building id -> { mesh, index, extras: [{mesh, index}] }
+  const byId = new Map(); // building id -> { parts: [{mesh, index}], extras: [{mesh, index}] }
   const meshes = {};
-  const color = new THREE.Color();
+  const color = new THREE.Color(), base = new THREE.Color();
   for (const kind of KINDS) {
     const list = city.buildings.filter((b) => b.kind === kind);
-    const geo = new THREE.BoxGeometry(1, 1, 1, ...segs).translate(0, 0.5, 0);
-    const crush = new THREE.InstancedBufferAttribute(new Float32Array(Math.max(1, list.length) * 2), 2);
-    geo.setAttribute('aCrush', crush);
-    const mesh = instanced(geo, style.building(kind), list.length, { cast: shadows, receive: shadows });
+    const n = list.reduce((a, b) => a + b.parts.length, 0);
+    const sg = kind === 'house' ? [segs[0], HOUSE_V[tier] ?? HOUSE_V.mid, segs[2]] : segs;
+    const geo = new THREE.BoxGeometry(1, 1, 1, ...sg).translate(0, 0.5, 0);
+    const crushAttr = new THREE.InstancedBufferAttribute(new Float32Array(Math.max(1, n) * 2), 2);
+    geo.setAttribute('aCrush', crushAttr);
+    const shape = new THREE.InstancedBufferAttribute(new Float32Array(Math.max(1, n) * 2), 2);
+    geo.setAttribute('aShape', shape);
+    const mesh = instanced(geo, style.building(kind), n, { cast: shadows, receive: shadows });
     if (style.buildingDepth) mesh.customDepthMaterial = style.buildingDepth;
     mesh.name = 'buildings-' + kind;
-    list.forEach((b, i) => {
-      mesh.setMatrixAt(i, boxMatrix(b.x, 0, b.z, b.w, b.h, b.d));
-      color.set(pick(style.kindColors[kind])).multiplyScalar(0.92 + 0.12 * rng());
-      mesh.setColorAt(i, color);
-      byId.set(b.id, { mesh, index: i, extras: [] });
-    });
+    const colors = style.kindColors[kind];
+    let i = 0;
+    for (const b of list) {
+      base.set(pick(colors)).multiplyScalar(0.9 + 0.14 * rng());
+      const entry = { parts: [], extras: [] };
+      for (const p of b.parts) {
+        mesh.setMatrixAt(i, boxMatrix(b.x + p.x, p.y, b.z + p.z, p.w, p.h, p.d));
+        // 商店の並びは一軒ずつ違う色、ほかは同じ色を部品ごとに少しだけ変える
+        if (b.arch === 'shop') color.set(colors[Math.floor(p.tone * colors.length) % colors.length]).multiplyScalar(0.86 + 0.2 * rng());
+        else color.copy(base).multiplyScalar(0.95 + 0.1 * p.tone);
+        mesh.setColorAt(i, color);
+        shape.setXY(i, p.shape?.[0] ?? 0, p.shape?.[1] ?? 0);
+        entry.parts.push({ mesh, index: i });
+        i++;
+      }
+      byId.set(b.id, entry);
+    }
     meshes[kind] = mesh;
     group.add(mesh);
     if (style.outline) {
-      const line = instanced(geo, style.outline, list.length);
+      const line = instanced(geo, style.outline, n);
       line.instanceMatrix = mesh.instanceMatrix; // 同じ行列を使うので、隠すと線も消える
       line.name = 'outline-' + kind;
       group.add(line);
     }
     if (style.planarShadow) {
-      const sh = instanced(geo, style.planarShadow, list.length);
+      // 同じ aCrush / aShape を使う粗い箱（つぶすと影も同じようにつぶれる）
+      const sgeo = new THREE.BoxGeometry(1, 1, 1, ...SHADOW_SEGMENTS).translate(0, 0.5, 0);
+      sgeo.setAttribute('aCrush', crushAttr);
+      sgeo.setAttribute('aShape', shape);
+      const sh = instanced(sgeo, style.planarShadow, n);
       sh.instanceMatrix = mesh.instanceMatrix;
       sh.renderOrder = 1;
       sh.name = 'planarShadow-' + kind;
@@ -133,35 +160,75 @@ export function createCityView(city, style, tier) {
     }
   }
 
-  const geo = unitBox();
 
-  // 屋上の設備（空調・塔屋・高層の赤い航空灯）
-  const roofSpecs = [], beaconSpecs = [];
-  for (const b of city.buildings) {
-    if (b.kind === 'house') continue;
-    const n = b.kind === 'tower' ? 2 + Math.floor(rng() * 2) : 1 + Math.floor(rng() * 3);
-    for (let k = 0; k < n; k++) {
-      const big = k === 0 && b.kind === 'tower';
-      const w = big ? b.w * (0.3 + 0.2 * rng()) : 1.5 + 2.5 * rng();
-      const d = big ? b.d * (0.3 + 0.2 * rng()) : 1.5 + 2.5 * rng();
-      const h = big ? 4 + 4 * rng() : 1.2 + 2 * rng();
-      const x = b.x + (rng() - 0.5) * Math.max(0, b.w - w - 2);
-      const z = b.z + (rng() - 0.5) * Math.max(0, b.d - d - 2);
-      roofSpecs.push({ id: b.id, x, y: b.h, z, w, h, d });
-    }
-    if (b.h > 85) beaconSpecs.push({ id: b.id, x: b.x + b.w * 0.42, y: b.h, z: b.z + b.d * 0.42 });
-  }
-  const roofMesh = instanced(geo, style.props.roofBox, roofSpecs.length, { cast: shadows, receive: shadows });
-  roofSpecs.forEach((r, i) => {
-    roofMesh.setMatrixAt(i, boxMatrix(r.x, r.y, r.z, r.w, r.h, r.d));
-    byId.get(r.id).extras.push({ mesh: roofMesh, index: i });
+  // 屋上・壁の飾り、看板・ネオン、店先の光の溜まり（cityDress.js）。画質の段で数を間引く
+  const dress = dressCity(city, { density: DENSITY[tier] ?? DENSITY.mid, clutter: CLUTTER_DENSITY[tier] ?? CLUTTER_DENSITY.mid, seed: 7 });
+  const withCrush = (g, n) => { g.setAttribute('aCrush', new THREE.InstancedBufferAttribute(new Float32Array(Math.max(1, n) * 2), 2)); return g; };
+  const attach = (bid, mesh, index) => byId.get(bid)?.extras.push({ mesh, index });
+
+  const boxMesh = instanced(withCrush(unitBox(), dress.boxes.length), style.props.clutter, dress.boxes.length, { receive: shadows });
+  boxMesh.name = 'clutter-boxes';
+  const _a = new THREE.Vector3(), _b = new THREE.Vector3(), _d = new THREE.Vector3(), XAX = new THREE.Vector3(1, 0, 0);
+  dress.boxes.forEach((x, i) => {
+    if (x.a) {
+      // a → b の細い箱（電線・腕・竿）。箱の底が y=0 なので、太さの半分だけ下げて線の上に中心を置く
+      _a.fromArray(x.a); _b.fromArray(x.b);
+      _d.subVectors(_b, _a);
+      const L = _d.length();
+      _q.setFromUnitVectors(XAX, _d.normalize());
+      _p.addVectors(_a, _b).multiplyScalar(0.5).sub(_s.set(0, x.t / 2, 0).applyQuaternion(_q));
+      boxMesh.setMatrixAt(i, _m.compose(_p, _q, _s.set(L, x.t, x.t)));
+    } else boxMesh.setMatrixAt(i, boxMatrix(x.x, x.y, x.z, x.w, x.h, x.d, x.ry));
+    boxMesh.setColorAt(i, color.setRGB(...x.color, THREE.SRGBColorSpace));
+    attach(x.bid, boxMesh, i);
   });
-  const beaconMesh = instanced(new THREE.SphereGeometry(0.7, 8, 6).translate(0, 1.2, 0), style.props.beacon, beaconSpecs.length);
-  beaconSpecs.forEach((r, i) => {
+
+  const tankGeo = mergeGeometries([
+    new THREE.CylinderGeometry(1, 1, 0.62, 10).translate(0, 0.62, 0),
+    new THREE.ConeGeometry(1.05, 0.2, 10).translate(0, 1.03, 0),
+    ...[[0.62, 0.62], [-0.62, 0.62], [0.62, -0.62], [-0.62, -0.62]].map(([x, z]) => new THREE.BoxGeometry(0.14, 0.32, 0.14).translate(x, 0.16, z)),
+  ]);
+  const tankMesh = instanced(withCrush(tankGeo, dress.tanks.length), style.props.clutter, dress.tanks.length, { receive: shadows });
+  tankMesh.name = 'clutter-tanks';
+  dress.tanks.forEach((x, i) => {
+    tankMesh.setMatrixAt(i, boxMatrix(x.x, x.y, x.z, x.r, x.h, x.r));
+    tankMesh.setColorAt(i, color.setRGB(...x.color, THREE.SRGBColorSpace));
+    attach(x.bid, tankMesh, i);
+  });
+
+  const signGeo = withCrush(unitBox(), dress.signs.length);
+  const tileAttr = new THREE.InstancedBufferAttribute(new Float32Array(Math.max(1, dress.signs.length) * 4), 4);
+  const signAttr = new THREE.InstancedBufferAttribute(new Float32Array(Math.max(1, dress.signs.length) * 4), 4);
+  signGeo.setAttribute('aTile', tileAttr);
+  signGeo.setAttribute('aSign', signAttr);
+  const signMesh = instanced(signGeo, style.props.sign, dress.signs.length);
+  signMesh.name = 'neon-signs';
+  dress.signs.forEach((x, i) => {
+    signMesh.setMatrixAt(i, boxMatrix(x.x, x.y, x.z, x.w, x.h, x.t, x.ry));
+    signMesh.setColorAt(i, color.setRGB(...x.color)); // ネオンの色は sRGB のままシェーダーへ（シェーダーが線形へ直す）
+    tileAttr.setXYZW(i, ...(x.tile ?? [0, 0, 0, 0]));
+    signAttr.setXYZW(i, x.flicker, x.phase, x.gain, x.mode);
+    attach(x.bid, signMesh, i);
+  });
+
+  const poolGeo = withCrush(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2).translate(0, 0.07, 0), dress.pools.length);
+  const neonPools = instanced(poolGeo, style.props.neonPool, dress.pools.length);
+  neonPools.name = 'neon-pools';
+  neonPools.renderOrder = 2;
+  dress.pools.forEach((x, i) => {
+    neonPools.setMatrixAt(i, boxMatrix(x.x, 0, x.z, x.w, 1, x.d, x.ry));
+    neonPools.setColorAt(i, color.setRGB(...x.color));
+    attach(x.bid, neonPools, i);
+  });
+
+  const beaconMesh = instanced(new THREE.SphereGeometry(0.7, 8, 6).translate(0, 1.2, 0), style.props.beacon, dress.beacons.length);
+  beaconMesh.name = 'beacons';
+  dress.beacons.forEach((r, i) => {
     beaconMesh.setMatrixAt(i, boxMatrix(r.x, r.y, r.z, 1, 1, 1));
-    byId.get(r.id).extras.push({ mesh: beaconMesh, index: i });
+    attach(r.bid, beaconMesh, i);
   });
-  group.add(roofMesh, beaconMesh);
+  group.add(boxMesh, tankMesh, signMesh, neonPools, beaconMesh);
+  const dressCounts = { boxes: dress.boxes.length, tanks: dress.tanks.length, signs: dress.signs.length, pools: dress.pools.length, beacons: dress.beacons.length };
 
   // 道路沿いの props
   const cars = city.props.filter((p) => p.kind === 'car');
@@ -228,32 +295,53 @@ export function createCityView(city, style, tier) {
   group.add(carMesh, poles, heads, signPoles, panels);
   if (pools) group.add(pools);
 
+  // 範囲だけ GPU へ送る（1 棟の飾りは並んだ番号なので、three が隣り合う範囲をまとめて送る）
   const hide = ({ mesh, index }) => {
     mesh.setMatrixAt(index, ZERO);
+    mesh.instanceMatrix.addUpdateRange(index * 16, 16);
     mesh.instanceMatrix.needsUpdate = true;
+  };
+  const setCrush = ({ mesh, index }, at, delay) => {
+    const attr = mesh.geometry.getAttribute('aCrush');
+    if (!attr) return false;
+    attr.setXY(index, at, delay);
+    attr.addUpdateRange(index * 2, 2);
+    attr.needsUpdate = true;
+    return true;
   };
   let time = 0;
   // 一時的に隠したビル（演出の肩越しのカットの間だけ）: id → 隠す前の行列。本当に隠した（gone）・つぶし始めた（crushed）ものは覚えておく
   const veiled = new Map(), gone = new Set(), crushed = new Set();
   const matOf = ({ mesh, index }) => mesh.instanceMatrix.array.slice(index * 16, index * 16 + 16);
-  const setMat = ({ mesh, index }, arr) => { mesh.instanceMatrix.array.set(arr, index * 16); mesh.instanceMatrix.needsUpdate = true; };
+  const setMat = ({ mesh, index }, arr) => { mesh.instanceMatrix.array.set(arr, index * 16); mesh.instanceMatrix.addUpdateRange(index * 16, 16); mesh.instanceMatrix.needsUpdate = true; };
 
   return {
     group,
     tier,
     meshes,
+    // 飾りの数（描画の回数・三角形の見積もりと、テスト用）
+    dressCounts,
     // Task 8 の破片が、そのビルの色や位置を引き継ぐために使う
     getBuildingMesh(id) {
       const e = byId.get(id);
-      return e ? { mesh: e.mesh, index: e.index } : null;
+      return e ? { mesh: e.parts[0].mesh, index: e.parts[0].index } : null;
+    },
+    // 1 棟の部品と飾り（テスト・調査用）: { parts: [{mesh, index}], extras: [{mesh, index}] }
+    getBuildingParts(id) {
+      const e = byId.get(id);
+      return e ? { parts: [...e.parts], extras: [...e.extras] } : null;
     },
     getBuildingColor(id) {
       const e = byId.get(id);
       if (!e) return null;
       const c = new THREE.Color();
-      e.mesh.getColorAt(e.index, c);
+      e.parts[0].mesh.getColorAt(e.parts[0].index, c);
       return [c.r, c.g, c.b];
     },
+    // 画質の段が下がったとき（看板のちらつき・明るさ。飾りの数は作ったときの段のまま）
+    setTier(t) { style.setSignTier?.(t); },
+    // 初めて描くときに止まらないよう、街の材質を前もって作る（scene: 光の数を合わせるため、街を入れたシーン）
+    warmup(renderer, camera, scene = group) { renderer.compile(scene, camera); },
     // 爆発の球に沿ったゆがみを進める。fronts: [えぐれの半径, ...今の球の半径]（createFrontTracker）、
     // heat: 球の明るさ（0〜1。押し付けられた面と穴の割れ目が光る）、ember: 熾火の残り（0〜1）
     update(dt, { fronts = [], heat = 0, ember = 0 } = {}) {
@@ -264,33 +352,32 @@ export function createCityView(city, style, tier) {
       u.uHeat.value = heat;
       u.uEmber.value = ember;
     },
-    // 球の表面が通ったビル: 屋上の設備はすぐ隠し、ビルは delay 秒かけて球の線に沿ってつぶれていく（隠すのは hideBuilding）
+    // 球の表面が通ったビル: 部品も飾りも看板も同じ時刻から delay 秒かけて、一つのビルとして球の線に沿ってつぶれていく
+    // （看板はちらついて消える。つぶれ方を持たない航空灯だけすぐ隠す）。隠すのは hideBuilding
     crushBuilding(id, delay) {
       const e = byId.get(id);
       if (!e) return;
-      const attr = e.mesh.geometry.getAttribute('aCrush');
-      attr.setXY(e.index, time, Math.max(1e-3, delay));
-      attr.addUpdateRange(e.index * 2, 2);
-      attr.needsUpdate = true;
-      e.extras.forEach(hide);
+      const d = Math.max(1e-3, delay);
+      for (const p of e.parts) setCrush(p, time, d);
+      for (const x of e.extras) if (!setCrush(x, time, d)) hide(x);
       crushed.add(id);
     },
     hideBuilding(id) {
       const e = byId.get(id);
       if (!e) return;
-      hide(e);
+      e.parts.forEach(hide);
       e.extras.forEach(hide);
       gone.add(id);
     },
     // 一時的に隠す（on）・戻す（off）。戻すとき、その間に hideBuilding されたものは隠したまま、crushBuilding されたものは
-    // ビルだけ戻す（つぶれはシェーダーが進める。屋上の設備は隠したまま）
+    // 部品と飾りを戻す（つぶれはシェーダーが進める。つぶれ方を持たない航空灯は隠したまま）
     veilBuilding(id, on) {
       const e = byId.get(id);
       if (!e) return;
       if (on) {
         if (veiled.has(id) || gone.has(id)) return;
-        veiled.set(id, { m: matOf(e), extras: e.extras.map(matOf) });
-        hide(e);
+        veiled.set(id, { parts: e.parts.map(matOf), extras: e.extras.map(matOf) });
+        e.parts.forEach(hide);
         e.extras.forEach(hide);
         return;
       }
@@ -298,8 +385,9 @@ export function createCityView(city, style, tier) {
       if (!v) return;
       veiled.delete(id);
       if (gone.has(id)) return;
-      setMat(e, v.m);
-      if (!crushed.has(id)) e.extras.forEach((x, i) => setMat(x, v.extras[i]));
+      e.parts.forEach((p, i) => setMat(p, v.parts[i]));
+      // つぶし始めたビルの飾りも、つぶれ方（aCrush）を持つものは戻す（ビルと一緒につぶれていく）。航空灯は隠したまま
+      e.extras.forEach((x, i) => { if (!crushed.has(id) || x.mesh.geometry.getAttribute('aCrush')) setMat(x, v.extras[i]); });
     },
     // 破片の出発点と色。props は道路沿いに数 m ずらして置いているので、見えている位置を返す。
     getPropVisual(id) {

@@ -3,6 +3,7 @@ import { TIERS } from './quality.js';
 import { GRID } from '../world/cityGen.js';
 import { CONFIG } from '../config.js';
 import { SPHERE_DEFORM_GLSL, MAX_FRONTS, CRATER_LIP } from './sphereDeform.js';
+import { buildSignAtlas } from './signAtlas.js';
 
 // 作風「写実的なアニメ調」: 暗めの夕方（日が沈んだ直後）の空、弱く低い一方向の光、3段に量子化した陰影、
 // 多く灯る窓の明かりと街灯、遠景は地平の茜色へ溶ける。暗い街の上で浮遊バイクの推進の光が映える。
@@ -142,6 +143,32 @@ float dfWrinkle(vec3 p) {
 }
 `;
 
+// S7: ビルの部品の屋根の形（cityGen の SHAPE）。箱の上の方を、高さに比例して押し下げる（片流れ・四方へ下がる頂）。
+// 側面はまっすぐのまま、上の面だけが傾く。aShape: x = 種類（0 平ら、1〜4 片流れ +x/-x/+z/-z、5 四方）、y = 下がる割合
+const SHAPE_VERT_PARS = /* glsl */`
+attribute vec2 aShape;
+vec3 shapeShear(vec3 p) {
+  float m = aShape.x;
+  if (m < 0.5) return p;
+  float f = m < 1.5 ? p.x + 0.5 : m < 2.5 ? 0.5 - p.x : m < 3.5 ? p.z + 0.5 : m < 4.5 ? 0.5 - p.z : 2.0 * max(abs(p.x), abs(p.z));
+  p.y *= 1.0 - aShape.y * f;
+  return p;
+}
+`;
+
+// 回した箱（屋上・壁の飾り、看板）用のつぶれ: 置き場所の行列に回転があっても、ゆがめた点をローカルへ戻す
+const CRUSH_ROT_VERTEX = /* glsl */`
+#ifdef USE_INSTANCING
+{
+  vec3 w0 = (instanceMatrix * vec4(transformed, 1.0)).xyz;
+  float ck = aCrush.y > 0.0 ? clamp((uTime - aCrush.x) / aCrush.y, 0.0, 1.0) : 0.0;
+  vec3 w1 = deformPoint(crushSquash(w0, ck));
+  mat3 im = mat3(instanceMatrix);
+  if (abs(determinant(im)) > 1e-12 && (ck > 0.0 || dot(w1 - w0, w1 - w0) > 0.0)) transformed = inverse(im) * (w1 - instanceMatrix[3].xyz);
+}
+#endif
+`;
+
 // ビルの頂点を、球の内側に入ったら球の面へ押し出し（deformPoint）、当たったあとは高さを押しつぶす（crushPoint）。
 // transformed（箱のローカル座標）を書き換えるので、後に続く投影・影・霧の計算はそのまま使える。
 // withNormal: 押し付けられた面の向きを球の面の向きへ寄せる（陰影がある材質だけ）
@@ -172,21 +199,23 @@ function buildingDeform(withNormal) {
 
 // 種類ごとのファサード（窓の格子）の決め方。単位は m。
 export const FACADE = {
-  house: { bay: 3.4, floor: 2.9, ground: 0.8, corner: 0.9, top: 0.9, wx: 0.42, wy: 0.46, refl: 0.30, lit: 0.60, shop: 0.0, glass: [0.10, 0.11, 0.14] },
-  office: { bay: 3.1, floor: 3.6, ground: 4.6, corner: 1.2, top: 1.4, wx: 0.66, wy: 0.52, refl: 0.55, lit: 0.50, shop: 0.65, glass: [0.08, 0.11, 0.17] },
+  house: { bay: 2.8, floor: 2.9, ground: 0.8, corner: 0.9, top: 0.9, wx: 0.42, wy: 0.46, refl: 0.30, lit: 0.60, shop: 0.0, glass: [0.10, 0.11, 0.14] },
+  office: { bay: 2.7, floor: 3.4, ground: 4.6, corner: 1.2, top: 1.4, wx: 0.66, wy: 0.52, refl: 0.55, lit: 0.50, shop: 0.65, glass: [0.08, 0.11, 0.17] },
   tower: { bay: 1.7, floor: 3.9, ground: 6.0, corner: 0.8, top: 3.0, wx: 0.86, wy: 0.74, refl: 0.85, lit: 0.42, shop: 0.8, glass: [0.06, 0.12, 0.17] },
 };
 const f = (x) => Number(x).toFixed(4);
 
+// S7: 部品は地面から浮いた段（instanceMatrix の y）にも置く。窓の格子・足元の暗さは地面からの高さで決める（段をまたいで階がそろう）
 const BUILDING_VERTEX = /* glsl */`
 #include <begin_vertex>
+transformed = shapeShear(transformed);
 {
-  vec3 bS = vec3(1.0); vec2 bO = vec2(0.0);
+  vec3 bS = vec3(1.0); vec2 bO = vec2(0.0); float bY = 0.0;
   #ifdef USE_INSTANCING
     bS = vec3(length(instanceMatrix[0].xyz), length(instanceMatrix[1].xyz), length(instanceMatrix[2].xyz));
-    bO = instanceMatrix[3].xz;
+    bO = instanceMatrix[3].xz; bY = instanceMatrix[3].y;
   #endif
-  vSize = bS; vB = position * bS; vObjN = normal;
+  vSize = bS + vec3(0.0, bY, 0.0); vB = transformed * bS + vec3(0.0, bY, 0.0); vObjN = normal; vShaped = aShape.x;
   vSeed = hash12(bO * 0.137 + 3.1);
   vPress = 0.0;
 }
@@ -210,6 +239,14 @@ float glassM = 0.0; vec3 winEmis = vec3(0.0);
   vec3 wall = diffuseColor.rgb * ao * lift;
 
   vec2 fu = abs(n.x) > 0.5 ? vec2(vB.z * sign(n.x), vB.y) : vec2(-vB.x * sign(n.z), vB.y);
+  // S7: 汚れて色あせた壁（雨の筋・しみ・継ぎはぎ）
+  {
+    float streak = vnoise(vec2(fu.x * 0.55 + vSeed * 37.0, vB.y * 0.03 + vSeed * 11.0));
+    float drip = smoothstep(0.5, 0.85, vnoise(vec2(fu.x * 1.9 + vSeed * 5.0, vB.y * 0.11)));
+    float patchv = step(0.8, hash12(floor(vec2(fu.x / 3.3, vB.y / 2.9)) + vSeed * 17.0));
+    wall *= mix(0.74, 1.04, streak) * (1.0 - 0.26 * drip * side);
+    wall = mix(wall, wall * vec3(0.84, 0.9, 0.98) * 1.12, patchv * 0.55 * side);
+  }
   float faceW = abs(n.x) > 0.5 ? vSize.z : vSize.x;
   float usable = faceW - 2.0 * ${f(p.corner)};
   float nb = max(1.0, floor(usable / bay));
@@ -246,7 +283,7 @@ float glassM = 0.0; vec3 winEmis = vec3(0.0);
   float floorLit = hash12(vec2(floor(cy), vSeed * 71.0 + n.x * 5.0 + n.z * 9.0));
   float lit = step(hash12(cell), ${f(p.lit)} * (0.25 + 1.5 * floorLit));
   float warm = hash12(cell + 7.7);
-  vec3 lampC = mix(srgb(vec3(${LAMP_WARM.map(f).join(',')})), srgb(vec3(${LAMP_COOL.map(f).join(',')})), step(0.8, warm)) * (${f(LAMP_VAR[0])} + ${f(LAMP_VAR[1])} * hash12(cell + 3.3));
+  vec3 lampC = mix(srgb(vec3(${LAMP_WARM.map(f).join(',')})), srgb(vec3(${LAMP_COOL.map(f).join(',')})), step(0.64, warm)) * (${f(LAMP_VAR[0])} + ${f(LAMP_VAR[1])} * hash12(cell + 3.3));
   float shopLit = step(hash12(vec2(floor((fu.x + faceW * 0.5) / 4.0), vSeed * 19.0 + n.x * 3.0 + n.z)), ${f(p.shop)});
 
   // ガラス: 暗い地の色に、空をわずかに映す
@@ -270,6 +307,12 @@ float glassM = 0.0; vec3 winEmis = vec3(0.0);
   roofC = mix(srgb(vec3(0.66, 0.62, 0.62)), roofC, smoothstep(0.45, 0.7, edge));
   diffuseColor.rgb = mix(diffuseColor.rgb, roofC, roof);
   glassM *= 1.0 - roof; winEmis *= 1.0 - roof;
+  // 斜めの屋根・とがった頂は暗い金属とガラス（夕空をうっすら映す）
+  if (vShaped > 0.5) {
+    diffuseColor.rgb = mix(diffuseColor.rgb, srgb(vec3(0.17, 0.19, 0.25)), roof);
+    winEmis += roof * skyColor(normalize(vec3(R.x, 0.12, R.z))) * 0.22;
+    glassM = max(glassM, roof * 0.7);
+  }
 
   // 球の面に押し付けられたところは焦げて暗く、球の熱で赤く光る
   diffuseColor.rgb *= mix(1.0, 0.6, vPress);
@@ -285,10 +328,11 @@ function makeBuildingMaterial(kind, uniforms) {
     patchCommon(shader, uniforms);
     patchDeform(shader, uniforms);
     shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', '#include <common>\nvarying vec3 vB; flat varying vec3 vSize; varying vec3 vObjN; flat varying float vSeed; varying float vPress;\nfloat hash12(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }\n' + DEFORM_VERT_PARS)
+      .replace('#include <common>', '#include <common>\nvarying vec3 vB; flat varying vec3 vSize; varying vec3 vObjN; flat varying float vSeed; varying float vPress; flat varying float vShaped;\nfloat hash12(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }\n' + DEFORM_VERT_PARS + SHAPE_VERT_PARS)
       .replace('#include <begin_vertex>', BUILDING_VERTEX + buildingDeform(true));
     shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', '#include <common>\nvarying vec3 vB; flat varying vec3 vSize; varying vec3 vObjN; flat varying float vSeed; varying float vPress;\nuniform float uHeat;')
+      .replace('#include <common>', '#include <common>\nvarying vec3 vB; flat varying vec3 vSize; varying vec3 vObjN; flat varying float vSeed; varying float vPress; flat varying float vShaped;\nuniform float uHeat;')
+      .replace('#include <normal_fragment_begin>', '#include <normal_fragment_begin>\nif (vShaped > 0.5 && vObjN.y > 0.5) normal = normalize(cross(dFdx(vViewPosition), dFdy(vViewPosition)));')
       .replace('#include <color_fragment>', buildingFragment(p))
       .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = mix(roughnessFactor, 0.18, glassM);')
       .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += winEmis;');
@@ -303,8 +347,8 @@ function makeBuildingDepthMaterial(uniforms) {
   mat.onBeforeCompile = (shader) => {
     patchDeform(shader, uniforms);
     shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', '#include <common>\n' + DEFORM_VERT_PARS)
-      .replace('#include <begin_vertex>', '#include <begin_vertex>\n' + buildingDeform(false));
+      .replace('#include <common>', '#include <common>\n' + DEFORM_VERT_PARS + SHAPE_VERT_PARS)
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\ntransformed = shapeShear(transformed);\n' + buildingDeform(false));
   };
   mat.customProgramCacheKey = () => 'building-depth';
   return mat;
@@ -513,9 +557,10 @@ function makeOutlineMaterial(uniforms) {
       uniform float uWidth;
       varying vec3 vFogW;
       ${DEFORM_VERT_PARS}
+      ${SHAPE_VERT_PARS}
       void main() {
         vec3 s = vec3(1.0); vec3 o = vec3(0.0);
-        vec3 transformed = position;
+        vec3 transformed = shapeShear(position);
         ${buildingDeform(false)}
         #ifdef USE_INSTANCING
           s = vec3(length(instanceMatrix[0].xyz), length(instanceMatrix[1].xyz), length(instanceMatrix[2].xyz));
@@ -551,8 +596,9 @@ function makePlanarShadowMaterial(uniforms) {
       uniform vec3 uSun;
       varying float vFade;
       ${DEFORM_VERT_PARS}
+      ${SHAPE_VERT_PARS}
       void main() {
-        vec3 transformed = position;
+        vec3 transformed = shapeShear(position);
         ${buildingDeform(false)}
         vec4 wp = vec4(transformed, 1.0);
         #ifdef USE_INSTANCING
@@ -566,7 +612,8 @@ function makePlanarShadowMaterial(uniforms) {
       }`,
     fragmentShader: /* glsl */`
       varying float vFade;
-      void main() { gl_FragColor = vec4(0.10, 0.08, 0.22, 0.50 * vFade); }`,
+      // 暗めの夕方の地面（線形で 0.1 前後）より暗い藍で落とす（S7: 足元が広く高いビルが増え、影が道を広く覆うので、明るい色だと道が藤色に浮いた）
+      void main() { gl_FragColor = vec4(0.035, 0.03, 0.08, 0.50 * vFade); }`,
   });
 }
 
@@ -613,10 +660,153 @@ function makeSky(uniforms) {
   return sky;
 }
 
+// S7: 屋上・壁の飾り（インスタンスの色を掛ける）。ビルと一緒に球の線に沿ってつぶれる（回した箱なので CRUSH_ROT_VERTEX）
+// 数が多く小さいので、軽い Lambert の陰影で描く（霞は同じ）
+function makeClutterMaterial(uniforms) {
+  const mat = new THREE.MeshLambertMaterial({ color: 0xffffff });
+  mat.onBeforeCompile = (shader) => {
+    patchCommon(shader, uniforms);
+    patchDeform(shader, uniforms);
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\n' + DEFORM_VERT_PARS)
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\n' + CRUSH_ROT_VERTEX);
+  };
+  mat.customProgramCacheKey = () => 'clutter';
+  return mat;
+}
+
+// S7: 看板・提灯・ネオン管（1 つの InstancedMesh、1 回の描画）。絵柄はアトラス（signAtlas.js）から。
+// aTile: アトラスの UV の矩形（u0, v0, du, dv）、aSign: x = ちらつきの強さ、y = 位相、z = 明るさ、w = 描き方
+//   （0: 表と裏の面だけ絵柄、1: 横の 4 面に絵柄（提灯）、2: 全部の面がネオン管）。instanceColor: ネオンの色（sRGB）。
+// ちらつき（uSignFlicker。low の段では 0）は時刻と位相だけで決める。球が近づくと電気が乱れて明滅し、
+// つぶれ始める（aCrush）か球の面に押し付けられると、激しく明滅してから消える。
+let atlasTexture = null;
+export function signAtlasTexture() {
+  if (atlasTexture) return atlasTexture;
+  const a = buildSignAtlas();
+  const tex = new THREE.DataTexture(a.data, a.size, a.size, THREE.RGFormat, THREE.UnsignedByteType);
+  tex.generateMipmaps = true;
+  tex.minFilter = THREE.LinearMipmapLinearFilter;
+  tex.magFilter = THREE.LinearFilter;
+  tex.anisotropy = 4;
+  tex.needsUpdate = true;
+  return (atlasTexture = tex);
+}
+
+// 明るさ: bloom のある段は閾値を超えてにじむ。bloom のない low は、トーンマップで白く飛ばないよう控えめに（色が残る）
+export const SIGN_GAIN = { bloom: 2.1, plain: 0.85 };
+export const POOL_GAIN = { bloom: 0.75, plain: 0.6 };
+
+function makeSignMaterial(uniforms) {
+  return new THREE.ShaderMaterial({
+    uniforms: {
+      uSunDir: uniforms.uSunDir, uSkySun: uniforms.uSkySun, uFogStart: uniforms.uFogStart,
+      uFronts: uniforms.uFronts, uFrontCount: uniforms.uFrontCount, uTime: uniforms.uTime,
+      uFlicker: uniforms.uSignFlicker, uGain: uniforms.uSignGain, uAtlas: { value: signAtlasTexture() },
+    },
+    vertexShader: /* glsl */`
+      attribute vec4 aTile;
+      attribute vec4 aSign;
+      varying vec2 vUv; varying vec3 vCol; flat varying vec4 vTile; flat varying vec4 vSign; flat varying float vFace;
+      varying float vLife; varying float vSurge; varying vec3 vFogW;
+      ${DEFORM_VERT_PARS}
+      void main() {
+        vec3 w0 = (instanceMatrix * vec4(position, 1.0)).xyz;
+        float ck = aCrush.y > 0.0 ? clamp((uTime - aCrush.x) / aCrush.y, 0.0, 1.0) : 0.0;
+        vec3 sq = crushSquash(w0, ck);
+        vec3 w1 = deformPoint(sq);
+        float pushed = length(w1 - sq);
+        vLife = 1.0 - smoothstep(0.08, 0.7, max(ck, smoothstep(0.0, 5.0, pushed)));
+        float F = 0.0;
+        for (int i = 0; i < ${MAX_FRONTS}; i++) { if (i >= uFrontCount) break; F = max(F, uFronts[i]); }
+        vSurge = F > 0.0 ? 1.0 - smoothstep(0.0, 70.0, length(instanceMatrix[3].xyz) - F) : 0.0;
+        vUv = uv; vTile = aTile; vSign = aSign;
+        #ifdef USE_INSTANCING_COLOR
+          vCol = instanceColor;
+        #else
+          vCol = vec3(1.0);
+        #endif
+        vec3 an = abs(normal);
+        vFace = an.z > 0.5 ? 1.0 : an.x > 0.5 ? 2.0 : 0.0;
+        vFogW = w1;
+        gl_Position = projectionMatrix * viewMatrix * vec4(w1, 1.0);
+      }`,
+    fragmentShader: GLSL_COMMON + /* glsl */`
+      uniform sampler2D uAtlas;
+      uniform float uFlicker, uGain, uTime;
+      varying vec2 vUv; varying vec3 vCol; flat varying vec4 vTile; flat varying vec4 vSign; flat varying float vFace;
+      varying float vLife; varying float vSurge;
+      float h11(float x) { return fract(sin(x * 12.9898) * 43758.5453); }
+      void main() {
+        float mode = vSign.w, core = 0.0, halo = 0.0;
+        if (mode > 1.5) { core = 1.0; halo = 1.0; }
+        else if (vFace > 0.5 && (vFace < 1.5 || mode > 0.5)) {
+          vec2 g = texture2D(uAtlas, vTile.xy + clamp(vUv, 0.01, 0.99) * vTile.zw).rg;
+          core = g.r; halo = g.g;
+        }
+        vec3 c = srgb(vCol);
+        float ph = vSign.y * 97.0;
+        // ちらつき: 速いジジッという明滅と、ときどき一瞬消える
+        float buzz = mix(1.0, step(0.25, h11(floor(uTime * 15.0 + ph))) * (0.82 + 0.18 * sin(uTime * 63.0 + ph)), vSign.x);
+        float outage = 1.0 - vSign.x * step(fract(uTime * 0.21 + vSign.y), 0.06);
+        float fl = mix(1.0, buzz * outage, uFlicker);
+        // 球が近い・つぶれていく: 激しい明滅
+        float dying = max(vSurge * 0.85, step(vLife, 0.985));
+        fl *= mix(1.0, step(0.42, h11(floor(uTime * 24.0 + ph * 3.0))), dying);
+        float lit = vLife * fl;
+        vec3 board = c * 0.035 + vec3(0.018, 0.016, 0.022);
+        vec3 neon = (c * (core * 0.95 + halo * 0.42) + vec3(core) * 0.18) * uGain * vSign.z;
+        vec3 col = mix(board, vec3(0.0), core) + neon * lit;
+        col = applyFog(col, vFogW);
+        gl_FragColor = vec4(col, 1.0);
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
+      }`,
+  });
+}
+
+// S7: 店先の光が道に落とす色の溜まり（加算の板。インスタンスの色、ビルがつぶれ始めると消えていく）
+function makeNeonPoolMaterial(uniforms) {
+  return new THREE.ShaderMaterial({
+    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+    polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3,
+    uniforms: { uTime: uniforms.uTime, uGain: uniforms.uPoolGain },
+    vertexShader: /* glsl */`
+      uniform float uTime;
+      attribute vec2 aCrush;
+      varying vec2 vUv; varying vec3 vCol; varying float vLife;
+      void main() {
+        vUv = uv * 2.0 - 1.0;
+        float ck = aCrush.y > 0.0 ? clamp((uTime - aCrush.x) / aCrush.y, 0.0, 1.0) : 0.0;
+        vLife = 1.0 - smoothstep(0.0, 0.5, ck);
+        #ifdef USE_INSTANCING_COLOR
+          vCol = instanceColor;
+        #else
+          vCol = vec3(1.0);
+        #endif
+        gl_Position = projectionMatrix * modelViewMatrix * instanceMatrix * vec4(position, 1.0);
+      }`,
+    fragmentShader: /* glsl */`
+      uniform float uGain;
+      varying vec2 vUv; varying vec3 vCol; varying float vLife;
+      void main() {
+        // 壁の側（vUv.y = 1）が明るく、道の方へ薄れる
+        float across = 1.0 - smoothstep(0.55, 1.0, abs(vUv.x));
+        float t = (1.0 - vUv.y) * 0.5; // 0: 壁の足元、1: 道の先
+        float along = pow(1.0 - smoothstep(0.0, 1.0, t), 1.5);
+        float k = across * along;
+        gl_FragColor = vec4(pow(vCol, vec3(2.2)) * k * uGain * vLife, 1.0);
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
+      }`,
+  });
+}
+
+// S7: 汚れて色あせたコンクリート・タイル（九龍城寄りの薄い緑・水色・黄土も混ぜる）
 const KIND_COLORS = {
-  house: ['#efe3cf', '#e9d2b4', '#d8c7b8', '#c9a58b', '#f2ede4', '#c7cfd6', '#d9b9a3'],
-  office: ['#d9d4cb', '#c8c4bd', '#e6dfd2', '#b9b8b4', '#cdbfa9', '#bfc6c4', '#e2d6c0'],
-  tower: ['#8d97a3', '#7d8a90', '#9aa2a8', '#6f7a86', '#a59b8f', '#8a9a9c'],
+  house: ['#b8ae9c', '#a9a493', '#9fa69c', '#b2a08b', '#a7b0a8', '#c0b49c', '#9c9488', '#b5a99a', '#a4aab0'],
+  office: ['#aaa597', '#9d9b92', '#b3ab9a', '#94988f', '#a6998a', '#98a3a2', '#b0a690', '#8f948f'],
+  tower: ['#7f8893', '#717c82', '#8c9298', '#646e7a', '#968d82', '#7d8c8e', '#5f6670'],
 };
 
 export function createStyle(tierName) {
@@ -628,6 +818,10 @@ export function createStyle(tierName) {
     // 爆発の球（cityView.update が毎フレーム書く）
     uFronts: { value: new Float32Array(MAX_FRONTS) }, uFrontCount: { value: 0 }, uTime: { value: 0 },
     uHeat: { value: 0 }, uEmber: { value: 0 }, uCrater: { value: 0 }, uRingStep: { value: 1 },
+    // 看板のちらつき（low の段は 0）と明るさ（bloom のある段は閾値を超える）。段が下がったら setSignTier で合わせる
+    uSignFlicker: { value: tierName === 'low' ? 0 : 1 },
+    uSignGain: { value: tier.bloom ? SIGN_GAIN.bloom : SIGN_GAIN.plain },
+    uPoolGain: { value: tier.bloom ? POOL_GAIN.bloom : POOL_GAIN.plain },
   };
 
   const sun = new THREE.DirectionalLight(SUN_COLOR, SUN_INTENSITY);
@@ -670,6 +864,16 @@ export function createStyle(tierName) {
       signPanel: makeGlowMaterial('sign', uniforms, { color: 0xffffff }),
       beacon: makeGlowMaterial('beacon', uniforms, { color: new THREE.Color(1.0, 0.15, 0.1).multiplyScalar(2.0) }),
       lampPool: makeLampPoolMaterial(),
+      clutter: makeClutterMaterial(uniforms),
+      sign: makeSignMaterial(uniforms),
+      neonPool: makeNeonPoolMaterial(uniforms),
+    },
+    // 画質の段が下がったとき、看板のちらつきと明るさを合わせる
+    setSignTier(t) {
+      const T = TIERS[t] ?? TIERS.mid;
+      uniforms.uSignFlicker.value = t === 'low' ? 0 : 1;
+      uniforms.uSignGain.value = T.bloom ? SIGN_GAIN.bloom : SIGN_GAIN.plain;
+      uniforms.uPoolGain.value = T.bloom ? POOL_GAIN.bloom : POOL_GAIN.plain;
     },
     // 軍勢・主人公の陰影の色（enemyView の uniform。材質どうしで共有しているので値だけ書き換える）を夕方の光に合わせる
     // t: 画質の段（省けば作ったときの段）。途中で段が下がったときは、その段を渡して合わせ直す

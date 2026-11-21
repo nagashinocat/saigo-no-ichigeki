@@ -85,3 +85,82 @@ test('広場のまわりの建物は高さがばらつき、広場に面する�
     expect(new Set(near).size).toBeGreaterThanOrEqual(6); // 同じ高さが並ばない
   }
 });
+
+// S7（持ち主 2026-11-21 13:13 / 13:16）: ビルの形の幅（細い塔・段々・横長・低い商店の並び・斜めの屋根・目印の超高層）
+import { GRID, ARCHETYPES } from '../../src/world/cityGen.js';
+
+const lotOf = (b) => [Math.round(b.x / GRID.PITCH) * GRID.PITCH, Math.round(b.z / GRID.PITCH) * GRID.PITCH];
+
+test('S7: どのシードでも形の種類がそろい、目印の超高層が 2〜4 本', () => {
+  for (const seed of [1, 2, 3, 7, 42]) {
+    const bs = generateCity(seed).buildings;
+    const count = Object.fromEntries(ARCHETYPES.map((a) => [a, bs.filter((b) => b.arch === a).length]));
+    for (const a of ARCHETYPES) if (a !== 'landmark') expect(count[a], `${seed} ${a}`).toBeGreaterThanOrEqual(15);
+    expect(count.landmark).toBeGreaterThanOrEqual(2);
+    expect(count.landmark).toBeLessThanOrEqual(4);
+    const lm = bs.filter((b) => b.arch === 'landmark');
+    const others = bs.filter((b) => b.arch !== 'landmark');
+    for (const b of lm) expect(b.h).toBeGreaterThan(1.3 * Math.max(...others.map((o) => o.h)));
+  }
+});
+
+test('S7: 高さにはっきりした差（標準偏差 / 平均 > 0.35）、遠くでも低いビルの隣に高いビル', () => {
+  for (const seed of [1, 2, 3, 7, 42]) {
+    const bs = generateCity(seed).buildings;
+    const h = bs.map((b) => b.h), m = avg(h);
+    const sd = Math.sqrt(avg(h.map((x) => (x - m) ** 2)));
+    expect(sd / m).toBeGreaterThan(0.35);
+    // 広場から 120〜300m の帯でも、ばらつきが大きい（同じ高さの箱が並ばない）
+    const band = bs.filter((b) => b.dist > 120 && b.dist < 300 && b.arch !== 'landmark').map((b) => b.h);
+    const bm = avg(band);
+    expect(Math.sqrt(avg(band.map((x) => (x - bm) ** 2))) / bm).toBeGreaterThan(0.45);
+    expect(band.filter((x) => x < 15).length).toBeGreaterThan(10);
+    expect(band.filter((x) => x > 60).length).toBeGreaterThan(10);
+  }
+});
+
+test('S7: 足元は区画（道路の内側）に収まり、道路の格子はあいたまま。部品は建物の箱の内に収まる', () => {
+  const { BLOCK } = GRID;
+  for (const seed of [1, 7, 42]) {
+    for (const b of generateCity(seed).buildings) {
+      const [cx, cz] = lotOf(b);
+      expect(Math.abs(b.x - cx) + b.w / 2).toBeLessThanOrEqual(BLOCK / 2 + 1e-6);
+      expect(Math.abs(b.z - cz) + b.d / 2).toBeLessThanOrEqual(BLOCK / 2 + 1e-6);
+      expect(b.parts.length).toBeGreaterThanOrEqual(1);
+      let top = 0;
+      for (const p of b.parts) {
+        expect(Math.abs(p.x) + p.w / 2).toBeLessThanOrEqual(b.w / 2 + 1e-6);
+        expect(Math.abs(p.z) + p.d / 2).toBeLessThanOrEqual(b.d / 2 + 1e-6);
+        expect(p.y).toBeGreaterThanOrEqual(0);
+        expect(p.h).toBeGreaterThan(0);
+        top = Math.max(top, p.y + p.h);
+      }
+      expect(top).toBeCloseTo(b.h, 6);
+      expect(b.parts.some((p) => p.y === 0)).toBe(true); // 地面に立つ
+    }
+  }
+});
+
+test('S7: 広場の近く（見つける距離の内）の建物の足元は前と同じ（見通しと釣り合いを変えない）', () => {
+  // 前の街（S6 まで）の足元: 乱数の引き方は変えず、形の種類は別の乱数で決める
+  const near = generateCity(7).buildings.filter((b) => b.dist < 60);
+  expect(near.length).toBeGreaterThan(0);
+  const base = generateCity(7, undefined, { variety: false }).buildings;
+  expect(near.length).toBe(base.filter((b) => b.dist < 60).length);
+  for (const b of near) {
+    const o = base.find((x) => Math.hypot(x.x - b.x, x.z - b.z) < 1e-9); // 外であいた区画を埋めるので番号はずれる
+    expect([b.x, b.z, b.w, b.d]).toEqual([o.x, o.z, o.w, o.d]);
+  }
+});
+
+test('S7: 街の広さと区画の数は引数で変えられる（後の大きな街・高架の通り道のため）', () => {
+  const small = generateCity(5, undefined, { radius: 200 });
+  expect(Math.max(...small.buildings.map((b) => b.dist))).toBeLessThanOrEqual(200);
+  const big = generateCity(5, undefined, { radius: 600 });
+  expect(big.buildings.length).toBeGreaterThan(generateCity(5).buildings.length);
+  expect(Math.max(...big.buildings.map((b) => b.dist))).toBeGreaterThan(450);
+  // 通り道の予約: その帯にかかる区画には建物を置かない
+  const res = generateCity(5, undefined, { corridors: [{ axis: 'z', at: 6.5 * GRID.PITCH, half: GRID.PITCH / 2 }] });
+  for (const b of res.buildings) expect(Math.abs(b.x - 6.5 * GRID.PITCH)).toBeGreaterThan(GRID.PITCH / 2 - b.w / 2 - 1e-6);
+  expect(res.buildings.length).toBeLessThan(generateCity(5).buildings.length);
+});
