@@ -39,7 +39,7 @@ void main() {
 }`;
 
 const SPHERE_FRAG = /* glsl */`
-uniform float uTime, uSeed, uRadius, uFade, uBirth, uScale, uCoreK;
+uniform float uTime, uSeed, uRadius, uFade, uBirth, uScale, uCoreK, uWall;
 uniform vec3 uCore, uDeep, uInner, uBand, uRimA, uRimB;
 varying vec3 vWorld;
 varying vec3 vDir;
@@ -98,6 +98,8 @@ void main() {
   // 消えるとき: 表面がノイズでほどけていく
   float keep = uFade >= 0.999 ? 1.0 : smoothstep(1.0 - uFade - 0.12, 1.0 - uFade + 0.12, plasma * 0.85 + mu * 0.25);
   float k = keep * uFade;
+  // R0b fix3: 光の壁（uWall 1）: 不透明。中の街（球の面へ押されたビル）は透けない
+  a = mix(a, 1.0, uWall);
   vec3 outC = col * a + vec3(0.8, 0.92, 1.0) * line * 2.4;
   gl_FragColor = vec4(outC * k, a * k);
   #include <tonemapping_fragment>
@@ -143,6 +145,16 @@ export function sphereFade(age, cfg = CONFIG) {
   return 1 - k * k * (3 - 2 * k);
 }
 
+// R0b fix3: 光の壁の半径。多角形の球（横 widthSegments・縦 heightSegments、縦の範囲 thetaLength）の面は、本当の球より
+// 最大で（横と縦の弦の矢の和）だけ内にある。球の面へ押されたビル（ちょうど前線 F の上）がその面から出ないよう、矢の分と WALL_PAD m 外へ
+export const WALL_PAD = 0.3;
+export function wallSag({ widthSegments, heightSegments, thetaLength }) {
+  return (1 - Math.cos(Math.PI / widthSegments)) + (1 - Math.cos(thetaLength / heightSegments / 2));
+}
+export function wallRadius(F, geo) {
+  return (F + WALL_PAD) / (1 - wallSag(geo));
+}
+
 export function createExplosionView(scene, tierName, { sunDir = null, seed = 7 } = {}) {
   const tier = TIERS[tierName] ?? TIERS.mid;
   const rng = createRng(seed ^ 0xe7b1a5);
@@ -172,7 +184,7 @@ export function createExplosionView(scene, tierName, { sunDir = null, seed = 7 }
 
   function makeSphere() {
     const uniforms = {
-      uTime: { value: 0 }, uSeed: { value: 0 }, uRadius: { value: 1 }, uFade: { value: 1 }, uBirth: { value: 0 }, uScale: { value: 3 }, uCoreK: { value: 1 },
+      uTime: { value: 0 }, uSeed: { value: 0 }, uRadius: { value: 1 }, uFade: { value: 1 }, uBirth: { value: 0 }, uScale: { value: 3 }, uCoreK: { value: 1 }, uWall: { value: 0 },
       ...sharedColors,
     };
     const mat = new THREE.ShaderMaterial({
@@ -204,6 +216,7 @@ export function createExplosionView(scene, tierName, { sunDir = null, seed = 7 }
 
   let time = 0, flash = 0, shake = 0;
   let birthK = 1; // 弾けた瞬間に球が白く飛ぶ強さの倍率（R0b: 遠くの軍勢の後ろのカットでは弱める。setBirthScale）
+  let wallK = 0;  // R0b fix3: 光の壁（不透明な球。setWall）
   let coreK = 1;  // 球の真ん中の白い芯の強さの倍率（R0b fix1: 爆心を見ながら球に迫ると、芯が画面の真ん中を白く飛ばす。setCoreScale）
   // 毎フレーム作り直さず、中身だけ書き換えて返す
   const cameraInfo = { front: 0, shake: 0 };
@@ -304,10 +317,14 @@ export function createExplosionView(scene, tierName, { sunDir = null, seed = 7 }
         s.ringFront = s.done ? Math.max(s.ringFront, s.radius * RING_AHEAD) + DONE_RING_SPEED * dt : r * RING_AHEAD + 2;
         // 小爆発の衝撃波は、届いた先（軍勢を払える範囲）より外では土煙を立てない
         if (s.ringFront > prevRing && fade > 0.4 && !(s.small && s.done)) ringDust(s, s.ringFront - prevRing);
-        s.mesh.scale.setScalar(r * pulse);
+        // R0b fix3: 光の壁のときは不透明で深さを書き、前線より wallPad だけ外に置く（球の面へ押されたビルが多角形の球の面から出ない）
+        const rw = wallK > 0 ? wallRadius(r * pulse, sphereGeo.parameters) : r * pulse;
+        s.mesh.scale.setScalar(rw);
+        s.mesh.material.depthWrite = wallK > 0;
         const u = s.uniforms;
         u.uTime.value = time;
-        u.uRadius.value = r * pulse;
+        u.uWall.value = wallK;
+        u.uRadius.value = rw;
         u.uFade.value = fade;
         u.uCoreK.value = coreK;
         u.uBirth.value = birthK * (s.burst ? 1 : 0.3) * Math.exp(-(s.burst ? s.burstAge : s.age) / (s.burst ? BURST_FLARE_SEC : 0.12));
@@ -378,6 +395,11 @@ export function createExplosionView(scene, tierName, { sunDir = null, seed = 7 }
     // R0b: 弾けた瞬間に球全体が白く飛ぶ強さ（uBirth）の倍率。カメラのそばまで迫る大きな球が白く飛ぶと、bloom で画面全体が白い膜になる
     setBirthScale(k) { birthK = k; },
     setCoreScale(k) { coreK = k; },
+    // R0b fix3: 遠くの軍勢の後ろのカット（カメラは球の外）の間、球を不透明な光の壁にする（1）。球の面へ押されて柱や箱になったビルは
+    // 壁の中に隠れ、乗り手は明るい壁を背にした黒い影になる
+    setWall(k) { wallK = k > 0 ? 1 : 0; },
+    get wall() { return wallK; },
+    get sphereParams() { return sphereGeo.parameters; },
     get busy() { return flash > 0 || spheres.some((s) => s.active) || vapor.busy(time); },
     // 上空カメラへ: 見えている球の一番大きい半径・揺れ (rad)
     get cameraInfo() { return cameraInfo; },

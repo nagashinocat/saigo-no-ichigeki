@@ -212,3 +212,48 @@ test('小爆発（shot.small）は街の画面を白く飛ばさない: 閃光�
   expect(puff.flash).toBeLessThan(0.3);
   expect(puff.shake).toBeLessThan(plain.shake * 0.5);
 });
+
+// R0b fix3（遠くの軍勢の後ろのカット）: 球を不透明な光の壁にする。球の面へ押されたビル（ちょうど前線 F の上。sphereDeform）は、
+// 多角形の球の面のどこよりも内にあり、カメラ（球の外）からは壁の中に隠れる
+test('fix3 光の壁: setWall(1) の間は球が不透明（uWall 1）で深さを書き、多角形の球の面のいちばん内（弦の矢の分）でも前線 F の外。setWall(0) で元に戻る', async () => {
+  const { wallRadius, wallSag, WALL_PAD } = await import('../../src/render/explosionView.js');
+  const { deformPoint } = await import('../../src/render/sphereDeform.js');
+  for (const tier of ['low', 'mid', 'high']) {
+    const { scene, view } = make(tier);
+    const geo = view.sphereParams;
+    const list = [{ id: 1, shot: shot(400), front: 0 }];
+    run(view, list, 1.2);
+    const F = list[0].front;
+    const mesh = [];
+    scene.traverse((o) => { if (o.material?.uniforms?.uWall && o.visible) mesh.push(o); });
+    expect(mesh).toHaveLength(1);
+    expect(mesh[0].material.uniforms.uWall.value).toBe(0);
+    expect(mesh[0].material.depthWrite).toBe(false);
+    view.setWall(1);
+    view.update(0, list, camera, 500);
+    const m = mesh[0];
+    expect(m.material.uniforms.uWall.value).toBe(1);
+    expect(m.material.depthWrite).toBe(true);
+    const R = m.scale.x;
+    expect(R).toBeCloseTo(wallRadius(F, geo), 6);
+    // 多角形の面の、中心からいちばん近い所（横と縦の弦の矢）でも F + WALL_PAD より外
+    expect(R * (1 - wallSag(geo))).toBeGreaterThanOrEqual(F + WALL_PAD - 1e-6);
+    // 実際の多角形の面の中心（三角形の重心）も F の外
+    const pos = new THREE.SphereGeometry(1, geo.widthSegments, geo.heightSegments, 0, Math.PI * 2, 0, geo.thetaLength);
+    const p = pos.attributes.position, idx = pos.index;
+    let minC = Infinity;
+    for (let i = 0; i < idx.count; i += 3) {
+      const c = new THREE.Vector3();
+      for (let k = 0; k < 3; k++) c.add(new THREE.Vector3().fromBufferAttribute(p, idx.getX(i + k)));
+      minC = Math.min(minC, c.multiplyScalar(R / 3).length());
+    }
+    expect(minC).toBeGreaterThan(F);
+    // 球の中の点は、押されてちょうど F の上（壁の内）
+    for (const q of [[F * 0.5, 10, 3], [F * 0.9, F * 0.3, -5]]) expect(Math.hypot(...deformPoint(q, [F]))).toBeCloseTo(F, 6);
+    view.setWall(0);
+    view.update(0, list, camera, 500);
+    expect(m.material.uniforms.uWall.value).toBe(0);
+    expect(m.material.depthWrite).toBe(false);
+    expect(m.scale.x).toBeLessThan(F * 1.1);
+  }
+});

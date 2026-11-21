@@ -18,7 +18,7 @@ import { buildHeroBody, createHeroBodyBuilder } from './render/heroBody.js';
 import { createRiderBodyBuilder } from './render/riderBody.js';
 import { createBodyPrep } from './render/bodyPrep.js';
 import { createCinematic, leadFor } from './render/cinematic.js';
-import { planFinale, planRetreat } from './render/finalePlan.js';
+import { planFinale, snapshotEnemies, planRetreat } from './render/finalePlan.js';
 import { createReplay } from './render/replay.js';
 import { createBlackhole } from './render/blackhole.js';
 import { createReplaySim, replayTargets } from './game/replaySim.js';
@@ -399,12 +399,15 @@ let finalBlastSize = 0;
 const transitObs = game.city.transit ? transitObstacles(game.city.transit) : [];
 game.on('cinematicStart', (shot) => {
   takeReplaySnapshot(shot);
-  // fix2: 撮る場所（planFinale）は放つ瞬間（両手が玉を握り込む一拍）ではなく、画面が真っ白になった最初のフレームで決める
-  // （cinematic.play に関数で渡す。両手の間はゲームが進まないので、同じ答え）。重い逃げる道の計算はスローでふくらむ間に回す
+  // fix3: 撮る場所（planFinale）は放つ瞬間（両手が玉を握り込む一拍）ではなく、白を描いた次のフレームで決める（重い計算の間、
+  // 画面は白のまま）。白の間にゲームは進むので、放つ瞬間の軍勢の写しから決める（どの fps でも同じ答え）。
+  // 重い逃げる道の計算はスローでふくらむ間に回す
   const buildings = game.city.buildings.filter((b) => standing.has(b.id)), crater = fronts.crater, lead = leadFor(shot.radius);
+  const enemiesAtRelease = snapshotEnemies(game.enemies.list);
+  const props = cityView.roofProps.filter((o) => standing.has(o.bid)); // 屋上の飾り（撮る一人の背後に飾りがない所を選ぶ）
   finalBlastSize = Math.sqrt(shot.radius / CONFIG.radius.max);
   // 逃げる道は高架の橋桁もよける（S8）
-  cinematic.play(() => planFinale({ shot, rng: shotRng, crater, lead, buildings, enemies: game.enemies.list, retreat: false }), shot,
+  cinematic.play(() => planFinale({ shot, rng: shotRng, crater, lead, buildings, enemies: enemiesAtRelease, props, retreat: false }), shot,
     { buildings, enemies: () => game.enemies.list, retreat: () => planRetreat(cinematic.plan, { buildings: [...buildings, ...transitObs], crater, radius: shot.radius, lead }) });
 });
 game.on('cinematicEnd', () => cinematic.end());
@@ -615,6 +618,7 @@ function simulate(dt) {
   const wdt = cinematic.active ? cinematic.worldDt : dt;
   explosionView.setBirthScale(cinematic.active ? cinematic.blastBirthScale : 1);
   explosionView.setCoreScale(cinematic.active ? cinematic.blastCoreScale : 1);
+  explosionView.setWall(cinematic.active ? cinematic.blastWall : 0); // R0b fix3: 軍勢の後ろのカットの間は不透明な光の壁
   const cam = cityCam();
   const live = game.blasts;
   // 手前の物理は、演出の間は演出のカメラの近くの破片だけ（ふだんは null で全部プール）

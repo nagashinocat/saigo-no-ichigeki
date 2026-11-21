@@ -552,6 +552,18 @@ export function createCityView(city, style, tier) {
       detail = level;
     },
     get detail() { return detail; },
+    // R0b fix3: 屋上の飾りのうち大きなもの（小屋・空調・給水塔など）を、地面からの箱 { bid, x, z, w, d, h } で（最後の一発の撮る場所が、
+    // 手前の撮る一人の背後にこれがないかを見る）
+    get roofProps() {
+      const out = [];
+      for (const b of dress.boxes) {
+        if (b.layer !== 'roof' || b.h < 1.5 || Math.min(b.w, b.d) < 1) continue;
+        const s = Math.max(b.w, b.d);
+        out.push({ bid: b.bid, x: b.x, z: b.z, w: s, d: s, h: b.y + b.h });
+      }
+      for (const t of dress.tanks) out.push({ bid: t.bid, x: t.x, z: t.z, w: 2 * t.r, d: 2 * t.r, h: t.y + t.h + 1.5 });
+      return out;
+    },
     // 初めて描くときに止まらないよう、街の材質を前もって作る（scene: 光の数を合わせるため、街を入れたシーン）。
     // 隠している壁の飾りも作る
     // S8: 最後の一発で差し替える細かい箱の形も、ここで一度だけ 1 画素の的へ描いて GPU へ送っておく（差し替えた瞬間に止まらない）
