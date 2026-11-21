@@ -113,7 +113,7 @@ function playSession({ hitches = [] } = {}) {
       if (d >= 0.25 && !boomed.has(id)) { boomed.add(id); audio.boom(PUFF_K); }
     }
     audio.rumble(creeping ? PUFF_K : 0);
-    audio.crumble(0);
+    audio.collapse([]); // main.js と同じ（命中のないフレーム）
     samples.push({ t: now, state: ctx.state, bgm: bgm.state, master: master.gain.at(now), out: out.frequency.at(now), bgmBus: bgmBus.gain.at(now), bgmOut: bgmOut.gain.at(now) });
     el += 1 / FPS;
   }

@@ -6,24 +6,6 @@ export function boomDelay(silenceEnd, now) {
   return Math.max(0, silenceEnd - now);
 }
 
-// 崩落の音の最短の間隔（秒）。毎フレーム何発も重ねると、中くらいの Android で音の部品が百近く同時に鳴ってしまう
-export const CRUMBLE_GAP_SEC = 0.05;
-
-// 崩落の音の間引き: 間隔が空くまでの命中はためておき、次に鳴らす一回にまとめる。take は今鳴らす数（0 なら鳴らさない）
-export function createCrumbleGate(gap = CRUMBLE_GAP_SEC) {
-  let last = -Infinity, pending = 0;
-  return {
-    take(count, now) {
-      pending += Math.max(0, count);
-      if (pending <= 0 || now - last < gap - 1e-9) return 0;
-      last = now;
-      const out = pending;
-      pending = 0;
-      return out;
-    },
-  };
-}
-
 // 最後の天井（リミッター）: 効果音・演出の音・BGM はすべてこれを通ってスピーカーへ。
 // 最高潮の BGM に払うの爆発と貯めの唸りが重なっても 1 を超えず、スマホで割れない（天井 -2 dBFS、強い比、速いアタック）
 export const LIMITER = { threshold: -2, knee: 0, ratio: 20, attack: 0.002, release: 0.2 };
@@ -37,32 +19,41 @@ export const LIMITER = { threshold: -2, knee: 0, ratio: 20, attack: 0.002, relea
 //   taps   遠くのビルから遅れて届く反射音（大きいほど遅く、遠いものほど暗く小さく、左右に散る）
 //   debris 崩れる破片のぱらぱら（衝撃のあとに始まり、だんだん疎らに。粒は重ならない）
 // 時間はすべて爆発の瞬間からの秒。rng は粒と反射音のばらつき（テストで決まった値にする）
-// heavy 0〜1（最後の一発だけ 1。持ち主の要望 09:59「最後の爆発音はもっと重く」）: 立ち上がり（crack・attack）はそのまま鋭く、
-//   低い一打をさらに低く長く、うなりを長く暗く、地響きを厚く（超低域を太く長く）、腹に響く低い正弦波の層（deep）を足す。
+// heavy 0〜1（最後の一発だけ 1。持ち主の要望 09:59「最後の爆発音はもっと重く」）: 立ち上がり（attack）はそのまま鋭く、
+//   低い一打をさらに低く長く強く歪ませ（drive。120〜250 Hz の倍音でスマホでも重い）、80〜180 Hz の胴（body: 下がる正弦波と
+//   帯域ノイズ）を足し、衝撃の 0.15〜0.6 秒あとに圧がふくらむ（swell: うなりと胴を +3 dB、地響きの low-pass を 400 Hz まで開く）。
+//   うなりの尾を長く、地響きを少し厚く、超低域の層（deep）は 30 Hz より上だけ（スマホで鳴らない音でリミッターの余裕を食わない）。
 //   heavy 0 のとき（払う・ふつうの一発）は前と同じ値（乱数の使い方も同じ）
 export function boomRecipe(size, { hold = 0, open = 0, heavy = 0, rng = Math.random } = {}) {
   const s = Math.max(0, Math.min(1, size));
   const h = Math.max(0, hold);
   const hv = Math.max(0, Math.min(1, heavy));
-  const crack = { dur: 0.03 + 0.045 * s, attack: 0.001, hp: 1100 - 650 * s, gain: 0.62 - 0.17 * s };
+  const crack = { dur: 0.03 + 0.045 * s, attack: 0.001, hp: 1100 - 650 * s, gain: (0.62 - 0.17 * s) * (1 - 0.1 * hv) };
   const punch = {
     f0: (150 - 95 * s) * (1 - 0.32 * hv), f1: (48 - 24 * s) * (1 - 0.3 * hv), dur: (0.16 + 0.55 * s) * (1 + 0.7 * hv),
-    attack: 0.003, gain: 0.55 + 0.15 * s + 0.05 * hv,
+    attack: 0.003, gain: 0.55 + 0.15 * s + 0.05 * hv, drive: 2.2 + 1.3 * hv,
   };
   const roarDur = (0.5 + 3.0 * s) * (1 + 0.55 * hv);
   const roar = {
-    dur: roarDur + h, hold: h, open: Math.max(0, open), f0: 5200 - 3000 * s, f1: (170 - 100 * s) * (1 - 0.15 * hv),
+    dur: roarDur + h, hold: h, open: Math.max(0, open), f0: 5200 - 3000 * s, f1: 170 - 100 * s,
     attack: 0.004 + 0.02 * s, gain: 0.34 + 0.2 * s, drop: 0.4, knee: (0.08 + 0.35 * s) * (1 + 0.6 * hv),
     tail: 2.2 * hv, // 重い一発だけ: hold のあと、この秒をかけてゆっくり半分へ（うなりの尾が長く残る）
   };
   const air = { dur: 0.22 + 1.2 * s, freq: 1700 - 800 * s, q: 1.1, attack: 0.002, gain: 0.22 + 0.06 * s };
   const sub = {
-    dur: (0.45 + 4.6 * s ** 1.3) * (1 + 0.4 * hv) + h, hold: h, cutoff: (115 - 60 * s) * (1 - 0.2 * hv),
-    attack: 0.015 + 0.2 * s, gain: (0.3 + 0.6 * s) * (1 + 0.4 * hv),
+    dur: (0.45 + 4.6 * s ** 1.3) * (1 + 0.4 * hv) + h, hold: h, cutoff: 115 - 60 * s,
+    attack: 0.015 + 0.2 * s, gain: (0.3 + 0.6 * s) * (1 + 0.15 * hv),
     wobble: { rate: (6 - 3 * s) * (0.9 + 0.2 * rng()), depth: 0.1 + 0.18 * s },
   };
-  // 腹に響く層: 一打のあとに残る、ゆっくり下がる低い正弦波（軽く歪ませ、倍音でスマホでも重さが聞こえる）
-  const deep = hv > 0 ? { f0: 48 - 6 * s, f1: 26 - 4 * s, dur: 3.4 * hv + 0.4 * Math.min(h, 3), attack: 0.03, gain: 0.5 * hv } : null;
+  // 超低域の層: 一打のあとに残る、ゆっくり下がる低い正弦波（30 Hz より下は high-pass で切る）
+  const deep = hv > 0 ? { f0: 52 - 4 * s, f1: 34 - 2 * s, dur: 3.0 * hv + 0.4 * Math.min(h, 3), attack: 0.03, gain: 0.3 * hv, hp: 30 } : null;
+  // 胴（80〜180 Hz）: 一打の倍の高さで下がる正弦波と、帯域ノイズ。一打と同じ強い歪みに通す
+  const body = hv > 0 ? {
+    f0: 2 * (150 - 95 * s) * (1 - 0.32 * hv) + 15, f1: 55, dur: 1.4, attack: 0.004, gain: 0.25 * hv,
+    noise: { freq: 130, q: 0.9, gain: 0.3 * hv, dur: 1.3, attack: 0.006 },
+  } : null;
+  // 圧のふくらみ: 衝撃の at〜end 秒、うなりと胴を gain 倍（peak 秒が最大）、地響きの low-pass を lp Hz へ開く
+  const swell = hv > 0 ? { at: 0.15, peak: 0.35, end: 0.6, gain: 10 ** (3 * hv / 20), lp: 400 } : null;
   const taps = [];
   const nTaps = 2 + Math.round(3 * s), first = 0.04 + 0.3 * s;
   for (let i = 0; i < nTaps; i++) {
@@ -90,7 +81,7 @@ export function boomRecipe(size, { hold = 0, open = 0, heavy = 0, rng = Math.ran
     });
   }
   // 全体の大きさ: 大きいほど少しだけ大きい（リミッターが重なりを受け止める）
-  return { size: s, heavy: hv, level: 0.85 + 0.15 * s, crack, punch, roar, air, sub, deep, taps, debris: { grains } };
+  return { size: s, heavy: hv, level: (0.85 + 0.15 * s) * (1 - 0.15 * hv), crack, punch, roar, air, sub, deep, body, swell, taps, debris: { grains } };
 }
 
 // 最後の一発の爆発の音の取り決め（演出の時刻表 tl から）: 時間が戻る瞬間（resume。ガラスの一拍の終わり、肩越しの乗り手が
@@ -104,7 +95,9 @@ export function finaleBoomOpts(tl, burstRamp) {
 // 弾ける（snap）直後に最大、見せる期（追われる間）ずっとうなり、宇宙（chaseEnd）でこもって弱まり、横一線の光が消える
 // （lineEnd）ときに消える。そのあとの無音 → 地鳴り（deepRumble）へつなぐ。
 // 演出の秒ごとの大きさ g（0〜1）と、低域の通し幅 f（Hz。宇宙でこもる）の折れ線
-export const RUMBLE = { gain: 0.55, slow: { rate: 0.85, depth: 0.32 }, shake: { rate: 6.5, depth: 0.12 }, grit: 0.16 };
+export const RUMBLE = { gain: 0.42, slow: { rate: 0.85, depth: 0.32 }, shake: { rate: 6.5, depth: 0.12 }, grit: 0.16 };
+// 瓦礫の崩れる音の道の大きさ（ふつう・リプレイ・宇宙でこもったとき）。重くした最後の一発と地響きの上でリミッターの余裕を残す
+export const DEBRIS_LEVEL = { open: 0.8, replay: 0.6, muffled: 0.35 };
 export function rumbleKeys(tl) {
   const r0 = tl.resume ?? tl.beatEnd, snap = tl.snap, ce = Math.max(tl.chaseEnd, snap + 0.6);
   const lineEnd = Math.max(tl.lineEnd, ce + 0.6), flat = Math.min(Math.max(tl.flatten, ce + 0.45), lineEnd - 0.1);
@@ -135,6 +128,8 @@ function softClip(k, n = 1024) {
   return c;
 }
 const punchCurve = softClip(2.2), subCurve = softClip(1.6), rumbleCurve = softClip(2.6);
+const driveCurves = new Map([[2.2, punchCurve]]); // 一打の歪みの曲線（drive ごとに一度だけ作る。払う・ふつうの一発は前と同じ曲線）
+const driveCurve = (k) => { if (!driveCurves.has(k)) driveCurves.set(k, softClip(k)); return driveCurves.get(k); };
 
 // 爆発の音のまとめの道の天井: 払うが続けて重なる・大きな一発と重なると、鋭い衝撃の頭がリミッター（アタック 2 ms）を
 // すり抜けて 1 を超えることがある。爆発の音だけをまとめて、knee までは素通し、その上はなめらかに ceil へ寄せる
@@ -157,7 +152,6 @@ function env(param, t, attack, peak, dur) {
 }
 
 export function createAudio() {
-  const crumbleGate = createCrumbleGate();
   let silenceEnd = 0;
   let ctx = null, master = null, hum = null, rumbleNode = null, noiseBuf = null, brownBuf = null;
   // 最後の一発の演出: 世界の音（master）と演出の音（cine: 心臓の鼓動・地鳴り）は、どちらも out のこもりを通る
@@ -228,19 +222,24 @@ export function createAudio() {
     debrisLp = ctx.createBiquadFilter();
     debrisLp.type = 'lowpass'; debrisLp.frequency.value = 20000; debrisLp.Q.value = 0.5;
     debrisLp.connect(limiter);
-    debrisBus = ctx.createGain(); debrisBus.gain.value = 1;
+    debrisBus = ctx.createGain(); debrisBus.gain.value = DEBRIS_LEVEL.open;
     debrisBus.connect(debrisLp);
     // 音のもとは最初のタップで一度に作らず、一つずつ間をあけて書き出す（中くらいの Android で、タップの瞬間に引っかからない）。
     // 鳴らす時までにできていなければ、そのとき作る
+    // 24 kHz で作る（崩れる音の上の方は 12 kHz までで足りる。書き出しの手間が半分。再生のときに出口の速さへ直される）。
+    // ブラウザの手が空いたとき（requestIdleCallback。無ければ少し間をあけた setTimeout）に一つずつ
     collapseBufs = new Array(COLLAPSE.variants).fill(null);
     let next = 0;
-    const idle = () => { if (next < COLLAPSE.variants) { collapseBuf(next++); setTimeout(idle, 30); } };
-    if (typeof setTimeout === 'function') setTimeout(idle, 30);
+    const later = (f) => (typeof requestIdleCallback === 'function' ? requestIdleCallback(f, { timeout: 2000 })
+      : typeof setTimeout === 'function' ? setTimeout(f, 50) : null);
+    const idle = () => { if (next < COLLAPSE.variants) { collapseBuf(next++); later(idle); } };
+    later(idle);
   }
   function collapseBuf(v) {
     if (!collapseBufs[v]) {
-      const data = renderCollapse(ctx.sampleRate, v + 1);
-      const b = ctx.createBuffer(1, data.length, ctx.sampleRate);
+      const sr = Math.min(ctx.sampleRate, COLLAPSE.sampleRate);
+      const data = renderCollapse(sr, v + 1);
+      const b = ctx.createBuffer(1, data.length, sr);
       b.getChannelData(0).set(data);
       collapseBufs[v] = b;
     }
@@ -254,8 +253,8 @@ export function createAudio() {
     g.cancelScheduledValues(t); f.cancelScheduledValues(t);
     g.setValueAtTime(g.value, t); f.setValueAtTime(f.value, t);
     if (mode === 'off') { g.linearRampToValueAtTime(0, t + 0.02); f.setValueAtTime(20000, t + 0.02); }
-    else if (mode === 'muffled') { f.exponentialRampToValueAtTime(160, t + 0.4); g.linearRampToValueAtTime(0.45, t + 0.4); }
-    else { f.setValueAtTime(20000, t); g.setValueAtTime(mode === 'replay' ? 0.7 : 1, t); }
+    else if (mode === 'muffled') { f.exponentialRampToValueAtTime(160, t + 0.4); g.linearRampToValueAtTime(DEBRIS_LEVEL.muffled, t + 0.4); }
+    else { f.setValueAtTime(20000, t); g.setValueAtTime(mode === 'replay' ? DEBRIS_LEVEL.replay : DEBRIS_LEVEL.open, t); }
   }
 
   const ready = () => ctx && ctx.state === 'running';
@@ -421,7 +420,11 @@ export function createAudio() {
       src.start(t); src.stop(t + v.dur + 0.02);
     },
     // 瓦礫の音の道の状態（リプレイの始まりで 'replay'、遊びに戻ったら 'open'）
-    debrisMode(mode) { if (ready()) setDebris(mode); },
+    debrisMode(mode) {
+      if (!ready()) return;
+      if (mode === 'replay') collapseGate.reset(); // リプレイは同じ崩落を最初から（演出の終わりにためた命中・上限の数を持ち越さない）
+      setDebris(mode);
+    },
     // 無音のあとの、低い地鳴り（長くゆっくり来て、ゆっくり引く）
     deepRumble() {
       if (!ready()) return;
@@ -515,15 +518,43 @@ export function createAudio() {
         return src;
       };
       // 1. 最初の衝撃: 広帯域のノイズの破裂と、急に下がる低い一打。軽く歪ませて（倍音で小さなスピーカーでも重く）
-      const shaper = ctx.createWaveShaper(); shaper.curve = punchCurve; shaper.connect(bus); shaper.connect(send);
+      const shaper = ctx.createWaveShaper(); shaper.curve = driveCurve(r.punch.drive); shaper.connect(bus); shaper.connect(send);
       const c = r.crack, crackSrc = noise(noiseBuf, c.dur);
       const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = c.hp; hp.Q.value = 0.5;
       const cg = ctx.createGain(); env(cg.gain, t, c.attack, c.gain, c.dur);
-      crackSrc.connect(hp); hp.connect(cg); cg.connect(shaper);
+      // 重い一発の一打は強く歪ませるが、最初の破裂は前と同じ曲線のまま（立ち上がりの音色はそのまま、頭がリミッターをすり抜けない）
+      let crackShaper = shaper;
+      if (driveCurve(r.punch.drive) !== punchCurve) { // （shaper.curve は読むと写しが返るので、曲線そのものを比べる）
+        crackShaper = ctx.createWaveShaper(); crackShaper.curve = punchCurve; crackShaper.connect(bus); crackShaper.connect(send);
+      }
+      crackSrc.connect(hp); hp.connect(cg); cg.connect(crackShaper);
       const p = r.punch, o = ctx.createOscillator(); o.type = 'sine';
       o.frequency.setValueAtTime(p.f0, t); o.frequency.exponentialRampToValueAtTime(p.f1, t + p.dur * 0.6);
       const pg = ctx.createGain(); env(pg.gain, t, p.attack, p.gain, p.dur);
       o.connect(pg); pg.connect(shaper); o.start(t); o.stop(t + p.dur + 0.05);
+      // 圧のふくらみ（最後の一発だけ）: うなりと胴の後ろの gain が at〜end の間だけふくらむ
+      const sw = r.swell;
+      let swG = null;
+      if (sw) {
+        swG = ctx.createGain();
+        swG.gain.setValueAtTime(1, t + sw.at);
+        swG.gain.linearRampToValueAtTime(sw.gain, t + sw.peak);
+        swG.gain.linearRampToValueAtTime(1, t + sw.end);
+        swG.connect(bus);
+      }
+      // 1b. 胴（最後の一発だけ）: 80〜180 Hz の下がる正弦波と帯域ノイズを、一打と同じ強い歪みに通す
+      if (r.body) {
+        const y = r.body, bO = ctx.createOscillator(); bO.type = 'sine';
+        bO.frequency.setValueAtTime(y.f0, t); bO.frequency.exponentialRampToValueAtTime(y.f1, t + y.dur * 0.7);
+        const bG = ctx.createGain(); env(bG.gain, t, y.attack, y.gain, y.dur);
+        const nz = y.noise, bSrc = noise(noiseBuf, nz.dur);
+        const bbp = ctx.createBiquadFilter(); bbp.type = 'bandpass'; bbp.frequency.value = nz.freq; bbp.Q.value = nz.q;
+        const bN = ctx.createGain(); env(bN.gain, t, nz.attack, nz.gain, nz.dur);
+        const bShape = ctx.createWaveShaper(); bShape.curve = driveCurve(p.drive);
+        bO.connect(bG); bG.connect(bShape); bSrc.connect(bbp); bbp.connect(bN); bN.connect(bShape);
+        bShape.connect(swG ?? bus);
+        bO.start(t); bO.stop(t + y.dur + 0.05);
+      }
       // 2. うなり: 明るい轟音から暗い尾へ（最後の一発は、時間が戻る間にこもった音から開き、追われる間は鳴り続ける）
       const w = r.roar, roarSrc = noise(noiseBuf, w.dur, true);
       const rlp = ctx.createBiquadFilter(); rlp.type = 'lowpass'; rlp.Q.value = 0.7;
@@ -540,7 +571,7 @@ export function createAudio() {
       if (w.tail > 0) rg.gain.exponentialRampToValueAtTime(w.gain * w.drop * 0.45, t + Math.max(w.hold, w.knee) + w.tail);
       rg.gain.exponentialRampToValueAtTime(0.0001, t + w.dur);
       const rs = ctx.createGain(); rs.gain.value = 0.5;
-      roarSrc.connect(rlp); rlp.connect(rg); rg.connect(bus); rg.connect(rs); rs.connect(send);
+      roarSrc.connect(rlp); rlp.connect(rg); rg.connect(swG ?? bus); rg.connect(rs); rs.connect(send);
       // 3. 空気を裂く中域: 帯域のノイズが下がりながら消える
       const a = r.air, airSrc = noise(noiseBuf, a.dur);
       const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = a.q;
@@ -550,6 +581,11 @@ export function createAudio() {
       // 4. 地響き: 超低域のノイズ（ブラウン）がゆっくり来てゆっくり引き、揺れる。軽く歪ませて、倍音でスマホでも聞こえる
       const b = r.sub, subSrc = noise(brownBuf, b.dur, true);
       const slp = ctx.createBiquadFilter(); slp.type = 'lowpass'; slp.frequency.value = b.cutoff; slp.Q.value = 0.9;
+      if (sw) { // 圧のふくらみの間、地響きの low-pass を開いて、低い帯域の圧を通す
+        slp.frequency.setValueAtTime(b.cutoff, t + sw.at);
+        slp.frequency.exponentialRampToValueAtTime(sw.lp, t + sw.peak);
+        slp.frequency.exponentialRampToValueAtTime(b.cutoff, t + sw.end);
+      }
       const sg = ctx.createGain();
       sg.gain.setValueAtTime(0.0001, t);
       sg.gain.linearRampToValueAtTime(b.gain, t + b.attack);
@@ -566,7 +602,8 @@ export function createAudio() {
         const q = r.deep, dO = ctx.createOscillator(); dO.type = 'sine';
         dO.frequency.setValueAtTime(q.f0, t); dO.frequency.exponentialRampToValueAtTime(q.f1, t + q.dur * 0.8);
         const dG = ctx.createGain(); env(dG.gain, t, q.attack, q.gain, q.dur);
-        dO.connect(dG); dG.connect(wob); dO.start(t); dO.stop(t + q.dur + 0.05);
+        const dHp = ctx.createBiquadFilter(); dHp.type = 'highpass'; dHp.frequency.value = q.hp; dHp.Q.value = 0.7;
+        dO.connect(dG); dG.connect(dHp); dHp.connect(wob); dO.start(t); dO.stop(t + q.dur + 0.05);
       }
       // 5. 破片のぱらぱら: 一つのノイズの音量を粒ごとに跳ね上げ、帯域を粒ごとに変える
       const dg = r.debris.grains;
@@ -583,15 +620,6 @@ export function createAudio() {
         }
         dSrc.connect(dbp); dbp.connect(dgg); dgg.connect(bus);
       }
-    },
-    // 壊れた数に応じた短いノイズ。約 50 ms に一度だけ鳴らし、その間の命中はまとめる（毎フレーム呼んでよい）
-    crumble(count) {
-      if (!ready()) return;
-      const n = crumbleGate.take(count, now());
-      if (n <= 0) return;
-      // 一度に鳴らすのは一つだけ。まとめた命中が多いほど大きく、長く
-      const k = Math.min(1, Math.sqrt(n) / 8);
-      noiseBurst({ dur: 0.14 + 0.16 * k + Math.random() * 0.08, freq: 700 + Math.random() * 900, gain: 0.12 * (1 + 1.4 * k), attack: 0.003 });
     },
   };
 }

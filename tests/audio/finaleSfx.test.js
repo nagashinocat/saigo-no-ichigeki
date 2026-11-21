@@ -3,7 +3,8 @@
 // リプレイでも同じ音、宇宙でこもり、払うでは鳴らない。最後の爆発音は前より低く・長く・超低域が厚い（オフラインで鳴らして測る）。
 // 払うの音の設計図は前と同じ。
 import { test, expect, afterEach } from 'vitest';
-import { boomRecipe, createAudio, finaleBoomOpts, rumbleKeys, rumbleAt, RUMBLE } from '../../src/audio/audio.js';
+import { boomRecipe, createAudio, finaleBoomOpts, rumbleKeys, rumbleAt, RUMBLE, DEBRIS_LEVEL } from '../../src/audio/audio.js';
+import { createHitFeed, COLLAPSE_STAGES } from '../../src/audio/hitFeed.js';
 import { COLLAPSE, createCollapseGate, collapseVoice, collapseHitInfo, renderCollapse, idHash } from '../../src/audio/collapse.js';
 import { createTimeline, FINALE } from '../../src/render/finaleTimeline.js';
 import { createGame } from '../../src/game/game.js';
@@ -69,21 +70,26 @@ test('払うの音の設計図は前と同じ（ふつうの一発・hold つき
     expect(now).toMatchObject(was);
     expect(now.deep).toBe(null);
     expect(now.heavy).toBe(0);
+    expect(now.body).toBe(null);
+    expect(now.swell).toBe(null);
     expect(now.roar.tail).toBe(0);
-    // 増えたのは heavy / deep / roar.tail だけ
-    const { heavy, deep, ...rest } = now;
+    expect(now.punch.drive).toBe(2.2); // 前と同じ歪みの曲線
+    // 増えたのは heavy / deep / body / swell / roar.tail / punch.drive だけ
+    const { heavy, deep, body, swell, ...rest } = now;
     const { tail, ...roar } = rest.roar;
-    expect({ ...rest, roar }).toEqual(was);
+    const { drive, ...punch } = rest.punch;
+    expect({ ...rest, roar, punch }).toEqual(was);
   }
 });
 
-test('最後の一発の取り決めは heavy: 1。立ち上がり（crack・attack）はそのまま鋭く、低い一打は前より低く長く、うなりと地響きは長く厚い', () => {
+test('最後の一発の取り決めは heavy: 1。立ち上がり（attack）はそのまま鋭く、低い一打は低く長く強く歪み、胴（80〜180 Hz）と圧のふくらみがあり、うなりと地響きは長い。超低域の層は 30 Hz より上だけ', () => {
   const tl = timelines()[0];
   const o = finaleBoomOpts(tl, FINALE.burstRamp);
   expect(o.heavy).toBe(1);
   const was = oldRecipe(1, { hold: o.hold, open: o.open, rng: seeded() });
   const now = boomRecipe(1, { ...o, rng: seeded() });
-  expect(now.crack).toEqual(was.crack);
+  expect({ ...now.crack, gain: 0 }).toEqual({ ...was.crack, gain: 0 });
+  expect(now.crack.gain).toBeCloseTo(was.crack.gain * 0.9); // 頭の標本の間の山を少し抑える
   expect(now.punch.attack).toBe(was.punch.attack);
   expect(now.roar.attack).toBe(was.roar.attack);
   expect(now.punch.f0).toBeLessThan(was.punch.f0 * 0.75);
@@ -91,11 +97,21 @@ test('最後の一発の取り決めは heavy: 1。立ち上がり（crack・att
   expect(now.punch.dur).toBeGreaterThan(was.punch.dur * 1.5);
   expect(now.roar.dur).toBeGreaterThan(was.roar.dur + 1);
   expect(now.sub.dur).toBeGreaterThan(was.sub.dur + 1);
-  expect(now.sub.gain).toBeGreaterThan(was.sub.gain * 1.3);
-  expect(now.sub.cutoff).toBeLessThan(was.sub.cutoff);
-  expect(now.deep.f0).toBeLessThan(60);
+  expect(now.sub.gain).toBeGreaterThan(was.sub.gain);
+  expect(now.roar.f1).toBe(was.roar.f1); // うなりの尾は暗くしすぎない（70 Hz）
+  expect(now.punch.drive).toBeGreaterThanOrEqual(3.4);
+  expect(now.deep.f1).toBeGreaterThanOrEqual(30);
+  expect(now.deep.hp).toBeGreaterThanOrEqual(30);
   expect(now.deep.f1).toBeLessThan(now.deep.f0);
-  expect(now.deep.gain).toBeGreaterThan(0);
+  expect(now.body.f0).toBeGreaterThanOrEqual(80);
+  expect(now.body.f0).toBeLessThanOrEqual(180);
+  expect(now.body.noise.freq).toBeGreaterThanOrEqual(80);
+  expect(now.body.noise.freq).toBeLessThanOrEqual(180);
+  expect(now.body.dur).toBeGreaterThanOrEqual(1.2);
+  expect(now.swell.at).toBeCloseTo(0.15);
+  expect(now.swell.end).toBeCloseTo(0.6);
+  expect(20 * Math.log10(now.swell.gain)).toBeCloseTo(3, 1);
+  expect(now.swell.lp).toBeGreaterThanOrEqual(300);
 });
 
 // ---- 設計図の低い層（低い一打・腹に響く層・地響き・うなり）を、Web Audio と同じ式でオフラインに鳴らす ----
@@ -128,6 +144,19 @@ function lowpass(x, fcAt, q = 0.9) {
   }
   return y;
 }
+function biq(x, kind, fc, q) {
+  const y = new Float32Array(x.length);
+  const w0 = 2 * Math.PI * Math.min(fc, SR * 0.45) / SR, al = Math.sin(w0) / (2 * q), c = Math.cos(w0), a0 = 1 + al;
+  const b = kind === 'hp' ? [(1 + c) / 2, -(1 + c), (1 + c) / 2] : [al, 0, -al];
+  let x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+  for (let i = 0; i < x.length; i++) {
+    const v = (b[0] * x[i] + b[1] * x1 + b[2] * x2 + 2 * c * y1 - (1 - al) * y2) / a0;
+    x2 = x1; x1 = x[i]; y2 = y1; y1 = v; y[i] = v;
+  }
+  return y;
+}
+const highpass = (x, fc) => biq(x, 'hp', fc, 0.707);
+const bandpass = (x, fc, q) => biq(x, 'bp', fc, q);
 const tanhClip = (k) => (x) => Math.tanh(k * Math.max(-1, Math.min(1, x))) / Math.tanh(k);
 function sweepSine(f0, f1, sweepEnd, env, n) {
   const y = new Float32Array(n); let ph = 0;
@@ -139,17 +168,29 @@ function sweepSine(f0, f1, sweepEnd, env, n) {
 }
 function renderLow(r, dur = 14) {
   const n = Math.ceil(dur * SR), rng = seeded(11);
-  const p = r.punch, punchCurve = tanhClip(2.2), subCurve = tanhClip(1.6);
-  const punch = sweepSine(p.f0, p.f1, p.dur * 0.6, automation(envEvents(p.attack, p.gain, p.dur), n), n).map(punchCurve);
+  const p = r.punch, driveCurve = tanhClip(p.drive ?? 2.2), subCurve = tanhClip(1.6);
+  const punch = sweepSine(p.f0, p.f1, p.dur * 0.6, automation(envEvents(p.attack, p.gain, p.dur), n), n).map(driveCurve);
+  // 圧のふくらみ（最後の一発だけ）: うなりと胴の gain、地響きの low-pass
+  const sw = r.swell;
+  const swG = sw ? automation([{ type: 'set', t: 0, v: 1 }, { type: 'set', t: sw.at, v: 1 }, { type: 'lin', t: sw.peak, v: sw.gain }, { type: 'lin', t: sw.end, v: 1 }], n) : null;
+  let body = new Float32Array(n);
+  if (r.body) {
+    const y = r.body, nz = y.noise;
+    const tone = sweepSine(y.f0, y.f1, y.dur * 0.7, automation(envEvents(y.attack, y.gain, y.dur), n), n);
+    const nEnv = automation(envEvents(nz.attack, nz.gain, nz.dur), n);
+    const bn = bandpass(new Float32Array(n).map(() => rng() * 2 - 1), nz.freq, nz.q);
+    body = tone.map((v, i) => driveCurve(v + bn[i] * nEnv[i]) * swG[i]);
+  }
   const b = r.sub;
   const sEv = [{ type: 'set', t: 0, v: 0.0001 }, { type: 'lin', t: b.attack, v: b.gain }];
   if (b.hold > b.attack) sEv.push({ type: 'exp', t: b.hold, v: b.gain * 0.7 });
   sEv.push({ type: 'exp', t: b.dur, v: 0.0001 });
   const brown = new Float32Array(n); let acc = 0, pk = 1e-9;
   for (let i = 0; i < n; i++) { acc = acc * 0.998 + (rng() * 2 - 1) * 0.05; brown[i] = acc; pk = Math.max(pk, Math.abs(acc)); }
-  const sEnv = automation(sEv, n), sf = lowpass(brown.map((v) => v / pk), b.cutoff);
+  const sCut = sw ? automation([{ type: 'set', t: 0, v: b.cutoff }, { type: 'set', t: sw.at, v: b.cutoff }, { type: 'exp', t: sw.peak, v: sw.lp }, { type: 'exp', t: sw.end, v: b.cutoff }], n) : b.cutoff;
+  const sEnv = automation(sEv, n), sf = lowpass(brown.map((v) => v / pk), sCut);
   const wob = (i) => 1 + b.wobble.depth * Math.sin(2 * Math.PI * b.wobble.rate * i / SR);
-  const deep = r.deep ? sweepSine(r.deep.f0, r.deep.f1, r.deep.dur * 0.8, automation(envEvents(r.deep.attack, r.deep.gain, r.deep.dur), n), n) : new Float32Array(n);
+  const deep = r.deep ? highpass(sweepSine(r.deep.f0, r.deep.f1, r.deep.dur * 0.8, automation(envEvents(r.deep.attack, r.deep.gain, r.deep.dur), n), n), r.deep.hp ?? 1) : new Float32Array(n);
   const sub = sf.map((v, i) => subCurve((v * sEnv[i] + deep[i]) * wob(i)));
   const w = r.roar;
   const rEv = [{ type: 'set', t: 0, v: 0.0001 }, { type: 'lin', t: w.attack, v: w.gain }, { type: 'exp', t: w.knee, v: w.gain * w.drop }];
@@ -160,8 +201,8 @@ function renderLow(r, dur = 14) {
   fEv.push({ type: 'exp', t: Math.max(w.open + 0.1, w.dur * 0.7), v: w.f1 });
   const white = new Float32Array(n).map(() => rng() * 2 - 1);
   const rEnv = automation(rEv, n);
-  const roar = lowpass(white, automation(fEv, n), 0.7).map((v, i) => v * rEnv[i]);
-  return { punch, sub, roar, n };
+  const roar = lowpass(white, automation(fEv, n), 0.7).map((v, i) => v * rEnv[i] * (swG ? swG[i] : 1));
+  return { punch, body, sub, roar, n };
 }
 const dominant = (x, t0, t1) => {
   const z = x.subarray(Math.round(t0 * SR), Math.round(t1 * SR));
@@ -177,7 +218,7 @@ const dominant = (x, t0, t1) => {
 const energy = (x, t0 = 0, t1 = x.length / SR) => { let s = 0; for (let i = Math.round(t0 * SR); i < Math.min(x.length, t1 * SR); i++) s += x[i] * x[i]; return s / SR; };
 const lastAbove = (x, rms) => { let last = 0; for (let t = 0; t + 0.1 <= x.length / SR; t += 0.1) if (Math.sqrt(energy(x, t, t + 0.1) / 0.1) > rms) last = t + 0.1; return last; };
 
-test('最後の爆発音は前より重い（オフラインで鳴らして測る）: 低い一打の基音が低く、うなりが長く、超低域（80 Hz 以下）の力が大きい', () => {
+test('最後の爆発音は前より重い（オフラインで鳴らして測る）: スマホで聞こえる 100〜300 Hz が最初の 1.5 秒で +3 dB 以上、低い一打の基音が低く、うなりが長く、超低域も厚い', () => {
   const tl = timelines()[0];
   const o = finaleBoomOpts(tl, FINALE.burstRamp);
   const was = renderLow(oldRecipe(1, { hold: o.hold, open: o.open, rng: seeded() }));
@@ -188,10 +229,15 @@ test('最後の爆発音は前より重い（オフラインで鳴らして測�
   // うなりの長さ（100 ms ごとの RMS が -40 dB を下回るまで）
   const lWas = lastAbove(was.roar, 0.01), lNow = lastAbove(now.roar, 0.01);
   expect(lNow).toBeGreaterThan(lWas + 1);
-  // 超低域の力: 一打 + 地響き（腹に響く層を含む）を 80 Hz の low-pass に通した 0〜10 秒の力
-  const low = (x) => energy(lowpass(x.punch.map((v, i) => v + x.sub[i]), 80), 0, 10);
-  expect(low(now)).toBeGreaterThan(low(was) * 1.5); // +1.8 dB 以上
-  if (process.env.S3_LOG) console.log(JSON.stringify({ fWas, fNow, lWas, lNow, lowWas: low(was), lowNow: low(now), subWas: lastAbove(was.sub, 0.01), subNow: lastAbove(now.sub, 0.01) }));
+  // 超低域の力: 一打 + 胴 + 地響き（超低域の層を含む）を 80 Hz の low-pass に通した 0〜10 秒の力
+  const mix = (x) => x.punch.map((v, i) => v + x.body[i] + x.sub[i] + x.roar[i]);
+  const low = (x) => energy(lowpass(mix(x), 80), 0, 10);
+  expect(low(now)).toBeGreaterThan(low(was) * 1.2); // +0.8 dB 以上
+  // スマホで聞こえる重さ: 100〜300 Hz の最初の 1.5 秒の力が +3 dB 以上
+  const body = (x) => energy(highpass(highpass(lowpass(lowpass(mix(x), 300, 0.707), 300, 0.707), 100), 100), 0, 1.5);
+  const bodyDb = 10 * Math.log10(body(now) / body(was));
+  expect(bodyDb).toBeGreaterThanOrEqual(3);
+  if (process.env.S3_LOG) console.log(JSON.stringify({ fWas, fNow, lWas, lNow, lowWas: low(was), lowNow: low(now), bodyDb, subWas: lastAbove(was.sub, 0.01), subNow: lastAbove(now.sub, 0.01) }));
   // 地響きの長さ（-40 dB まで）も長い
   expect(lastAbove(now.sub, 0.01)).toBeGreaterThan(lastAbove(was.sub, 0.01) + 0.5);
 });
@@ -397,23 +443,23 @@ test('瓦礫の音の道: 演出の無音（ガラスの一拍）では黙り、
   audio.silence();
   expect(bus.gain.final()).toBe(0);
   audio.unsilence();
-  expect(bus.gain.final()).toBe(1);
+  expect(bus.gain.final()).toBe(DEBRIS_LEVEL.open);
   expect(lp.frequency.final()).toBeGreaterThanOrEqual(20000);
   audio.muffle(1.4);
   expect(lp.frequency.final()).toBeLessThanOrEqual(200);
-  expect(bus.gain.final()).toBeLessThan(0.6);
+  expect(bus.gain.final()).toBeLessThan(DEBRIS_LEVEL.open * 0.6);
   expect(bus.gain.final()).toBeGreaterThan(0);
   audio.debrisMode('replay');
   expect(lp.frequency.final()).toBeGreaterThanOrEqual(20000);
-  expect(bus.gain.final()).toBeGreaterThan(0.5);
-  expect(bus.gain.final()).toBeLessThan(1);
+  expect(bus.gain.final()).toBe(DEBRIS_LEVEL.replay);
+  expect(DEBRIS_LEVEL.replay).toBeLessThan(DEBRIS_LEVEL.open);
 });
 
 test('払うでは瓦礫の音は鳴らない: 小爆発はビルも小物も壊さず（命中なし）、爆発の音（払う）は瓦礫の音の部品を作らない', () => {
   const cfg = { ...CONFIG, enemy: { ...CONFIG.enemy, spawnPerSec: 0 } };
   const g = createGame({ seed: 3, cfg });
   const { ctx, audio } = setup();
-  const debrisBuf = (n) => n.kind === 'src' && n.buffer?.length === Math.ceil(COLLAPSE.bufSec * 8000);
+  const debrisBuf = (n) => n.kind === 'src' && n.buffer?.length === Math.ceil(COLLAPSE.bufSec * Math.min(8000, COLLAPSE.sampleRate));
   let hits = [];
   g.on('hit', (e) => hits.push(e)); // main.js と同じ: 命中だけが瓦礫の音になる
   g.on('puff', () => audio.boom(PUFF));
@@ -438,4 +484,42 @@ test('払うでは瓦礫の音は鳴らない: 小爆発はビルも小物も壊
   // 命中があれば鳴る（同じ道で）
   audio.collapse([hit('b7')]);
   expect(ctx.nodes.filter(debrisBuf).length).toBe(1);
+});
+
+test('リプレイの始まりで瓦礫の音の上限をまっさらに（演出の終わりにためた命中・数を持ち越さない）', () => {
+  const { ctx, audio } = setup();
+  const srcCount = () => ctx.nodes.filter((n) => n.kind === 'src' && n.playbackRate.value !== 1).length;
+  // 演出の終わり: 上限いっぱいまで鳴らし、さらに命中をためる
+  for (let f = 0; f < 30; f++) { ctx.currentTime = 10 + f / 30; audio.collapse([hit(`b${f}`), hit(`c${f}`)]); }
+  const before = srcCount();
+  audio.collapse([hit('x1')]); // 同時の数が埋まっていて鳴らない
+  expect(srcCount()).toBe(before);
+  audio.debrisMode('replay');
+  audio.collapse([hit('r1')]); // リプレイの最初の崩落はすぐ鳴る（ためた古い命中ではなく、この命中）
+  expect(srcCount()).toBe(before + 1);
+});
+
+test('main.js の命中の渡し方（hitFeed）: settle が一気に進めた命中はリプレイがあるとき音にしない、演出の段で選ぶ、リプレイの命中も同じ道、使ったら空', () => {
+  const feed = createHitFeed();
+  const target = { x: 10, z: -30, w: 12, d: 12, h: 40 };
+  const project = () => ({ camX: 5, camZ: -20, dist: 25 });
+  expect(feed.gameHit({ hit: { id: 'b1' }, target, settled: true }, { replayPending: true })).toBe(false);
+  expect(feed.pending).toBe(0);
+  expect(feed.gameHit({ hit: { id: 'b2' }, target, settled: true }, { replayPending: false })).toBe(true); // 写しが無ければ鳴らす
+  feed.gameHit({ hit: { id: 'b3' }, target });
+  expect(feed.drain(project).map((h) => h.id)).toEqual(['b2', 'b3']);
+  expect(feed.pending).toBe(0);
+  // ガラスの一拍（beat）や白の間は鳴らさない（ためない）。時間が戻った段からは鳴らす
+  for (const stage of ['hands', 'white', 'contact', 'beat', 'silence', 'rumble']) {
+    feed.gameHit({ hit: { id: 'b4' }, target });
+    expect(feed.drain(project, { stage })).toEqual([]);
+    expect(feed.pending).toBe(0);
+  }
+  for (const stage of COLLAPSE_STAGES) {
+    feed.gameHit({ hit: { id: 'b5' }, target });
+    expect(feed.drain(project, { stage })).toHaveLength(1);
+  }
+  feed.replayHit({ hit: { id: 'b6' }, target });
+  const [h] = feed.drain(project);
+  expect(h).toEqual(collapseHitInfo({ id: 'b6', w: 12, d: 12, h: 40 }, project()));
 });

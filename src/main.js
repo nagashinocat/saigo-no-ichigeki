@@ -27,7 +27,7 @@ import { createPressTracker } from './input/press.js';
 import { createHud } from './ui/hud.js';
 import { createResult } from './ui/result.js';
 import { createAudio, finaleBoomOpts } from './audio/audio.js';
-import { collapseHitInfo } from './audio/collapse.js';
+import { createHitFeed } from './audio/hitFeed.js';
 import { createBgm } from './audio/bgm.js';
 
 const MAX_FRAME_DT = 0.1;
@@ -279,12 +279,13 @@ function showHit(e) {
 }
 game.on('hit', (e) => {
   if (e.hit.id[0] === 'b') standing.delete(e.target.id);
-  // settle が一気に進めた分は、すぐリプレイが街を戻すので描かない
-  if (!(e.settled && replaySnap)) showHit(e);
-  hitsThisFrame.push(e);
+  // settle が一気に進めた分は、すぐリプレイが街を戻すので描かず、音にもしない
+  if (e.settled && replaySnap) return;
+  showHit(e);
+  hitFeed.gameHit(e, { replayPending: !!replaySnap });
 });
 // このフレームの命中（瓦礫の崩れる音へ。小爆発（払う）はビルを壊さないので、ここには来ない）
-let hitsThisFrame = [];
+const hitFeed = createHitFeed();
 const burstSeen = new Set();
 
 // ---- リプレイ（仕様 12 章の絵コンテ 6〜7）----
@@ -320,7 +321,7 @@ const replay = createReplay(views, {
   },
   // 爆発を dt 秒進め、命中を描く側へ渡し、世界をそのカメラで進める
   onTick(dt, cam) {
-    for (const e of replaySim.step(dt)) { showHit(e); hitsThisFrame.push(e); } // リプレイでも同じ崩落に音
+    for (const e of replaySim.step(dt)) { showHit(e); hitFeed.replayHit(e); } // リプレイでも同じ崩落に音
     stepWorld(dt, replaySim.blasts, replaySim.enemies, cam, cam.position.toArray(), 1 - replay.silhouette);
   },
 });
@@ -447,8 +448,7 @@ function updateAudio(live) {
   if (cinematic.active) {
     audio.rumble(0);
     for (const b of live) burstSeen.add(b.id);
-    const hits = collapseHits();
-    audio.collapse(COLLAPSE_STAGES.has(cinematic.stage) ? hits : []);
+    audio.collapse(collapseHits(cinematic.stage));
     return;
   }
   let creep = 0;
@@ -461,22 +461,18 @@ function updateAudio(live) {
   audio.rumble(creep);
   audio.collapse(collapseHits()); // ためた命中も、間隔が空いたら鳴らす
 }
-// 瓦礫の崩れる音を鳴らす演出の段（時間が戻ってから、横一線の光が消えるまで）
-const COLLAPSE_STAGES = new Set(['snap', 'chase', 'space', 'flatten']);
-// このフレームの命中を、今のカメラから見た大きさ・近さ・左右へ（使ったら空にする）
+// このフレームの命中を、今のカメラから見た大きさ・近さ・左右へ（使ったら空にする）。stage: 演出の段（hitFeed が鳴らす段を選ぶ）
 const _hitV = new THREE.Vector3();
-function collapseHits() {
-  if (!hitsThisFrame.length) return hitsThisFrame;
+function collapseHits(stage = null) {
+  if (!hitFeed.pending) return [];
   const cam = cityCam();
   cam.updateMatrixWorld();
-  const out = hitsThisFrame.map(({ hit, target: t }) => {
+  return hitFeed.drain((t) => {
     _hitV.set(t.x, (t.h ?? 3) * 0.5, t.z);
     const dist = _hitV.distanceTo(cam.position);
     _hitV.applyMatrix4(cam.matrixWorldInverse);
-    return collapseHitInfo({ id: hit.id, w: t.w, d: t.d, h: t.h }, { camX: _hitV.x, camZ: _hitV.z, dist });
-  });
-  hitsThisFrame = [];
-  return out;
+    return { camX: _hitV.x, camZ: _hitV.z, dist };
+  }, { stage });
 }
 // 白の間の最初のフレームで、そのあとの画面全体の描画を温める（白から街への切り替わりで止まらない）
 let whiteWarmed = false;
