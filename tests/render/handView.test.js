@@ -3,6 +3,7 @@ import { createHandView } from '../../src/render/handView.js';
 import { CONFIG } from '../../src/config.js';
 import * as THREE from 'three';
 import { buildHandModel } from '../../src/render/handModel.js';
+import { HAND_JOINTS } from '../../src/render/handPose.js';
 
 const DT = 1 / 60;
 const run = (view, sec, ...args) => { for (let t = 0; t < sec - 1e-9; t += DT) view.update(DT, ...args); };
@@ -193,10 +194,11 @@ test('最後の一発: 約0.25秒で両手が球を鷲掴みにする — 指は
     const stance = palmGap(view);
     view.release({ amount: CONFIG.power.max, isBig: true });
     run(view, 0.1, 0, false, 0.6);
-    // 0.1 秒ではまだ寄っている途中。球は手の中で燃えたまま（放った瞬間の力の大きさの半分以上）
+    // 0.1 秒では、先に大きく寄ってもう指が閉じかけている（光る内側を手が囲む途中の形を長く見せない）が、まだ締めきっていない。
+    // 球は手の中で燃えたまま（放った瞬間の力の大きさの半分以上）
     expect(palmGap(view)).toBeLessThan(stance);
-    expect(view.joined).toBeGreaterThan(0.05);
-    expect(view.joined).toBeLessThan(0.5);
+    expect(view.joined).toBeGreaterThan(0.5);
+    expect(view.joined).toBeLessThan(0.95);
     expect(view.orbSphere.radius).toBeGreaterThan(0.2);
     run(view, 0.15, 0, false, 0.6);
     const label = detail;
@@ -224,23 +226,57 @@ test('最後の一発: 約0.25秒で両手が球を鷲掴みにする — 指は
   }
 });
 
+// 持ち主（15:24）: 「ハートには見えないように」。どの瞬間も、尖った頂の下に光る内側があり親指がそれを下から囲む形にしない。
+// 画面での代わりの測り方: 0.12 秒からは左右の指先の群れが横に大きく重なる（光を指で埋める）、
+// 一番上の点のまわり（高さの上 15%）が手の幅の 4 割より広い（ひとつの尖った頂にならない）、
+// 親指の先は付け根の節より下（上へ巻き上げない）、握った形は横に広く低い（縦横の比 1.25 未満）
+test('最後の一発の寄る途中も締めきっても、ハートの形にならない: 指が早く交差して光を埋め、上は尖らず、親指は上へ巻き上げない', () => {
+  for (const detail of ['low', 'high']) {
+    const m = hands(detail);
+    const view = createHandView(m, detail);
+    view.resize(390 / 295);
+    run(view, 1, 0.9, true, 1);
+    view.release({ amount: CONFIG.power.max, isBig: true });
+    const sp = (s, n) => m[s].bones[n].getWorldPosition(new THREE.Vector3()).project(view.camera);
+    let t = 0;
+    for (const at of [0.04, 0.08, 0.1, 0.12, 0.14, 0.16, 0.18, 0.2, 0.22, 0.25, 0.6]) {
+      run(view, at - t, 0, false, 1);
+      t = at;
+      const label = `${detail} ${at}`;
+      const pts = [];
+      for (const s of ['right', 'left']) for (const n of HAND_JOINTS) if (n !== 'wrist') pts.push(sp(s, n));
+      const ys = pts.map((p) => p.y), xs = pts.map((p) => p.x);
+      const H = Math.max(...ys) - Math.min(...ys), W = Math.max(...xs) - Math.min(...xs);
+      // 親指は上へ巻き上げない（どの瞬間も）。左右の親指の先は合わせない
+      for (const s of ['right', 'left']) expect(sp(s, 'thumb-tip').y - sp(s, 'thumb-phalanx-proximal').y, `${label} ${s} thumb`).toBeLessThan(-0.02);
+      const tw = (s) => m[s].bones['thumb-tip'].getWorldPosition(new THREE.Vector3());
+      expect(tw('right').distanceTo(tw('left')), label).toBeGreaterThan(0.08);
+      if (at < 0.12) continue;
+      // 指先の群れが横に重なる（右手の指先の一番左が、左手の指先の一番右より左）
+      const fx = (s) => FINGER_TIPS.map((n) => sp(s, n).x);
+      expect(Math.max(...fx('left')) - Math.min(...fx('right')), label).toBeGreaterThan(0.25);
+      // 上はひとつの尖った頂にならない
+      const top = Math.max(...ys);
+      const band = xs.filter((x, i) => ys[i] > top - 0.15 * H);
+      expect((Math.max(...band) - Math.min(...band)) / W, label).toBeGreaterThan(0.38);
+      // 横に広く低い握り（締めつける挟み）
+      expect(H / W, label).toBeLessThan(1.25);
+    }
+  }
+});
+
 test('鷲掴みで締めつける間、弾ける直前に手が震える', () => {
-  const jitter = (v, from, to) => {
-    // 手のひらの位置の、フレームごとの加速度（二階差分）の平均
-    const ps = [];
-    run(v, from, 0, false, 1);
-    for (let t = from; t < to; t += DT) { v.update(DT, 0, false, 1); ps.push(v.palms.right); }
-    let sum = 0;
-    for (let i = 2; i < ps.length; i++) sum += ps[i].clone().sub(ps[i - 1]).sub(ps[i - 1].clone().sub(ps[i - 2])).length();
-    return sum / (ps.length - 2);
-  };
-  const a = createHandView(hands('low'), 'low'), b = createHandView(hands('low'), 'low');
-  for (const v of [a, b]) run(v, 1, 0.5, true, 1);
-  a.release({ amount: CONFIG.power.max, isBig: true });
-  b.release({ amount: CONFIG.power.max, isBig: true });
-  const early = jitter(a, 0, 0.08), late = jitter(b, 0.15, 0.24);
-  expect(late).toBeGreaterThan(early * 1.5);
-  expect(late).toBeGreaterThan(0.004);
+  // 寄る動きそのものを除くため、震えの位相だけ違う 2 つの画面を同じ時刻の進みで比べる（差は震えだけになる）
+  const pair = [createHandView(hands('low'), 'low'), createHandView(hands('low'), 'low')];
+  run(pair[0], 1, 0.5, true, 1);
+  run(pair[1], 1 + 3 * DT, 0.5, true, 1);
+  for (const v of pair) v.release({ amount: CONFIG.power.max, isBig: true });
+  const diff = [];
+  for (let t = 0; t < 0.24; t += DT) { for (const v of pair) v.update(DT, 0, false, 1); diff.push({ t, d: pair[0].palms.right.distanceTo(pair[1].palms.right) }); }
+  const mean = (a, b) => { const xs = diff.filter((q) => q.t >= a && q.t < b).map((q) => q.d); return xs.reduce((x, y) => x + y, 0) / xs.length; };
+  const early = mean(0, 0.08), late = mean(0.15, 0.24);
+  expect(late).toBeGreaterThan(early * 2);
+  expect(late).toBeGreaterThan(0.006);
 });
 
 test('鷲掴みのまま保つ間: 手の中に押し縮められた球の芯が脈打って燃え残り、指は芯の上へ鉤をかけ、前腕は手首へ向かって上がり、手は細かく震え続ける', () => {
@@ -276,6 +312,42 @@ test('鷲掴みのまま保つ間: 手の中に押し縮められた球の芯が
   let jit = 0;
   for (let i = 2; i < ps.length; i++) jit += ps[i].clone().sub(ps[i - 1]).sub(ps[i - 1].clone().sub(ps[i - 2])).length();
   expect(jit / (ps.length - 2)).toBeGreaterThan(0.001);
+});
+
+// 燃え残る芯は光として読める（石や影に見せない）: 保つ間、芯の熱い色の重み（uEmber）は 1 近く、明るさ（uPower）は高い。
+// 光の板は握った両手より大きく広がり、暖かい光を強く出す（low の段でも同じ。ブルームに頼らない）。肌も芯の光を受ける
+test('鷲掴みのまま保つ間、芯は熱い光として明るく燃え、光の板は握った手のまわりへ暖かくこぼれる（high / low）', () => {
+  for (const detail of ['low', 'high']) {
+    const m = hands(detail);
+    const v = createHandView(m, detail);
+    v.resize(390 / 295);
+    run(v, 1, 0.9, true, 1);
+    const mats = [];
+    v.scene.traverse((o) => { if (o.material?.uniforms) mats.push(o); });
+    const orb = mats.find((o) => o.material.uniforms.uCore && o.material.uniforms.uDeep);
+    const halo = mats.find((o) => o.material.uniforms.uOrbFrac);
+    expect(orb && halo, detail).toBeTruthy();
+    v.release({ amount: CONFIG.power.max, isBig: true });
+    run(v, 0.45, 0, false, 1);
+    let light = null;
+    v.scene.traverse((o) => { if (o.isPointLight) light = o; });
+    for (let t = 0; t < 1.1; t += DT) {
+      v.update(DT, 0, false, 1);
+      const label = `${detail} ${t.toFixed(2)}`;
+      const ou = orb.material.uniforms, hu = halo.material.uniforms;
+      expect(orb.visible, label).toBe(true);
+      expect(ou.uEmber.value, label).toBeGreaterThan(0.95);
+      expect(ou.uPower.value * ou.uFade.value, label).toBeGreaterThan(0.8);
+      expect(hu.uEmber.value, label).toBeGreaterThan(0.95);
+      expect(hu.uPower.value, label).toBeGreaterThan(0.7);
+      // 光の板は握った両手を覆うほど広い（手のひらの間より大きい半径）
+      expect(halo.scale.x, label).toBeGreaterThan(palmGap(v));
+      expect(light.intensity, label).toBeGreaterThan(0.8);
+    }
+    // 構えに戻ると芯の色はやめる
+    run(v, 2, 0, false, 1);
+    expect(orb.material.uniforms.uEmber.value, detail).toBe(0);
+  }
 });
 
 test('放ってから保つまで、指先の鉤（第一関節の曲げ）は緩まない', () => {

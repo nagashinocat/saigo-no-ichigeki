@@ -43,10 +43,11 @@ const POSES = {
     'pinky-finger-metacarpal': [9, 0, 6], 'pinky-finger-phalanx-proximal': [16, -22, 6], 'pinky-finger-phalanx-intermediate': [25, 0, 0], 'pinky-finger-phalanx-distal': [70, 0, 0],
   },
   // 鷲掴み: 放つと両手が球へかぶさって指が交差し、第一関節から先を球へ食い込ませて締めつける（指先どうしは合わせない）。
-  // 親指は球の下で先を曲げるが、左右の親指の先は合わせない。手首は構えのまま反らしておく（前腕が跳ばない）
+  // 親指は球の下で内・下へ寄せる。先を上へ巻き上げない（巻き上げると球を下から囲むハートの下の弧になる）。
+  // 左右の親指の先は合わせない。手首は構えのまま反らしておく（前腕が跳ばない）
   join: {
     wrist: [-WRIST_EXT, 0, 0],
-    'thumb-metacarpal': [0, 14, -6], 'thumb-phalanx-proximal': [30, 8, 0], 'thumb-phalanx-distal': [80, 0, 0],
+    'thumb-metacarpal': [0, 0, -6], 'thumb-phalanx-proximal': [35, 0, 0], 'thumb-phalanx-distal': [25, 0, 0],
     'index-finger-phalanx-proximal': [22, 12, 0], 'index-finger-phalanx-intermediate': [30, 0, 0], 'index-finger-phalanx-distal': [85, 0, 0],
     'middle-finger-phalanx-proximal': [24, 3, 0], 'middle-finger-phalanx-intermediate': [32, 0, 0], 'middle-finger-phalanx-distal': [88, 0, 0],
     'ring-finger-metacarpal': [4, 0, 2], 'ring-finger-phalanx-proximal': [26, -6, 2], 'ring-finger-phalanx-intermediate': [33, 0, 0], 'ring-finger-phalanx-distal': [88, 0, 0],
