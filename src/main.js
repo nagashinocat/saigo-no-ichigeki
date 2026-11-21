@@ -27,6 +27,7 @@ import { createPressTracker } from './input/press.js';
 import { createHud } from './ui/hud.js';
 import { createResult } from './ui/result.js';
 import { createAudio, finaleBoomOpts } from './audio/audio.js';
+import { collapseHitInfo } from './audio/collapse.js';
 import { createBgm } from './audio/bgm.js';
 
 const MAX_FRAME_DT = 0.1;
@@ -248,7 +249,11 @@ game.on('cinematicEnd', () => cinematic.end());
 cinematic.on('cue', ({ name, arg }) => {
   if (name === 'silence') audio.silence();
   else if (name === 'heart') audio.heartbeat(arg);
-  else if (name === 'snap') { audio.unsilence(); audio.boom(finalBlastSize, finaleBoomOpts(cinematic.timeline, FINALE.burstRamp)); }
+  else if (name === 'snap') {
+    audio.unsilence();
+    audio.boom(finalBlastSize, finaleBoomOpts(cinematic.timeline, FINALE.burstRamp));
+    audio.finaleRumble(cinematic.timeline); // 地響き: 時刻表どおりにふくらみ、宇宙でこもり、横一線の光とともに消える
+  }
   else if (name === 'space') audio.muffle(1.4);
   else if (name === 'rumble') audio.deepRumble();
 });
@@ -276,9 +281,10 @@ game.on('hit', (e) => {
   if (e.hit.id[0] === 'b') standing.delete(e.target.id);
   // settle が一気に進めた分は、すぐリプレイが街を戻すので描かない
   if (!(e.settled && replaySnap)) showHit(e);
-  hitsThisFrame++;
+  hitsThisFrame.push(e);
 });
-let hitsThisFrame = 0;
+// このフレームの命中（瓦礫の崩れる音へ。小爆発（払う）はビルを壊さないので、ここには来ない）
+let hitsThisFrame = [];
 const burstSeen = new Set();
 
 // ---- リプレイ（仕様 12 章の絵コンテ 6〜7）----
@@ -314,13 +320,13 @@ const replay = createReplay(views, {
   },
   // 爆発を dt 秒進め、命中を描く側へ渡し、世界をそのカメラで進める
   onTick(dt, cam) {
-    for (const e of replaySim.step(dt)) showHit(e);
+    for (const e of replaySim.step(dt)) { showHit(e); hitsThisFrame.push(e); } // リプレイでも同じ崩落に音
     stepWorld(dt, replaySim.blasts, replaySim.enemies, cam, cam.position.toArray(), 1 - replay.silhouette);
   },
 });
 replay.warmup(renderer, views.cityCamera);
 // 音: リプレイの間は世界の音を鳴らさない（BGM は 'replayStart' で静かな変奏になり、結果画面でもそのまま続く）
-replay.on('replayStart', () => { replayTag.hidden = false; bgm.quiet(); });
+replay.on('replayStart', () => { replayTag.hidden = false; bgm.quiet(); audio.debrisMode('replay'); });
 replay.on('replayEnd', () => { replayTag.hidden = true; finaleDone = true; });
 replay.on('skip', () => { replayTag.hidden = true; });
 function startReplay() {
@@ -431,18 +437,18 @@ function updateAudio(live) {
   if (bgm.state === 'off') bgm.prepare();
   if (game.phase === 'playing' && audio.running) bgm.start();
   bgm.update({ elapsed: CONFIG.roundSeconds - game.timer.remaining, power: game.power.level, holding: game.charge.active });
-  // リプレイの間は世界の音を鳴らさない
+  // リプレイの間は世界の音を鳴らさない（瓦礫の崩れる音だけは、同じ崩落に合わせて鳴らす）
   if (replay.active) {
-    audio.rumble(0); audio.crumble(0);
-    hitsThisFrame = 0;
+    audio.rumble(0);
+    audio.collapse(collapseHits());
     return;
   }
-  // 最後の一発の音は演出が段取りする（cue）。崩落の音だけは時間が戻ったあと鳴る
+  // 最後の一発の音は演出が段取りする（cue）。瓦礫の崩れる音は時間が戻ったあと（宇宙ではこもって）鳴る
   if (cinematic.active) {
     audio.rumble(0);
     for (const b of live) burstSeen.add(b.id);
-    if (cinematic.stage === 'chase') audio.crumble(hitsThisFrame); else audio.crumble(0);
-    hitsThisFrame = 0;
+    const hits = collapseHits();
+    audio.collapse(COLLAPSE_STAGES.has(cinematic.stage) ? hits : []);
     return;
   }
   let creep = 0;
@@ -453,8 +459,24 @@ function updateAudio(live) {
     } else creep = Math.max(creep, k);
   }
   audio.rumble(creep);
-  audio.crumble(hitsThisFrame); // ためた命中も、間隔が空いたら鳴らす
-  hitsThisFrame = 0;
+  audio.collapse(collapseHits()); // ためた命中も、間隔が空いたら鳴らす
+}
+// 瓦礫の崩れる音を鳴らす演出の段（時間が戻ってから、横一線の光が消えるまで）
+const COLLAPSE_STAGES = new Set(['snap', 'chase', 'space', 'flatten']);
+// このフレームの命中を、今のカメラから見た大きさ・近さ・左右へ（使ったら空にする）
+const _hitV = new THREE.Vector3();
+function collapseHits() {
+  if (!hitsThisFrame.length) return hitsThisFrame;
+  const cam = cityCam();
+  cam.updateMatrixWorld();
+  const out = hitsThisFrame.map(({ hit, target: t }) => {
+    _hitV.set(t.x, (t.h ?? 3) * 0.5, t.z);
+    const dist = _hitV.distanceTo(cam.position);
+    _hitV.applyMatrix4(cam.matrixWorldInverse);
+    return collapseHitInfo({ id: hit.id, w: t.w, d: t.d, h: t.h }, { camX: _hitV.x, camZ: _hitV.z, dist });
+  });
+  hitsThisFrame = [];
+  return out;
 }
 // 白の間の最初のフレームで、そのあとの画面全体の描画を温める（白から街への切り替わりで止まらない）
 let whiteWarmed = false;

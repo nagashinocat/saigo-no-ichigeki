@@ -1,4 +1,5 @@
 // Web Audio で合成する音。素材ファイルは使わない。
+import { COLLAPSE, createCollapseGate, collapseVoice, renderCollapse } from './collapse.js';
 // 世界の音は master を経由するので、silence で全部まとめて黙らせられる（演出の音は cine から鳴る）。
 // boom を鳴らすまでの待ち（秒）: 無音の間（silenceEnd まで）に弾けても、無音が明けてから鳴らす
 export function boomDelay(silenceEnd, now) {
@@ -36,21 +37,32 @@ export const LIMITER = { threshold: -2, knee: 0, ratio: 20, attack: 0.002, relea
 //   taps   遠くのビルから遅れて届く反射音（大きいほど遅く、遠いものほど暗く小さく、左右に散る）
 //   debris 崩れる破片のぱらぱら（衝撃のあとに始まり、だんだん疎らに。粒は重ならない）
 // 時間はすべて爆発の瞬間からの秒。rng は粒と反射音のばらつき（テストで決まった値にする）
-export function boomRecipe(size, { hold = 0, open = 0, rng = Math.random } = {}) {
+// heavy 0〜1（最後の一発だけ 1。持ち主の要望 09:59「最後の爆発音はもっと重く」）: 立ち上がり（crack・attack）はそのまま鋭く、
+//   低い一打をさらに低く長く、うなりを長く暗く、地響きを厚く（超低域を太く長く）、腹に響く低い正弦波の層（deep）を足す。
+//   heavy 0 のとき（払う・ふつうの一発）は前と同じ値（乱数の使い方も同じ）
+export function boomRecipe(size, { hold = 0, open = 0, heavy = 0, rng = Math.random } = {}) {
   const s = Math.max(0, Math.min(1, size));
   const h = Math.max(0, hold);
+  const hv = Math.max(0, Math.min(1, heavy));
   const crack = { dur: 0.03 + 0.045 * s, attack: 0.001, hp: 1100 - 650 * s, gain: 0.62 - 0.17 * s };
-  const punch = { f0: 150 - 95 * s, f1: 48 - 24 * s, dur: 0.16 + 0.55 * s, attack: 0.003, gain: 0.55 + 0.15 * s };
-  const roarDur = 0.5 + 3.0 * s;
+  const punch = {
+    f0: (150 - 95 * s) * (1 - 0.32 * hv), f1: (48 - 24 * s) * (1 - 0.3 * hv), dur: (0.16 + 0.55 * s) * (1 + 0.7 * hv),
+    attack: 0.003, gain: 0.55 + 0.15 * s + 0.05 * hv,
+  };
+  const roarDur = (0.5 + 3.0 * s) * (1 + 0.55 * hv);
   const roar = {
-    dur: roarDur + h, hold: h, open: Math.max(0, open), f0: 5200 - 3000 * s, f1: 170 - 100 * s,
-    attack: 0.004 + 0.02 * s, gain: 0.34 + 0.2 * s, drop: 0.4, knee: 0.08 + 0.35 * s,
+    dur: roarDur + h, hold: h, open: Math.max(0, open), f0: 5200 - 3000 * s, f1: (170 - 100 * s) * (1 - 0.15 * hv),
+    attack: 0.004 + 0.02 * s, gain: 0.34 + 0.2 * s, drop: 0.4, knee: (0.08 + 0.35 * s) * (1 + 0.6 * hv),
+    tail: 2.2 * hv, // 重い一発だけ: hold のあと、この秒をかけてゆっくり半分へ（うなりの尾が長く残る）
   };
   const air = { dur: 0.22 + 1.2 * s, freq: 1700 - 800 * s, q: 1.1, attack: 0.002, gain: 0.22 + 0.06 * s };
   const sub = {
-    dur: 0.45 + 4.6 * s ** 1.3 + h, hold: h, cutoff: 115 - 60 * s, attack: 0.015 + 0.2 * s, gain: 0.3 + 0.6 * s,
+    dur: (0.45 + 4.6 * s ** 1.3) * (1 + 0.4 * hv) + h, hold: h, cutoff: (115 - 60 * s) * (1 - 0.2 * hv),
+    attack: 0.015 + 0.2 * s, gain: (0.3 + 0.6 * s) * (1 + 0.4 * hv),
     wobble: { rate: (6 - 3 * s) * (0.9 + 0.2 * rng()), depth: 0.1 + 0.18 * s },
   };
+  // 腹に響く層: 一打のあとに残る、ゆっくり下がる低い正弦波（軽く歪ませ、倍音でスマホでも重さが聞こえる）
+  const deep = hv > 0 ? { f0: 48 - 6 * s, f1: 26 - 4 * s, dur: 3.4 * hv + 0.4 * Math.min(h, 3), attack: 0.03, gain: 0.5 * hv } : null;
   const taps = [];
   const nTaps = 2 + Math.round(3 * s), first = 0.04 + 0.3 * s;
   for (let i = 0; i < nTaps; i++) {
@@ -78,13 +90,42 @@ export function boomRecipe(size, { hold = 0, open = 0, rng = Math.random } = {})
     });
   }
   // 全体の大きさ: 大きいほど少しだけ大きい（リミッターが重なりを受け止める）
-  return { size: s, level: 0.85 + 0.15 * s, crack, punch, roar, air, sub, taps, debris: { grains } };
+  return { size: s, heavy: hv, level: 0.85 + 0.15 * s, crack, punch, roar, air, sub, deep, taps, debris: { grains } };
 }
 
 // 最後の一発の爆発の音の取り決め（演出の時刻表 tl から）: 時間が戻る瞬間（resume。ガラスの一拍の終わり、肩越しの乗り手が
 // 光の壁に飲まれる直前）から宇宙へ切り替わる（chaseEnd）までうなりと地響きが鳴り続け、burstRamp 秒でこもった音から開く
+// heavy: 最後の一発はいちばん重い音（boomRecipe）
 export function finaleBoomOpts(tl, burstRamp) {
-  return { hold: Math.max(0, tl.chaseEnd - (tl.resume ?? tl.snap)), open: Math.max(0, burstRamp) };
+  return { hold: Math.max(0, tl.chaseEnd - (tl.resume ?? tl.snap)), open: Math.max(0, burstRamp), heavy: 1 };
+}
+
+// 最後の一発の地響き（持ち主の要望 09:59）: 時間が戻る（resume）と地の底から湧き、じわじわ期の残りの間にふくらみ、
+// 弾ける（snap）直後に最大、見せる期（追われる間）ずっとうなり、宇宙（chaseEnd）でこもって弱まり、横一線の光が消える
+// （lineEnd）ときに消える。そのあとの無音 → 地鳴り（deepRumble）へつなぐ。
+// 演出の秒ごとの大きさ g（0〜1）と、低域の通し幅 f（Hz。宇宙でこもる）の折れ線
+export const RUMBLE = { gain: 0.55, slow: { rate: 0.85, depth: 0.32 }, shake: { rate: 6.5, depth: 0.12 }, grit: 0.16 };
+export function rumbleKeys(tl) {
+  const r0 = tl.resume ?? tl.beatEnd, snap = tl.snap, ce = Math.max(tl.chaseEnd, snap + 0.6);
+  const lineEnd = Math.max(tl.lineEnd, ce + 0.6), flat = Math.min(Math.max(tl.flatten, ce + 0.45), lineEnd - 0.1);
+  return [
+    { t: r0, g: 0, f: 90 },
+    { t: snap, g: 0.45, f: 130 },
+    { t: snap + 0.3, g: 1, f: 170 },
+    { t: (snap + 0.3 + ce) / 2, g: 0.92, f: 160 },
+    { t: ce, g: 0.85, f: 150 },
+    { t: ce + 0.4, g: 0.5, f: 70 },
+    { t: flat, g: 0.3, f: 60 },
+    { t: lineEnd, g: 0, f: 50 },
+  ];
+}
+// 演出の t の地響き（折れ線の間はまっすぐ。前後は 0）
+export function rumbleAt(keys, t) {
+  if (t <= keys[0].t || t >= keys[keys.length - 1].t) return { g: 0, f: t <= keys[0].t ? keys[0].f : keys[keys.length - 1].f };
+  let i = 1;
+  while (keys[i].t < t) i++;
+  const a = keys[i - 1], b = keys[i], u = (t - a.t) / Math.max(1e-9, b.t - a.t);
+  return { g: a.g + (b.g - a.g) * u, f: a.f + (b.f - a.f) * u };
 }
 
 // 爆発の衝撃と地響きを軽く歪ませる曲線（tanh。k が大きいほど強く）
@@ -93,7 +134,7 @@ function softClip(k, n = 1024) {
   for (let i = 0; i < n; i++) { const x = (i / (n - 1)) * 2 - 1; c[i] = Math.tanh(k * x) / norm; }
   return c;
 }
-const punchCurve = softClip(2.2), subCurve = softClip(1.6);
+const punchCurve = softClip(2.2), subCurve = softClip(1.6), rumbleCurve = softClip(2.6);
 
 // 爆発の音のまとめの道の天井: 払うが続けて重なる・大きな一発と重なると、鋭い衝撃の頭がリミッター（アタック 2 ms）を
 // すり抜けて 1 を超えることがある。爆発の音だけをまとめて、knee までは素通し、その上はなめらかに ceil へ寄せる
@@ -128,6 +169,12 @@ export function createAudio() {
   let boomBus = null; // 爆発の音のまとめ（天井の曲線を通って master へ）
   let drone = null; // 時間切れの結末の低い唸り（鳴っている間だけ）
   let hidden = false; // タブが隠れている間（suspend から resume まで）
+  // 瓦礫の崩れる音の道: 音のもと（起動時に数種類だけ書き出して使い回す）→ 一つごとの大きさ・左右 → debrisBus → debrisLp →
+  // リミッター。master を通さない（地鳴りが master を 0 に保つ間に始まるリプレイでも鳴らせるように）。
+  // 演出の無音の間は黙り、宇宙ではこもる（debrisMode）
+  let debrisBus = null, debrisLp = null, collapseBufs = [];
+  const collapseGate = createCollapseGate();
+  let rumbleSrcs = null; // 最後の一発の地響き（鳴っている間だけ）
 
   function build() {
     const AC = window.AudioContext || window.webkitAudioContext;
@@ -178,6 +225,37 @@ export function createAudio() {
     boomBus.gain.value = 1 / BOOM_CLIP.range;
     const clip = ctx.createWaveShaper(); clip.curve = boomClipCurve(); clip.oversample = '2x';
     boomBus.connect(clip); clip.connect(master);
+    debrisLp = ctx.createBiquadFilter();
+    debrisLp.type = 'lowpass'; debrisLp.frequency.value = 20000; debrisLp.Q.value = 0.5;
+    debrisLp.connect(limiter);
+    debrisBus = ctx.createGain(); debrisBus.gain.value = 1;
+    debrisBus.connect(debrisLp);
+    // 音のもとは最初のタップで一度に作らず、一つずつ間をあけて書き出す（中くらいの Android で、タップの瞬間に引っかからない）。
+    // 鳴らす時までにできていなければ、そのとき作る
+    collapseBufs = new Array(COLLAPSE.variants).fill(null);
+    let next = 0;
+    const idle = () => { if (next < COLLAPSE.variants) { collapseBuf(next++); setTimeout(idle, 30); } };
+    if (typeof setTimeout === 'function') setTimeout(idle, 30);
+  }
+  function collapseBuf(v) {
+    if (!collapseBufs[v]) {
+      const data = renderCollapse(ctx.sampleRate, v + 1);
+      const b = ctx.createBuffer(1, data.length, ctx.sampleRate);
+      b.getChannelData(0).set(data);
+      collapseBufs[v] = b;
+    }
+    return collapseBufs[v];
+  }
+
+  // 瓦礫の音の道の状態: open（ふつう）・off（演出の無音）・muffled（宇宙。こもって弱く）・replay（リプレイ。少し控えめ）
+  function setDebris(mode) {
+    if (!debrisBus) return;
+    const t = now(), g = debrisBus.gain, f = debrisLp.frequency;
+    g.cancelScheduledValues(t); f.cancelScheduledValues(t);
+    g.setValueAtTime(g.value, t); f.setValueAtTime(f.value, t);
+    if (mode === 'off') { g.linearRampToValueAtTime(0, t + 0.02); f.setValueAtTime(20000, t + 0.02); }
+    else if (mode === 'muffled') { f.exponentialRampToValueAtTime(160, t + 0.4); g.linearRampToValueAtTime(0.45, t + 0.4); }
+    else { f.setValueAtTime(20000, t); g.setValueAtTime(mode === 'replay' ? 0.7 : 1, t); }
   }
 
   const ready = () => ctx && ctx.state === 'running';
@@ -257,6 +335,7 @@ export function createAudio() {
       master.gain.setValueAtTime(0, t);
       out.frequency.cancelScheduledValues(t);
       out.frequency.setValueAtTime(20000, t);
+      setDebris('off');
     },
     // 時間が戻る: 世界の音が一気に戻る
     unsilence() {
@@ -265,6 +344,7 @@ export function createAudio() {
       silenceEnd = t;
       master.gain.cancelScheduledValues(t);
       master.gain.setValueAtTime(0.8, t);
+      setDebris('open');
     },
     // 心臓の鼓動（ドクン）。i: 何回目か（だんだん強く）
     heartbeat(i = 0) {
@@ -285,7 +365,63 @@ export function createAudio() {
       master.gain.cancelScheduledValues(t);
       master.gain.setValueAtTime(0.8, t);
       master.gain.linearRampToValueAtTime(0, t + sec);
+      setDebris('muffled');
     },
+    // 最後の一発の地響き（rumbleKeys）。時間が戻る瞬間（演出の resume。cue 'snap'）に呼ぶと、時刻表どおりに最後まで予定する。
+    // 演出の道（cine）から鳴る（世界の音が宇宙で消えても、こもって残る）。ブラウンノイズの超低域に、軽い歪みの倍音と
+    // 低い帯域のざらつき（スマホでも聞こえる）、ゆっくりしたうねりと細かい揺れを持たせる
+    finaleRumble(tl) {
+      if (!ready()) return;
+      this.rumbleStop();
+      const keys = rumbleKeys(tl), t0 = now() - keys[0].t, end = keys[keys.length - 1].t;
+      const src = ctx.createBufferSource(); src.buffer = brownBuf; src.loop = true;
+      const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.Q.value = 0.8;
+      const grit = ctx.createBufferSource(); grit.buffer = noiseBuf; grit.loop = true;
+      const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 230; bp.Q.value = 1.1;
+      const gg = ctx.createGain(); gg.gain.value = RUMBLE.grit;
+      const g = ctx.createGain();
+      for (const [i, k] of keys.entries()) {
+        const at = t0 + k.t, v = Math.max(0.0001, k.g * RUMBLE.gain);
+        if (i === 0) { g.gain.setValueAtTime(0.0001, at); lp.frequency.setValueAtTime(k.f, at); }
+        else { g.gain.linearRampToValueAtTime(v, at); lp.frequency.linearRampToValueAtTime(k.f, at); }
+      }
+      const wob = ctx.createGain(); wob.gain.value = 1;
+      const lfos = [RUMBLE.slow, RUMBLE.shake].map(({ rate, depth }) => {
+        const o = ctx.createOscillator(); o.frequency.value = rate;
+        const og = ctx.createGain(); og.gain.value = depth;
+        o.connect(og); og.connect(wob.gain);
+        return o;
+      });
+      const ss = ctx.createWaveShaper(); ss.curve = rumbleCurve;
+      const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 24; hp.Q.value = 0.7;
+      src.connect(lp); lp.connect(g); grit.connect(bp); bp.connect(gg); gg.connect(g);
+      g.connect(wob); wob.connect(ss); ss.connect(hp); hp.connect(cine);
+      const stopAt = t0 + end + 0.1;
+      rumbleSrcs = [src, grit, ...lfos];
+      for (const n of rumbleSrcs) { n.start(now()); n.stop(stopAt); }
+    },
+    rumbleStop() {
+      if (!rumbleSrcs || !ready()) { rumbleSrcs = null; return; }
+      for (const n of rumbleSrcs) n.stop(now() + 0.05);
+      rumbleSrcs = null;
+    },
+    // 瓦礫の崩れる音。hits: このフレームの命中（collapseHitInfo の { id, size, near, pan }）。毎フレーム呼んでよい
+    // （空でも、ためた命中を間隔が空いたら鳴らす）。頻度の上限（collapse.js）を超えた分は、いちばん大きい一つにまとめる
+    collapse(hits) {
+      if (!ready() || !collapseBufs.length) return;
+      const pick = collapseGate.take(hits, now());
+      if (!pick) return;
+      const v = collapseVoice(pick.hit, pick.merged);
+      const t = now();
+      const src = ctx.createBufferSource(); src.buffer = collapseBuf(v.variant);
+      src.playbackRate.value = v.rate;
+      const g = ctx.createGain(); g.gain.value = v.gain;
+      const pan = ctx.createStereoPanner(); pan.pan.value = v.pan;
+      src.connect(g); g.connect(pan); pan.connect(debrisBus);
+      src.start(t); src.stop(t + v.dur + 0.02);
+    },
+    // 瓦礫の音の道の状態（リプレイの始まりで 'replay'、遊びに戻ったら 'open'）
+    debrisMode(mode) { if (ready()) setDebris(mode); },
     // 無音のあとの、低い地鳴り（長くゆっくり来て、ゆっくり引く）
     deepRumble() {
       if (!ready()) return;
@@ -401,6 +537,7 @@ export function createAudio() {
       rg.gain.linearRampToValueAtTime(w.gain, t + w.attack);
       rg.gain.exponentialRampToValueAtTime(w.gain * w.drop, t + w.knee);
       if (w.hold > w.knee) rg.gain.exponentialRampToValueAtTime(w.gain * w.drop * 0.6, t + w.hold);
+      if (w.tail > 0) rg.gain.exponentialRampToValueAtTime(w.gain * w.drop * 0.45, t + Math.max(w.hold, w.knee) + w.tail);
       rg.gain.exponentialRampToValueAtTime(0.0001, t + w.dur);
       const rs = ctx.createGain(); rs.gain.value = 0.5;
       roarSrc.connect(rlp); rlp.connect(rg); rg.connect(bus); rg.connect(rs); rs.connect(send);
@@ -424,6 +561,13 @@ export function createAudio() {
       lfo.connect(lg); lg.connect(wob.gain); lfo.start(t); lfo.stop(t + b.dur + 0.05);
       const ss = ctx.createWaveShaper(); ss.curve = subCurve;
       subSrc.connect(slp); slp.connect(sg); sg.connect(wob); wob.connect(ss); ss.connect(bus);
+      // 4b. 腹に響く層（最後の一発だけ）: ゆっくり下がる低い正弦波を、地響きと同じ揺れと歪みに通す
+      if (r.deep) {
+        const q = r.deep, dO = ctx.createOscillator(); dO.type = 'sine';
+        dO.frequency.setValueAtTime(q.f0, t); dO.frequency.exponentialRampToValueAtTime(q.f1, t + q.dur * 0.8);
+        const dG = ctx.createGain(); env(dG.gain, t, q.attack, q.gain, q.dur);
+        dO.connect(dG); dG.connect(wob); dO.start(t); dO.stop(t + q.dur + 0.05);
+      }
       // 5. 破片のぱらぱら: 一つのノイズの音量を粒ごとに跳ね上げ、帯域を粒ごとに変える
       const dg = r.debris.grains;
       if (dg.length) {
