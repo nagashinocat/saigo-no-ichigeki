@@ -96,3 +96,28 @@ test('主人公は heroBody の体（画質の段の細かさ）で、なびく�
   expect(xray).toBeTruthy();
   expect(xray.material.vertexShader).toBe(view.hero.material.vertexShader);
 });
+
+test('主人公の体の差し替え: 粗い体で始め、細かい体ができたら差し替える（建物の陰の重ねも同じ体、材質と位置はそのまま）', async () => {
+  const { buildHeroBody } = await import('../../src/render/heroBody.js');
+  const low = buildHeroBody({ detail: 'low' }), mid = buildHeroBody({ detail: 'mid' });
+  const view = createEnemyView(new THREE.Scene(), 'mid', { sunDir: new THREE.Vector3(0.3, 1, 0.2).normalize(), heroBody: low });
+  expect(view.hero.geometry).toBe(low.geometry);
+  const xray = view.group.getObjectByName('hero-xray');
+  expect(xray.geometry).toBe(low.geometry);
+  const mat = view.hero.material, xmat = xray.material;
+  view.setHeroYaw(0.7);
+  view.sync([], {});
+  view.setHeroBody(mid);
+  expect(view.hero.geometry).toBe(mid.geometry);
+  expect(xray.geometry).toBe(mid.geometry);
+  expect(view.heroBody).toBe(mid);
+  expect(view.hero.material).toBe(mat);
+  expect(xray.material).toBe(xmat);
+  expect(view.heroBuildMs).toBe(mid.buildMs);
+  // シェーダーが読む属性はどちらの体にもある（差し替えてもシェーダーを作り直さない）
+  for (const k of Object.keys(low.geometry.attributes)) expect(mid.geometry.attributes[k]?.itemSize, k).toBe(low.geometry.attributes[k].itemSize);
+  view.sync([], {});
+  const m = new THREE.Matrix4(), p = new THREE.Vector3();
+  view.hero.getMatrixAt(0, m); p.setFromMatrixPosition(m);
+  expect(p.y).toBe(0);
+});

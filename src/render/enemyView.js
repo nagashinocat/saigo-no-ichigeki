@@ -421,7 +421,7 @@ export function createEnemyView(scene, tier, { sunDir = new THREE.Vector3(0.8, 0
   markersHidden.name = 'soldier-markers-hidden';
 
   // 主人公（1体だけのインスタンス）。体の細かさは画質の段で決める（組み立ては段ごとに 1 回）
-  const body = heroBody ?? buildHeroBody({ detail: tier });
+  let body = heroBody ?? buildHeroBody({ detail: tier });
   const heroGeo = body.geometry;
   const heroUniforms = { ...uniforms, uSil: { value: 0 }, uWindK: { value: 1 }, uWind: { value: new THREE.Vector3(...HERO_WIND) }, uRim: { value: new THREE.Color(1.0, 0.72, 0.45) } };
   const hero = new THREE.InstancedMesh(heroGeo, new THREE.ShaderMaterial({ uniforms: heroUniforms, vertexShader: HERO_VERT, fragmentShader: HERO_FRAG }), 1);
@@ -444,8 +444,20 @@ export function createEnemyView(scene, tier, { sunDir = new THREE.Vector3(0.8, 0
   return {
     group, hero, mesh, shadows, tier, // 形は画質の段では変えない（透かしの重ねだけ high のみ）
     heroBuildMs: body.buildMs, // 主人公の体を組み立てた時間（ms。同じ段の 2 回目からは組み立てずに使い回す）
-    // 画質の段が途中で下がったとき
+    // 画質の段が途中で下がったとき（主人公の体は起動したときの段の細かさのまま。組み直さない）
     setTier(t) { xray.visible = xrayFor(t); },
+    // 主人公の体を差し替える（起動時は粗い体で始め、細かい体ができたら差し替える）。
+    // 属性は同じなので材質（シェーダー）はそのまま。前の体の GPU の buffer は手放す（体のデータは buildHeroBody が覚えている）
+    setHeroBody(b) {
+      if (b === body) return;
+      const old = hero.geometry;
+      hero.geometry = b.geometry;
+      heroXray.geometry = b.geometry;
+      body = b;
+      this.heroBuildMs = b.buildMs;
+      old.dispose();
+    },
+    get heroBody() { return body; },
     // 毎フレーム: 軍勢の一覧を姿に写す。fronts は地面と同じ球の一覧（えぐれた地面の上に立つ）、
     // pointScale は 1m を画素へ直す係数（距離 1m のとき）、glow は爆発の明るさ（0〜1）、
     // silhouette は主人公を光を背にした影絵にする強さ（0〜1。リプレイの最後のカット）

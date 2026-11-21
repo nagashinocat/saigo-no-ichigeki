@@ -14,7 +14,7 @@ import { createExplosionView } from './render/explosionView.js';
 import { createFrontTracker } from './render/sphereDeform.js';
 import { createHeroAura } from './render/heroAura.js';
 import { createEnemyView } from './render/enemyView.js';
-import { buildHeroBody } from './render/heroBody.js';
+import { buildHeroBody, createHeroBodyBuilder } from './render/heroBody.js';
 import { createCinematic, leadFor } from './render/cinematic.js';
 import { FINALE } from './render/finaleTimeline.js';
 import { planFinale, planRetreat } from './render/finalePlan.js';
@@ -61,8 +61,10 @@ cityScene.add(style.sky, ...style.lights, cityView.group);
 const handDetail = tier === 'high' ? 'high' : 'low';
 // 左手は右手の形を鏡に映して使い回す（組み立ては1回ぶん）
 const hand = createHandView({ right: buildHandModel({ detail: handDetail }), left: buildHandModel({ detail: handDetail, side: 'left' }) }, tier);
-// 主人公の体（宙に浮く人影）もコードで組み立てる。細かさは画質の段（重いシェーダーの準備より先に組み立てる）
-const heroBody = buildHeroBody({ detail: tier });
+// 主人公の体（宙に浮く人影）もコードで組み立てる。最初のフレームを待たせないよう、起動時は粗い体（low）で始め、
+// 画質の段の細かい体は最初のフレームのあと、手の空いた時間に区切りごとに組み立てて差し替える（heroUpgrade）
+const heroBody = buildHeroBody({ detail: 'low' });
+const heroBuilder = tier === 'low' ? null : createHeroBodyBuilder({ detail: tier });
 
 // 入力・HUD・結果・音
 const audio = createAudio();
@@ -187,6 +189,13 @@ game.on('puff', (shot) => { explosionView.begin(shot); hand.release(shot); });
 
 // 軍勢と主人公の姿
 const enemyView = createEnemyView(cityScene, tier, { sunDir: style.sunDir, heroBody });
+// 細かい主人公の体は、遅くとも最後の一発を放つとき（と時間切れのとき）までに差し替える（まだなら残りをここで一度に組み立てる）。
+// 演出・リプレイ・時間切れの結末で近くに映る主人公は、かならず画質の段の体になる
+function ensureHeroBody() {
+  if (heroBuilder && enemyView.heroBody !== heroBuilder.finish()) enemyView.setHeroBody(heroBuilder.body);
+}
+game.on('shot', ensureHeroBody);
+game.on('over', ensureHeroBody);
 const heroAura = createHeroAura(tier); // 浮いている主人公のまわりの力のゆらぎ
 cityScene.add(heroAura.group);
 
@@ -452,6 +461,17 @@ function draw() {
 
 let last = performance.now();
 let paused = false;
+let firstFrameMs = null; // ページを開いてから最初のフレームを描き終えるまで（ms。計測用）
+// 最初のフレームのあと: 細かい主人公の体を、手の空いた時間に区切り 1 つずつ組み立てる
+const idle = (fn) => (window.requestIdleCallback ? window.requestIdleCallback(fn, { timeout: 500 }) : setTimeout(fn, 16));
+function onFirstFrame() {
+  if (!heroBuilder) return;
+  const tick = () => {
+    if (heroBuilder.done) return;
+    if (heroBuilder.step()) enemyView.setHeroBody(heroBuilder.body); else idle(tick);
+  };
+  idle(tick);
+}
 function frame(now) {
   const dt = Math.min(Math.max((now - last) / 1000, 0), MAX_FRAME_DT);
   last = now;
@@ -460,6 +480,7 @@ function frame(now) {
     simulate(dt);
     draw();
   }
+  if (firstFrameMs === null) { firstFrameMs = performance.now(); onFirstFrame(); }
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
@@ -515,6 +536,7 @@ if (debugMode) {
   window.__views = views;
   window.__hand = hand;
   window.__enemyView = enemyView;
+  Object.defineProperty(window, '__firstFrameMs', { get: () => firstFrameMs });
   window.__cinematic = cinematic;
   window.__replay = replay;
   window.__blackhole = blackhole;

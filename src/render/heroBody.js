@@ -64,7 +64,7 @@ export const HERO_WIND = Object.freeze([0, 0.45, -1].map((v, _, a) => v / Math.h
 const DETAIL = {
   high: { body: 0.025, head: 0.0155, hand: 0.0105, tufts: 30, tuftSeg: 5, tuftSides: 5, coatU: 12, coatV: 9, scarfSeg: 12 },
   mid: { body: 0.03, head: 0.019, hand: 0.013, tufts: 24, tuftSeg: 4, tuftSides: 4, coatU: 10, coatV: 7, scarfSeg: 10 },
-  low: { body: 0.04, head: 0.024, hand: 0.017, mitten: true, tufts: 16, tuftSeg: 3, tuftSides: 4, coatU: 8, coatV: 5, scarfSeg: 7 },
+  low: { body: 0.042, head: 0.025, hand: 0.017, mitten: true, tufts: 14, tuftSeg: 3, tuftSides: 4, coatU: 8, coatV: 5, scarfSeg: 7 },
 };
 
 const COLORS = {
@@ -593,8 +593,11 @@ function segDist(s, x, y, z) {
   return len3(px - s.ab.x * t, py - s.ab.y * t, pz - s.ab.z * t);
 }
 
-function build(detail, pose) {
-  const t0 = performance.now();
+// 組み立ての本体。重い区切り（体・頭・手・残り）ごとに yield する（少しずつ組み立てられる）。
+// buildMs は実際に計算していた時間の和（区切りの間に待った時間は数えない）
+function* buildSteps(detail, pose) {
+  let ms = 0, t0 = performance.now();
+  const pause = function* () { ms += performance.now() - t0; yield; t0 = performance.now(); };
   const opt = DETAIL[detail];
   const F = fk(pose);
   const C = Object.fromEntries(Object.entries(COLORS).map(([k, v]) => [k, srgb(v)]));
@@ -639,9 +642,11 @@ function build(detail, pose) {
   const bp = bodyPrims(F);
   const bb = boxOf(bp);
   addField('body', bp, makeField(bp, bb), bb, opt.body);
+  yield* pause();
   const hp = headPrims(F);
   const hb = boxOf(hp);
   addField('head', hp, makeField(hp, hb), hb, opt.head);
+  yield* pause();
   const palmNormal = {};
   const hm = handLocalMesh(opt.hand, !!opt.mitten);
   for (const side of ['L', 'R']) {
@@ -670,6 +675,7 @@ function build(detail, pose) {
     counts[`hand${side}`] = nv;
     palmNormal[side] = new THREE.Vector3(-s, 0, 0).applyQuaternion(hq).toArray();
   }
+  yield* pause();
   let mark = sink.n;
   hairTufts(sink, F, opt, C); counts.hair = sink.n - mark; mark = sink.n;
   coatSkirt(sink, F, opt, C); counts.coat = sink.n - mark; mark = sink.n;
@@ -727,18 +733,40 @@ function build(detail, pose) {
     detail, pose, geometry, skinIndex, skinWeight, joints, palmNormal, bones: HERO_BONES,
     counts: { ...counts, vertices: nv, triangles: sink.ni / 3 },
     _fk: F, _dy: dy,
-    buildMs: Math.max(1e-3, performance.now() - t0),
+    buildMs: Math.max(1e-3, ms + performance.now() - t0),
   };
 }
 
-const cache = new Map();
-// detail: 'high' | 'mid' | 'low'、pose: FLOAT_POSE（省いたとき）など。同じ組は 1 回だけ組み立てる
+// 組み立て途中のもの（createHeroBodyBuilder）と、できあがったもの。どちらも姿勢 → 細かさ で引く
+const cache = new Map(), pending = new Map();
+const slot = (m, pose) => { let byPose = m.get(pose); if (!byPose) m.set(pose, (byPose = new Map())); return byPose; };
+const detailOf = (detail) => (DETAIL[detail] ? detail : 'mid');
+
+// 少しずつ組み立てる。step() は区切り 1 つぶん進めて、できあがったら true。finish() は残りを一度に進めて体を返す。
+// できあがった体は buildHeroBody と同じものとして覚える（同じ組をもう組み立てない）
+export function createHeroBodyBuilder({ detail = 'mid', pose = FLOAT_POSE } = {}) {
+  const d = detailOf(detail);
+  const done = slot(cache, pose), wait = slot(pending, pose);
+  if (!done.has(d) && !wait.has(d)) wait.set(d, buildSteps(d, pose));
+  const step = () => {
+    if (done.has(d)) return true;
+    const r = wait.get(d).next();
+    if (!r.done) return false;
+    done.set(d, r.value);
+    wait.delete(d);
+    return true;
+  };
+  return {
+    step,
+    get done() { return done.has(d); },
+    get body() { return done.get(d) ?? null; },
+    finish() { while (!step()); return done.get(d); },
+  };
+}
+
+// detail: 'high' | 'mid' | 'low'、pose: FLOAT_POSE（省いたとき）など。同じ組は 1 回だけ組み立てる（途中のものは続きから）
 export function buildHeroBody({ detail = 'mid', pose = FLOAT_POSE } = {}) {
-  const d = DETAIL[detail] ? detail : 'mid';
-  let byPose = cache.get(pose);
-  if (!byPose) cache.set(pose, (byPose = new Map()));
-  if (!byPose.has(d)) byPose.set(d, build(d, pose));
-  return byPose.get(d);
+  return createHeroBodyBuilder({ detail, pose }).finish();
 }
 
 // 組み立てた姿勢に、骨ごとの回転 rot（{ 骨の名前: [rx, ry, rz] }、親から見た向きに重ねる）を足した頂点の位置

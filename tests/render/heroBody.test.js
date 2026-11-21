@@ -1,10 +1,10 @@
 import { test, expect } from 'vitest';
 import * as THREE from 'three';
-import { buildHeroBody, skinPose, HERO_BODY, HERO_BONES, REST_POSE, FLOAT_POSE, HERO_WIND } from '../../src/render/heroBody.js';
+import { buildHeroBody, createHeroBodyBuilder, skinPose, HERO_BODY, HERO_BONES, REST_POSE, FLOAT_POSE, HERO_WIND } from '../../src/render/heroBody.js';
 
 // 主人公の体（距離の場 + Surface Nets の体・頭・両手と、髪の房・上着の裾・襟巻きの尾）。
 // 比率は立ち姿（REST_POSE）で、シルエットは宙に浮く姿（FLOAT_POSE）で確かめる。
-const rest = buildHeroBody({ detail: 'low', pose: REST_POSE });
+const rest = buildHeroBody({ detail: 'mid', pose: REST_POSE }); // 比率は格子の粗さに引きずられない中くらいの細かさで
 const float = { low: buildHeroBody({ detail: 'low' }), mid: buildHeroBody({ detail: 'mid' }), high: buildHeroBody({ detail: 'high' }) };
 
 const pos = (b) => b.geometry.attributes.position;
@@ -15,10 +15,10 @@ function bounds(b, filter = () => true) {
   return box;
 }
 
-test('頂点数は軽い: high 8000 以下、low 3000 以下、mid はその間', () => {
+test('頂点数は軽い: high 8000 以下、low 3000 以下（余裕を見て 2700 以下）、mid はその間', () => {
   const n = (d) => pos(float[d]).count;
   expect(n('high')).toBeLessThanOrEqual(8000);
-  expect(n('low')).toBeLessThanOrEqual(3000);
+  expect(n('low')).toBeLessThanOrEqual(2700);
   expect(n('mid')).toBeLessThanOrEqual(n('high'));
   expect(n('mid')).toBeGreaterThanOrEqual(n('low'));
   // 細かい段ほど細かい（同じ形を粗くしただけ）
@@ -222,4 +222,27 @@ test('面はどれも外向き（頂点の法線と三角形の巻きがそろ�
 test('同じ細かさは 1 回だけ組み立てる（2 回目は同じものを返す）。組み立ての時間を記録する', () => {
   expect(buildHeroBody({ detail: 'mid' })).toBe(float.mid);
   expect(float.mid.buildMs).toBeGreaterThan(0);
+});
+
+test('少しずつ組み立てる: 区切りごとに step し、できあがった体は一度に組み立てたものと同じで、同じものとして覚える', () => {
+  const pose = { ...FLOAT_POSE }; // 覚えていない組
+  const b = createHeroBodyBuilder({ detail: 'low', pose });
+  expect(b.done).toBe(false);
+  expect(b.body).toBe(null);
+  let steps = 0;
+  while (!b.step()) steps++;
+  expect(steps).toBeGreaterThanOrEqual(3); // 体・頭・手・残りの区切り
+  expect(b.done).toBe(true);
+  expect(buildHeroBody({ detail: 'low', pose })).toBe(b.body);
+  const ref = float.low.geometry.attributes.position.array, got = b.body.geometry.attributes.position.array;
+  expect(got.length).toBe(ref.length);
+  for (let i = 0; i < ref.length; i += 97) expect(got[i]).toBeCloseTo(ref[i], 6);
+  // 途中で buildHeroBody を呼ぶと、続きから最後まで組み立てる（二度は組み立てない）
+  const pose2 = { ...FLOAT_POSE };
+  const c = createHeroBodyBuilder({ detail: 'low', pose: pose2 });
+  c.step();
+  const whole = buildHeroBody({ detail: 'low', pose: pose2 });
+  expect(c.done).toBe(true);
+  expect(c.body).toBe(whole);
+  expect(c.finish()).toBe(whole);
 });
