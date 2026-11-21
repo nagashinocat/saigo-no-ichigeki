@@ -27,7 +27,8 @@ export const INTRO = {
   // 走り（足が地面を打つ間隔 stride 秒）: ライトの拍ですくんだ runFrom 秒あと〜、隠れる拍の 0〜stopAt 秒
   run: { stride: 0.26, afterFlinch: 0.42, hideStop: 1.0 },
   // 6: 手。貯め始め（ignite 秒で球が灯る）→ grow 秒で満ちる → releaseAt で放つ（握り込む）
-  hands: { ignite: 0.3, grow: 1.3, releaseAt: 1.75, flash: 0.2 },
+  // releaseAt: 放つ瞬間（握り込み・音楽を止める所）。録画の 30 fps のコマの頭にそろえる（9.4 + 1.76667 = 11.16667 秒 = 335 コマ目）
+  hands: { ignite: 0.3, grow: 1.3, releaseAt: 53 / 30, flash: 0.2 },
 };
 
 const clamp01 = (x) => Math.min(1, Math.max(0, x));
