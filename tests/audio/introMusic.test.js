@@ -7,7 +7,8 @@ import { levelFor } from '../../src/audio/bgmScore.js';
 test('導入の音楽: BGM の最高潮（層 4）を導入の 0 秒から、力を放つ瞬間（握り込む）の小節の頭でぴたりと止める', () => {
   const tl = createIntroTimeline();
   const p = introMusicPlan(tl);
-  const cut = tl.beat('hands').start + INTRO.hands.releaseAt;
+  const cut = tl.beat('hands').start + INTRO.hands.releaseAt + INTRO_MUSIC.clampFrame; // 組んだ指が初めて映るコマ
+  expect((cut * 30) % 1).toBeCloseTo(0, 6); // 録画のコマの頭
   expect(p.cut).toBeCloseTo(cut, 9);
   // 最高潮の層（残り 10 秒の層 3 に長押しの +1）
   expect(levelFor(INTRO_MUSIC.cond)).toBe(4);

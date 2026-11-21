@@ -10,12 +10,13 @@ import { cachedVoice, VOICES } from './bgmVoices.js';
 // bars 小節目の頭（次の 1 拍目）になるように決める（止まる所が拍の頭に落ちる）。止めたあと（白と題字）は無音。
 // TAP START でゲームの BGM がいつもどおり始めから鳴る（きれいに始め直す）。
 // 同じ並びをライブ（AudioContext）と録画（OfflineAudioContext）で組む（乱数を使わない譜面なので、毎回同じ）
-export const INTRO_MUSIC = { bars: 5, gain: 1.4, cutTail: 0.008, cond: { elapsed: 55, power: 1, holding: true } };
+export const INTRO_MUSIC = { clampFrame: 1 / 30, bars: 5, gain: 1.4, cutTail: 0.008, cond: { elapsed: 55, power: 1, holding: true } };
 
 export function introMusicPlan(tl) {
   const hands = tl.beat('hands');
   if (!hands) return null;
-  const cut = hands.start + INTRO.hands.releaseAt; // 力を放つ瞬間（握り込む）
+  // 力を放つ瞬間（握り込む）。止めるのは、組んだ指が初めて映るコマ（放ってから 30 fps の 1 コマ後）の頭
+  const cut = hands.start + INTRO.hands.releaseAt + INTRO_MUSIC.clampFrame;
   const tempo = (INTRO_MUSIC.bars * 4 * 60) / cut; // 付点四分の拍 / 分
   const seq = createSequencer({ start: 0, tempo });
   const events = seq.advance(cut, () => INTRO_MUSIC.cond).filter((e) => e.t < cut - 1e-6);
