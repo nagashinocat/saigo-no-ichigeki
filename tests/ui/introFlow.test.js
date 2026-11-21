@@ -119,3 +119,23 @@ test('撮影用の seek: 時刻をそのまま置ける（題字の終わりを�
   flow.seek(99);
   expect(flow.state).toBe('title');
 });
+
+test('TAP の直後の準備の間にたまったタップ（timeStamp が readyAt より前）は導入を飛ばさない。準備のあとのタップは今までどおり飛ばす', () => {
+  let skips = 0;
+  const flow = createIntroFlow({ mode: 'full', onSkip: () => skips++ });
+  expect(flow.consumePointer(100)).toBe(true); // TAP: 導入へ（onBegin の準備がここで走る）
+  expect(flow.state).toBe('intro');
+  flow.markReady(1300); // onBegin の終わり
+  expect(flow.consumePointer(900)).toBe(true); // 準備の間に押した 2 回目（あとから届く）: 受け取るが何もしない
+  expect(flow.state).toBe('intro');
+  expect(skips).toBe(0);
+  expect(flow.consumePointer(1300.5)).toBe(true); // 準備のあと: 題字へ飛ばす
+  expect(flow.state).toBe('title');
+  expect(skips).toBe(1);
+  // timeStamp を渡さない呼び方は今までどおり
+  const f2 = createIntroFlow({ mode: 'full' });
+  f2.consumePointer();
+  f2.markReady(5000);
+  f2.consumePointer();
+  expect(f2.state).toBe('title');
+});

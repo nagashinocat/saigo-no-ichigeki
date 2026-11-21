@@ -115,7 +115,7 @@ const press = createPressTracker({
 canvas.addEventListener('pointerdown', (e) => {
   if (e.pointerType === 'mouse' && e.button !== 0) return;
   // 導入（S6）: ゲームが始まるまで、画面のタップは導入のもの（始める・飛ばす）。長押しにはならない
-  if (introFlow.consumePointer()) return;
+  if (introFlow.consumePointer(e.timeStamp)) return;
   // リプレイの間は、画面のタップで飛ばして結果へ
   if (replay.active && !replay.finished) { skipReplay(); return; }
   // キャプチャに失敗しても（もう離した指・一部のブラウザ）押下は始める
@@ -134,7 +134,7 @@ window.addEventListener('keydown', (e) => {
     if (['Space', 'Enter'].includes(e.code)) {
       e.preventDefault();
       if (!audio.running) audio.unlock(); // キーでも音を鳴らせるように（画面のタップと同じ）
-      if (!e.repeat && !introFlow.start()) introFlow.consumePointer();
+      if (!e.repeat && !introFlow.start()) introFlow.consumePointer(e.timeStamp);
     }
     return;
   }
@@ -273,6 +273,8 @@ const introFlow = createIntroFlow({
     warmIntro(); // 導入の材質と形も（導入の最初のフレームで止まらない）
     if (out) { introT0 = out.ctx.currentTime + INTRO_AUDIO_LEAD; introSfx = scheduleIntroSfx(out.ctx, out.dest, introT0, introFlow.timeline); }
     else introClock = 'dt'; // 音を鳴らせない（Web Audio がない）: 絵はフレームの dt で
+    // ここまでの準備は同期で走り、その間の画面は止まって見える。その間に押したタップ・キーは導入を飛ばさない
+    introFlow.markReady(performance.now());
   },
   onSkip() { introSfx?.cut(); },
   onStart() {
@@ -346,6 +348,8 @@ function introTick(dt) {
   if (introFlow.state === 'gate') {
     if (!intro.prepared) intro.prepareStep();
     if (prepareIntroMusic() && intro.prepared) { if (!bodyPrep.done) bodyPrep.step(); else warmIntro(); }
+    // 準備が全部終わったら「TAP」をはっきり出して脈打たせる（それまでは薄く。薄くてもタップは受け取る）
+    if (introWarmed) overlay.gate.classList.add('ready');
     return;
   }
   const out = audio.introOutput;

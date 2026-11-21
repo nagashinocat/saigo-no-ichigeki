@@ -29,6 +29,9 @@ export function createIntroFlow({ mode = 'full', onBegin = () => {}, onSkip = ()
   const timeline = createIntroTimeline({ short: mode === 'short' });
   let state = mode === 'bypass' ? 'game' : mode === 'short' ? 'intro' : 'gate';
   let time = 0, started = mode === 'bypass';
+  // TAP の直後の準備（onBegin。同期で走るので、その間に押したタップはあとから届く）が終わった時刻。
+  // 導入の間、これより前の timeStamp の入力は飛ばしに使わない
+  let readyAt = -Infinity;
   const toTitle = () => { state = 'title'; onTitle(); };
   return {
     mode, timeline,
@@ -38,9 +41,13 @@ export function createIntroFlow({ mode = 'full', onBegin = () => {}, onSkip = ()
     // ゲームが始まるまで、画面の入力は導入のもの
     get blocksInput() { return state !== 'game'; },
     get buttonVisible() { return state === 'title' && time >= timeline.buttonAt; },
-    // 画面のタップ（pointerdown）。導入が受け取ったら true（長押しへ渡さない）
-    consumePointer() {
+    // onBegin の終わりに呼ぶ（performance.now()）
+    markReady(t) { readyAt = t; },
+    // 画面のタップ（pointerdown）。導入が受け取ったら true（長押しへ渡さない）。
+    // timeStamp: 入力の時刻（event.timeStamp）。導入の間に readyAt より前のものは受け取るだけで何もしない
+    consumePointer(timeStamp = Infinity) {
       if (state === 'game') return false;
+      if (state === 'intro' && timeStamp < readyAt) return true;
       if (state === 'gate') { state = 'intro'; time = 0; onBegin(); }
       else if (state === 'intro') this.skip();
       // 'title': 題字の途中でも終わりの絵へ（ボタンを押すまでゲームは始めない）
