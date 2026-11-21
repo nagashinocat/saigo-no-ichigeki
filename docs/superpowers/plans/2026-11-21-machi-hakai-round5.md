@@ -14,6 +14,44 @@
 
 ## Tasks (in order)
 
+### R0: 難しく・止まらない軍勢（持ち主 22:15、最優先）
+Files: src/game/enemies.js, config.js, render/enemyView.js / bikePose.js, scripts/balance-sim.mjs, tests.
+- **Faster and converging harder.**
+  - Raise search, chase and approach speeds again.
+  - Spot from farther away so more riders converge at once.
+  - Patrols near the plaza join the hunt in the last 20 s.
+  - Keep the late surge.
+- **New balance target (controller ruling, owner may adjust):**
+  - Best-play full charge at p50 ≈ 54 s (52–56).
+  - Best-play clear rate 70–80% (it must be possible to fail even when playing well).
+  - No-払う reaches full 0/30.
+  - Max charge still always clears.
+  - Report the numbers.
+- **Never looks stopped in front of the hero.**
+  - Remove the spot glare pause entirely; spotting goes straight into the charge.
+  - No braking until contact (only the last ~0.5 m).
+  - Grabbing riders latch on and keep moving: a tight, jittery orbit and tug around the hero while draining, with their bikes leaning hard and thrust flaring.
+  - Riders on full slots swarm and orbit outside the grabbers, never parking.
+  - Diagnose the owner's "まだ主人公前で止まる感じ" by recording frame sequences of the approach and the grab from the overhead view, and find every place where speed drops near the hero (spot pause, brake, cling, grab, unpile).
+  - Test: the speed of every non-dead rider within 25 m of the hero stays ≥ 6 m/s in every frame (grabbing riders included, via the orbit).
+- **Shots:** approach, mass converge, grab swarm (overhead, frame sequence).
+
+### R0b: ガラスの一拍をやめ、遠くの軍勢の後ろから一気に飲まれる（持ち主 22:15）
+Files: src/render/cinematic.js, cinematicProps.js, finalePlan.js, finaleTimeline.js, enemyView setFocus/riderBody use, audio cues, tests.
+- **Remove the glass beat entirely:** the over-the-shoulder near rider, the eye glass, the extreme slow-mo and the heartbeat-only beat. Delete the now-dead code (glass and eye props) or leave it unused, as long as tests are updated honestly.
+- **New beat after the white.** The camera is placed behind a group of distant riders, ideally outer patrols several hundred metres from ground zero, in the street or on a rooftop line. It looks toward the far-off explosion, which glows on the horizon at the hero's position.
+  - The blast erupts in the distance.
+  - The light wall races across the city toward the camera, swallowing buildings, the expressway and the trains.
+  - It engulfs these riders from behind them in one sweep: a silhouette against the wall, then blown away.
+  - The camera is engulfed, and the cut goes into the existing chase/showcase/space flow.
+  - It feels immediate (一気に), not slow-mo.
+  - The focus rider body (riderBody) can be reused for the nearest rider in frame.
+- **Timeline:** finaleTimeline is reworked accordingly; total length stays ≤ the current length + 0.5 s. finaleGameSync must hold at 60/30/20 fps.
+- **Audio:** the boom opens when the blast erupts. The distant rumble arrives, then the roar as the wall hits. Sound tracks the screen (owner 13:06).
+- **Spot selection (finalePlan):** pick the riders, which must exist (fall back to a patrol), and a camera spot with a clear line of sight to ground zero. Test the selection.
+- **Replay:** the replay cuts stay valid.
+- **Shots:** the new beat at several times, plus the transition into the chase.
+
 ### R1: 払うの腕前 + 軍勢の種類
 Files: src/game/enemies.js, game.js, config.js, render/enemyView.js (+bikePose/hoverBike for looks), audio for the hits, scripts/balance-sim.mjs, tests.
 
