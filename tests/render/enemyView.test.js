@@ -1,6 +1,7 @@
 import { test, expect } from 'vitest';
 import * as THREE from 'three';
 import { createEnemyView, ENEMY_LOOK } from '../../src/render/enemyView.js';
+import { CONFIG } from '../../src/config.js';
 
 test('主人公は浮いている: 足元に大きな穴ができても、姿の高さは y=0 のまま', () => {
   const view = createEnemyView(new THREE.Scene(), 'mid', { sunDir: new THREE.Vector3(0.3, 1, 0.2).normalize() });
@@ -176,7 +177,7 @@ test('スピード感: 推進の光の尾は一つの instanced の網（バイ�
   const scene = new THREE.Scene();
   const view = createEnemyView(scene, 'mid', { sunDir: new THREE.Vector3(0.3, 1, 0.2).normalize() });
   const list = [
-    { id: 1, x: 13, z: -30, dist: Math.hypot(13, 30), angle: Math.atan2(-30, 13), state: 'search', heading: Math.PI / 2, speed: 24, turn: 0, lean: 6 },
+    { id: 1, x: 13, z: -30, dist: Math.hypot(13, 30), angle: Math.atan2(-30, 13), state: 'search', heading: Math.PI / 2, speed: CONFIG.enemy.searchSpeed, turn: 0, lean: 6 },
     { id: 2, angle: 2.0, dist: 2.5, state: 'grab', grabTime: 1 },
   ];
   view.sync(list, {});

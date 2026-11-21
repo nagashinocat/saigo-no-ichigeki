@@ -147,7 +147,7 @@ test('小爆発: 貯めた力を cost 使い、主人公のまわり puff.radius
   g.enemies.list.push(
     { id: 901, angle: 0, dist: CONFIG.puff.radius - 5, state: 'approach' },
     { id: 902, angle: 1, dist: CONFIG.enemy.grabRange, state: 'grab' },
-    { id: 903, angle: 2, dist: CONFIG.puff.radius + 15, state: 'approach' },
+    { id: 903, angle: 2, dist: CONFIG.puff.radius + 60, state: 'approach' }, // R0: 突っ込む速さ 32 m/s でも前線が過ぎるまでに届かない距離
   );
   const before = g.power.value;
   expect(g.canPuff).toBe(true);

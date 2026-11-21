@@ -46,6 +46,13 @@ export function approachSpeed(dist, cfg = CONFIG) {
   return E.speed * (E.slowMin + (1 - E.slowMin) * t * t * (3 - 2 * t));
 }
 
+// R0（持ち主 22:15「まだ主人公前で止まる感じ」）: 掴む枠が埋まっていて群がる者（cling）が回る輪の半径（m）。
+// layer 段目は swarm.r0 から swarm.perRing 人ごとに swarm.step ずつ外（swarm.maxRing 回りまで）。掴む者（grabRange の内）のすぐ外
+export function swarmRing(layer, cfg = CONFIG) {
+  const S = cfg.enemy.swarm;
+  return S.r0 + S.step * Math.min(S.maxRing, Math.floor(Math.max(0, layer) / S.perRing));
+}
+
 // 道路の交差点の位置（格子の番号 i, j → m）。道路の中心線は街区の中心から半分の間隔ずれたところ
 export const roadNode = (i, j) => [(i + 0.5) * P, (j + 0.5) * P];
 
@@ -69,14 +76,18 @@ export function lineOfSight(x, z, buildings, margin = 0) {
 }
 
 // 軍勢。浮遊バイクで街の道路（26m 間隔の街区の間の道）をビュンビュン飛んで主人公を探し回り（search）、
-// 交差点で曲がる。主人公から spotDist m の内側で建物にさえぎられずに見えたら見つけて（chase）、急に止まって短くにらみ、
-// 一直線に全速で突っ込み、最後の slowDist m だけ急ブレーキして横に飛びつき、掴む（grab）。
-// 掴む枠がいっぱいでも止まって待たない（持ち主の要望 2026-11-21 10:01「主人公の手前でまだ待ってるからそのまま突っ込んで」）:
-// そのまま突っ込み、掴んでいる者の外に重なって飛びつく（cling。力は減らさない）。枠が空けば、先に飛びついた者からすぐ掴む。
+// 交差点で曲がる。主人公から spotDist m の内側で建物にさえぎられずに見えたら見つけて（chase）、止まらずにそのまま
+// 一直線に全速で突っ込み（R0: 見つけた一拍のにらみはやめた）、最後の slowDist m（0.5 m ほど）だけ減速して掴む（grab）。
+// 掴んだ者は止まらず、主人公のまわりを orbitSpeed で回り続けながら吸う（R0、持ち主 22:15）。
+// 掴む枠がいっぱいでも止まって待たない（持ち主 10:01「そのまま突っ込んで」）: そのまま突っ込み、掴んでいる者のすぐ外の輪
+// （swarmRing）に着いたら、その輪を回って群がる（cling。力は減らさない）。枠が空けば、先に群がった者からすぐ掴み、回りながら内へ入る。
+// どの段でも主人公からの距離は増えない（外へ押し戻さない）。
+// 残り 20 秒（patrol.joinAt）からは、広場の近く（patrol.joinDist の内）の見回る者も狩りに加わる（R0）。
 // 爆発の前線に触れると倒れる（dead）。時間がたつほど多く湧く。判定（払う・爆発・掴む）は主人公からの水平の距離 dist。
 // 一人ごと: x, z（m）、dist、angle（主人公から見た向き）、heading（進む向き。x 軸から z 軸へ）、turn（曲がる速さ rad/s）、speed、
-//   searchTime（探した秒）、alert（気配を感じて主人公の方へ寄っていく）、grabTime（掴んだ・飛びついてからの秒）、
-//   layer（飛びついた者の重なりの段 0, 1, …）、unpile（重なりから下りて掴んでからの秒）、lean（なめらかにした turn。見た目の傾き）
+//   searchTime（探した秒）、alert（気配を感じて主人公の方へ寄っていく）、grabTime（掴んだ・群がってからの秒）、
+//   layer（群がった者の段 0, 1, …）、unpile（群がりから掴んでからの秒）、lean（なめらかにした turn。見た目の傾き）、
+//   spotT（見つけてからの秒。見た目の推進の光の一瞬の強まり）、hunting（狩りに加わった見回る者）
 // buildings: 見通しを確かめる建物（遊んでいる間は壊れない）
 // patrolRng: 見回る者の乱数（省けば見回る者は置かない。探す者の乱数 rng とは別にして、釣り合いを変えない）
 export function createEnemies(rng, cfg = CONFIG, { buildings = [], patrolRng = null } = {}) {
@@ -92,7 +103,7 @@ export function createEnemies(rng, cfg = CONFIG, { buildings = [], patrolRng = n
 
   // 交差点で次に進む向きを選ぶ（戻らない。主人公に近づく向きを選びやすい。気配を感じた者は近づく向きだけ。roamDist の外へは出ない）。
   // 主人公から同じ距離の交差点へ進む（広場を囲む道を回る）のも近づく向きに数える（広場の角で行き止まりにして引き返さない）
-  function chooseNext(e) {
+  function chooseNext(e, rand = rng) {
     const [cx, cz] = roadNode(e.ni, e.nj);
     const here = Math.hypot(cx, cz);
     const opts = [];
@@ -107,7 +118,7 @@ export function createEnemies(rng, cfg = CONFIG, { buildings = [], patrolRng = n
     }
     if (!opts.length) opts.push({ di: -e.di, dj: -e.dj, w: 1 });
     const sum = opts.reduce((s, o) => s + o.w, 0);
-    let r = rng() * sum, pick = opts[opts.length - 1];
+    let r = rand() * sum, pick = opts[opts.length - 1];
     for (const o of opts) { r -= o.w; if (r <= 0) { pick = o; break; } }
     e.di = pick.di; e.dj = pick.dj; e.ni += pick.di; e.nj += pick.dj;
   }
@@ -206,7 +217,7 @@ export function createEnemies(rng, cfg = CONFIG, { buildings = [], patrolRng = n
     let [tx, tz] = target(e);
     // 交差点の手前（曲がりの半径ぶん）で次の道を選び、角を丸く曲がる
     const lead = Math.max(1, e.speed / E.turnRate);
-    if ((tx - e.x) * e.di + (tz - e.z) * e.dj < lead) { chooseNext(e); [tx, tz] = target(e); }
+    if ((tx - e.x) * e.di + (tz - e.z) * e.dj < lead) { chooseNext(e, e.patrol ? patrolRng : rng); [tx, tz] = target(e); }
     // 道の中心線（交差点を通り、進む向きに沿う線）へ寄せながら進む: 線からのずれを lookAhead m 先で戻す向き
     const off = e.di * (e.z - tz) - e.dj * (e.x - tx);
     steer(e, Math.atan2(e.dj, e.di) - Math.atan(off / E.lookAhead), E.turnRate, dt);
@@ -218,33 +229,56 @@ export function createEnemies(rng, cfg = CONFIG, { buildings = [], patrolRng = n
     e.spotClock = (e.spotClock ?? (e.id * 0.37) % E.spotEvery) - dt;
     if (e.spotClock <= 0) {
       e.spotClock += E.spotEvery;
-      if (e.dist <= E.spotDist && lineOfSight(e.x, e.z, near, E.sightMargin)) { e.state = 'chase'; e.pause = E.spotPause; }
+      if (e.dist <= E.spotDist && lineOfSight(e.x, e.z, near, E.sightMargin)) { e.state = 'chase'; e.spotT = 0; }
     }
   }
 
-  // 見つけた者: 急ブレーキで止まりながら主人公の方へ向き直ってにらみ（見つけた瞬間から spotPause 秒の一拍）、主人公へ一直線に突っ込む
-  // （曲がりきれる速さで向きを変える）。減速は最後の slowDist m だけ（approachSpeed）。掴む距離 grabRange で止まる。
-  // 主人公からの距離は一度も増えない（向き直る途中の惰性で外へ向かう分は、主人公のまわりを回る向きへ逃がす）
-  function chaseStep(e, dt) {
+  // 見つけた者: 止まらずに主人公へ一直線に突っ込む（曲がりきれる速さで向きを変える）。速さは探す速さから speed へ上げ、
+  // 減速は最後の slowDist m だけ（approachSpeed）。ring（掴める枠があれば grabRange、なければ群がる輪）に着いたら、
+  // 残りの一歩はその輪を回る向きに進めて true を返す（着いたフレームも止まって見えない）。
+  // 主人公からの距離は一度も増えない: 向き直る途中で外へ向かう分は、主人公のまわりを回る向きへ逃がす（一歩の長さは保つ）
+  function chaseStep(e, dt, ring) {
+    e.spotT = (e.spotT ?? 0) + dt;
     const toHero = Math.atan2(-e.z, -e.x);
     steer(e, toHero, e.dist < E.snapDist ? Math.PI * 8 : E.chaseTurnRate, dt);
-    if (e.pause > 0) { // 見つけた一拍: 見つけた瞬間から spotPause 秒、急ブレーキしながら向き直ってにらむ
-      accel(e, 0, dt);
-      e.pause -= dt;
-    } else {
-      e.speed = Math.min(approachSpeed(e.dist, cfg), e.speed + E.chaseAccel * dt); // 減速の曲線より速くならない
-    }
-    if (e.dist <= E.grabRange) { e.speed = 0; return; } // もう掴む距離の内側（試しの置き方など）: 外へ押し戻さない
+    e.speed = Math.min(approachSpeed(e.dist, cfg), Math.max(e.speed, 0) + E.chaseAccel * dt); // 減速の曲線より速くならない
     const step = e.speed * dt;
-    let nx = e.x + Math.cos(e.heading) * step, nz = e.z + Math.sin(e.heading) * step;
+    let dx = Math.cos(e.heading) * step, dz = Math.sin(e.heading) * step;
+    const ux = e.x / e.dist, uz = e.z / e.dist;
+    const out = dx * ux + dz * uz;
+    if (out > 0) { // 外へ向かう分を除き、残りの向き（主人公のまわりを回る向き）に一歩の長さで進む
+      let tx = dx - out * ux, tz = dz - out * uz;
+      const tl = Math.hypot(tx, tz);
+      if (tl < 1e-9) { const s = e.turn < 0 ? -1 : 1; tx = -uz * s; tz = ux * s; } else { tx /= tl; tz /= tl; }
+      dx = tx * step; dz = tz * step;
+    }
+    let nx = e.x + dx, nz = e.z + dz;
     let nd = Math.hypot(nx, nz);
     if (nd > e.dist) { const k = e.dist / nd; nx *= k; nz *= k; nd = e.dist; }
-    if (nd <= E.grabRange) { // 掴む距離で止まる（今いる所から主人公へ向かう線の上。行き過ぎない）
-      const k = E.grabRange / Math.max(1e-9, e.dist);
-      nx = e.x * k; nz = e.z * k;
-      e.speed = 0;
+    if (nd <= ring) { // 輪に着いた: 主人公へ向かう線の上の輪の点へ。残りの一歩は輪を回る向き（左回り）に
+      const left = Math.max(0, step - (e.dist - ring));
+      const a = Math.atan2(e.z, e.x) + left / Math.max(ring, 0.5);
+      e.x = Math.cos(a) * ring; e.z = Math.sin(a) * ring;
+      place(e);
+      return true;
     }
     e.x = nx; e.z = nz;
+    place(e);
+    return false;
+  }
+
+  // 掴んだ者（grab）・群がる者（cling）: 主人公のまわりを左回り（角度が増える向き）に回り続ける。輪の半径 R より外にいれば
+  // swarm.inSpeed で内へ寄る（外へは出ない）。回る速さは掴む者 orbitSpeed、群がる者 swarm.speed（m/s）
+  function orbitStep(e, dt, R, v) {
+    const r0 = e.dist;
+    const r = r0 > R ? Math.max(R, r0 - E.swarm.inSpeed * dt) : r0;
+    const w = v / Math.max(r, 0.5);
+    const a = e.angle + w * dt;
+    e.x = Math.cos(a) * r; e.z = Math.sin(a) * r;
+    const radial = dt > 0 ? (r0 - r) / dt : 0;
+    e.speed = Math.hypot(v, radial);
+    e.heading = wrap(a + Math.PI / 2 + Math.atan2(radial, v));
+    e.turn = w;
     place(e);
   }
 
@@ -259,33 +293,51 @@ export function createEnemies(rng, cfg = CONFIG, { buildings = [], patrolRng = n
       list = list.filter((e) => e.state !== 'dead' || e.deadTime < DEAD_KEEP_SEC);
 
       let grabbing = list.reduce((n, e) => n + (e.state === 'grab' ? 1 : 0), 0);
-      // 枠が空いていれば、先に飛びついた者からすぐ掴む（もう主人公の横にいるので動かない）
+      // 枠が空いていれば、先に群がった者からすぐ掴む（回りながら掴む者の輪へ内へ寄る）
       for (const e of list) {
         if (grabbing >= E.maxGrabbing) break;
         if (e.state !== 'cling') continue;
-        e.state = 'grab'; e.unpile = 0; grabbing++; // layer は残す（重なりから下りる見た目）
+        e.state = 'grab'; e.unpile = 0; grabbing++; // layer は残す（群がりから下りる見た目）
+      }
+      let clinging = 0;
+      for (const e of list) if (e.state === 'cling') e.layer = clinging++;
+      // R0: 残り 20 秒からは、広場の近くの見回る者も狩りに加わる（気配を感じた者として、主人公に近づく道だけを選ぶ）
+      const PJ = E.patrol;
+      if (PJ?.joinAt != null && time >= PJ.joinAt) {
+        for (const e of list) if (e.patrol && !e.hunting && e.state === 'search' && e.dist <= PJ.joinDist) { e.hunting = true; e.alert = true; e.searchTime = 0; }
       }
       for (const e of list) {
+        if (e.state === 'dead') continue;
         if (e.state === 'grab' || e.state === 'cling') { // 掴んでからの秒（見た目が主人公の横へ寄るのに使う）
           e.grabTime += dt;
           if (e.unpile != null) e.unpile += dt;
+          if (e.state === 'grab') orbitStep(e, dt, E.grabRange, E.orbitSpeed);
+          else orbitStep(e, dt, swarmRing(e.layer, cfg), E.swarm.speed);
+          e.lean = (e.lean ?? e.turn) + (e.turn - (e.lean ?? e.turn)) * (1 - Math.exp(-dt / LEAN_SEC));
           continue;
         }
-        if (e.state === 'dead') continue;
         if (e.x == null) { e.x = Math.cos(e.angle) * e.dist; e.z = Math.sin(e.angle) * e.dist; } // 角度と距離だけの者（試し）
         if (e.state === 'approach') e.state = 'chase';
         e.heading ??= e.angle + Math.PI;
         e.speed ??= approachSpeed(e.dist, cfg);
         e.turn ??= 0;
-        if (e.patrol) { patrolStep(e, dt); e.lean = (e.lean ?? e.turn) + (e.turn - (e.lean ?? e.turn)) * (1 - Math.exp(-dt / LEAN_SEC)); continue; }
+        if (e.patrol && !e.hunting) { patrolStep(e, dt); e.lean = (e.lean ?? e.turn) + (e.turn - (e.lean ?? e.turn)) * (1 - Math.exp(-dt / LEAN_SEC)); continue; }
         if (e.state === 'search') searchStep(e, dt);
-        if (e.state === 'chase') chaseStep(e, dt);
+        let arrived = false;
+        const free = grabbing < E.maxGrabbing;
+        const ring = free ? E.grabRange : swarmRing(clinging, cfg);
+        if (e.state === 'chase' && e.dist <= ring) { // もう輪の内側（大きな群れの外の輪・試しの置き方）: その場から回り始める
+          orbitStep(e, dt, ring, free ? E.orbitSpeed : E.swarm.speed);
+          arrived = true;
+        } else if (e.state === 'chase') arrived = chaseStep(e, dt, ring);
         // 傾きの見た目に使う、なめらかにした曲がる速さ（交差点の一瞬の曲がりでちらつかない）
         e.lean = (e.lean ?? e.turn) + (e.turn - (e.lean ?? e.turn)) * (1 - Math.exp(-dt / LEAN_SEC));
-        if (e.state !== 'chase') continue;
-        if (e.dist > E.grabRange + 1e-9) continue;
-        e.grabTime = 0; e.speed = 0; e.turn = 0; e.lean = 0;
-        if (grabbing < E.maxGrabbing) { e.state = 'grab'; grabbing++; } else e.state = 'cling';
+        if (!arrived) continue;
+        e.grabTime = 0;
+        // 着いた瞬間から回り始める（速さ・向きは回る者のもの）。外へは出ない
+        e.speed = Math.max(e.speed, free ? E.orbitSpeed : E.swarm.speed);
+        e.heading = wrap(e.angle + Math.PI / 2);
+        if (free) { e.state = 'grab'; grabbing++; } else { e.state = 'cling'; e.layer = clinging++; }
       }
       relayer();
 
