@@ -44,12 +44,12 @@ Files: src/render/cinematic.js, cinematicProps.js, finalePlan.js, finaleTimeline
   - The light wall races across the city toward the camera, swallowing buildings, the expressway and the trains.
   - It engulfs these riders from behind them in one sweep: a silhouette against the wall, then blown away.
   - The camera is engulfed, and the cut goes into the existing chase/showcase/space flow.
-  - It feels immediate (一気に), not slow-mo.
+  - Owner 22:18: from the blast's start, through its first slight swelling, time runs in SLOW MOTION (the creep, seen far away from behind the riders). Then it BURSTS into the huge explosion and time snaps to full speed, and the wall races in and engulfs them in one sweep (一気に). Keep the existing creep → burst → showcase front curve; the slow-mo applies to the creep and early swell only.
   - The focus rider body (riderBody) can be reused for the nearest rider in frame.
 - **Timeline:** finaleTimeline is reworked accordingly; total length stays ≤ the current length + 0.5 s. finaleGameSync must hold at 60/30/20 fps.
 - **Audio:** the boom opens when the blast erupts. The distant rumble arrives, then the roar as the wall hits. Sound tracks the screen (owner 13:06).
 - **Spot selection (finalePlan):** pick the riders, which must exist (fall back to a patrol), and a camera spot with a clear line of sight to ground zero. Test the selection.
-- **Replay:** the replay cuts stay valid.
+- **Pacing everywhere (owner 22:18):** today the finale and the replay read as 「初めから早い → ちょっと止まる → 早い」 (fast at start, a stall, fast again), and that is wrong. Every presentation must follow ONE pacing: slow-mo creep and swell at the start → burst → full speed. This covers the live finale, the replay cuts (the replay timeline and replayPlan) and the clip recorder later. There must be no mid-sequence freeze or stall: remove the old near-stopped beat (slowRate 0.012) and anything that looks like a pause. Add a test that the visual time-scale is monotonic non-decreasing from the start of the blast to the burst, and does not dip after the burst, for both the finale and the replay timelines. Record a frame sequence of the replay to prove it.
 - **Shots:** the new beat at several times, plus the transition into the chase.
 
 ### R1: 払うの腕前 + 軍勢の種類
