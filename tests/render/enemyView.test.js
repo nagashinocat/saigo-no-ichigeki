@@ -68,3 +68,31 @@ test('建物の陰の軍勢を透かして描く重ね（xray）は high だけ:
   view.setTier('mid');
   expect(scene.getObjectByName('soldiers-xray').visible).toBe(false);
 });
+
+test('主人公は heroBody の体（画質の段の細かさ）で、なびく揺れの重みを持つ。影絵の強さは sync の silhouette で決まる', async () => {
+  const { buildHeroBody } = await import('../../src/render/heroBody.js');
+  const sunDir = new THREE.Vector3(0.3, 1, 0.2).normalize();
+  for (const tier of ['low', 'mid', 'high']) {
+    const view = createEnemyView(new THREE.Scene(), tier, { sunDir });
+    const g = view.hero.geometry;
+    expect(g.attributes.position.count, tier).toBe(buildHeroBody({ detail: tier }).counts.vertices);
+    expect(g.attributes.aFlut, tier).toBeTruthy();
+    expect(view.heroBuildMs, tier).toBeGreaterThan(0);
+  }
+  const view = createEnemyView(new THREE.Scene(), 'low', { sunDir });
+  const u = view.hero.material.uniforms;
+  expect(view.hero.material).not.toBe(view.mesh.material); // 軍勢とは別の材質（なびき・ただよい・影絵）
+  expect(u.uTime).toBe(view.mesh.material.uniforms.uTime); // 時間や光は軍勢と同じものを使う
+  view.sync([], {});
+  expect(u.uSil.value).toBe(0);
+  view.sync([], { silhouette: 0.9 }); // リプレイの最後のカットの強さで、真っ黒な影絵
+  expect(u.uSil.value).toBe(1);
+  view.sync([], { silhouette: 0.3 });
+  expect(u.uSil.value).toBeGreaterThan(0.3);
+  expect(u.uSil.value).toBeLessThan(0.5);
+  expect(u.uWind.value.length()).toBeCloseTo(1, 6);
+  // 建物の陰の重ねも同じ体と同じ動き
+  const xray = view.group.children.find((c) => c.isInstancedMesh && c !== view.hero && c.geometry === view.hero.geometry);
+  expect(xray).toBeTruthy();
+  expect(xray.material.vertexShader).toBe(view.hero.material.vertexShader);
+});

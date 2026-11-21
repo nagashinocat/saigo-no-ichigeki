@@ -33,18 +33,21 @@ export function surfaceNets(field, xs, ys, zs, { lipschitz = 1.6, block = 4 } = 
   const pos = [];
   // セルの 12 本の辺（角の番号の組）。角の番号は bit0=x, bit1=y, bit2=z
   const EDGES = [[0, 1], [2, 3], [4, 5], [6, 7], [0, 2], [1, 3], [4, 6], [5, 7], [0, 4], [1, 5], [2, 6], [3, 7]];
+  const EA = Int8Array.from(EDGES.map((e) => e[0])), EB = Int8Array.from(EDGES.map((e) => e[1]));
+  const OFF = Int32Array.from({ length: 8 }, (_, c) => (c & 1) + nx * (((c >> 1) & 1) + ny * ((c >> 2) & 1)));
   const v = new Float32Array(8), cp = new Float32Array(24);
   for (let k = 0; k < nz - 1; k++) for (let j = 0; j < ny - 1; j++) for (let i = 0; i < nx - 1; i++) {
+    // まず符号だけを見る（面を通らないセルがほとんど）
+    const g0 = at(i, j, k);
     let mask = 0;
-    for (let c = 0; c < 8; c++) {
-      const ii = i + (c & 1), jj = j + ((c >> 1) & 1), kk = k + ((c >> 2) & 1);
-      v[c] = F[at(ii, jj, kk)];
-      cp[c * 3] = xs[ii]; cp[c * 3 + 1] = ys[jj]; cp[c * 3 + 2] = zs[kk];
-      if (v[c] < 0) mask |= 1 << c;
-    }
+    for (let c = 0; c < 8; c++) { const f = F[g0 + OFF[c]]; v[c] = f; if (f < 0) mask |= 1 << c; }
     if (mask === 0 || mask === 255) continue;
+    for (let c = 0; c < 8; c++) {
+      cp[c * 3] = xs[i + (c & 1)]; cp[c * 3 + 1] = ys[j + ((c >> 1) & 1)]; cp[c * 3 + 2] = zs[k + ((c >> 2) & 1)];
+    }
     let sx = 0, sy = 0, sz = 0, n = 0;
-    for (const [a, b] of EDGES) {
+    for (let e = 0; e < 12; e++) {
+      const a = EA[e], b = EB[e];
       if ((v[a] < 0) === (v[b] < 0)) continue;
       const t = v[a] / (v[a] - v[b]);
       sx += cp[a * 3] + (cp[b * 3] - cp[a * 3]) * t;
@@ -69,7 +72,10 @@ export function surfaceNets(field, xs, ys, zs, { lipschitz = 1.6, block = 4 } = 
   // 符号の変わる格子の辺ごとに、その辺を囲む 4 つのセルの頂点で四角形を張る。
   // 内側が辺の手前の端なら、面は辺の向き（+x / +y / +z）を向く
   for (let k = 0; k < nz; k++) for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
-    const inside = F[at(i, j, k)] < 0;
+    const g = at(i, j, k);
+    const inside = F[g] < 0;
+    // 隣の 3 点がどれも同じ側なら、この点から出る辺は面を通らない
+    if ((i === nx - 1 || (F[g + 1] < 0) === inside) && (j === ny - 1 || (F[g + nx] < 0) === inside) && (k === nz - 1 || (F[g + nx * ny] < 0) === inside)) continue;
     const yIn = j >= 1 && j <= ny - 2, zIn = k >= 1 && k <= nz - 2, xIn = i >= 1 && i <= nx - 2;
     if (i < nx - 1 && yIn && zIn && inside !== (F[at(i + 1, j, k)] < 0))
       quad(cv(i, j - 1, k - 1), cv(i, j, k - 1), cv(i, j, k), cv(i, j - 1, k), !inside);

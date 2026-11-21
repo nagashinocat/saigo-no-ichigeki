@@ -1,7 +1,7 @@
 import * as THREE from 'three';
-import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { groundHeight } from './sphereDeform.js';
-import { srgb, part, at, capsule, box, ball } from './figureGeo.js';
+import { srgb } from './figureGeo.js';
+import { buildHeroBody, HERO_WIND } from './heroBody.js';
 import { buildRiderBikeGeometry, RIDER } from './hoverBike.js';
 import { bikePose, BIKE } from './bikePose.js';
 
@@ -19,26 +19,6 @@ export const ENEMY_LOOK = {
 const CAPACITY = 160;
 
 const hash = (n) => { const x = Math.sin(n * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
-
-// 主人公: 黒に近い紺の上着、薄い色の襟巻き。両腕を前へ出し、胸の前で両手の手のひらを向き合わせて立つ（動かない）。+z が前
-export function buildHeroGeometry() {
-  const COAT = '#2a2840', PANTS = '#23252c', SCARF = '#d9d2c4', SKIN = '#c99a7f', HAIR = '#1a1714';
-  const parts = [
-    part(at(capsule(0.17, 0.42), 0, 1.15, 0).scale(1.2, 1, 0.75), 10, [0, 0, 0], COAT),
-    part(at(box(0.44, 0.5, 0.26), 0, 0.82, 0), 10, [0, 0, 0], COAT), // 上着の裾
-    part(at(capsule(0.1, 0.1), 0, 1.47, 0).scale(1.4, 1, 1.3), 10, [0, 0, 0], SCARF),
-    part(at(ball(0.11), 0, 1.66, 0), 10, [0, 0, 0], SKIN),
-    part(at(ball(0.122, 12, 8).scale(1.02, 0.9, 1.08), 0, 1.71, -0.02), 10, [0, 0, 0], HAIR),
-    // 両腕: 肩から前へ、少し内へ
-    part(at(capsule(0.055, 0.46).rotateX(-1.2).rotateY(-0.35), 0.19, 1.3, 0.22), 10, [0, 0, 0], COAT),
-    part(at(capsule(0.055, 0.46).rotateX(-1.2).rotateY(0.35), -0.19, 1.3, 0.22), 10, [0, 0, 0], COAT),
-    part(at(ball(0.06).scale(0.6, 1.1, 1), 0.07, 1.38, 0.46), 10, [0, 0, 0], SKIN),
-    part(at(ball(0.06).scale(0.6, 1.1, 1), -0.07, 1.38, 0.46), 10, [0, 0, 0], SKIN),
-    part(at(capsule(0.08, 0.66), 0.1, 0.42, 0), 10, [0, 0, 0], PANTS),
-    part(at(capsule(0.08, 0.66), -0.1, 0.42, 0.02), 10, [0, 0, 0], PANTS),
-  ];
-  return mergeGeometries(parts.map((g) => g.toNonIndexed()));
-}
 
 // 大きく描く: 遠くで小さすぎる者は boost 倍。中心は自分の足元だが、主人公の横に寄った者（aPose.x → 1）は主人公（原点）を中心にする
 // （主人公も同じだけ大きく描かれるので、並びが崩れず、主人公にめり込まない）
@@ -159,6 +139,50 @@ void main() {
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
 }`;
+
+// 主人公（heroBody の体）: 髪・上着の裾・襟巻きの尾が熱風の向き（体の空間の uWind）になびき、体はゆっくり上下にただよう。
+// 揺れの大きさと位相は頂点ごとの aFlut（付け根 0、先ほど大きい）。遠くでは軍勢と同じく大きく描く。
+// 陰影は軍勢と同じ（FIGURE_FRAG）。リプレイの最後のカットでは uSil で、光を背にした真っ黒な影絵にし、縁だけ光をにじませる
+const HERO_VERT = /* glsl */`
+attribute vec3 aCol;
+attribute vec2 aFlut; // x: 揺れの大きさ（m）, y: 位相
+uniform float uTime, uPx, uMinPx, uMaxBoost, uHeight, uWindK;
+uniform vec3 uWind;
+varying vec3 vN, vW, vCol;
+varying float vPart, vFar, vThrust;
+${BOOST_GLSL}
+void main() {
+  vec3 p = position;
+  float A = aFlut.x * uWindK;
+  if (A > 0.0) {
+    vec3 S = normalize(cross(uWind, vec3(0.0, 1.0, 0.0)));
+    vec3 U = normalize(cross(S, uWind));
+    float s = aFlut.y;
+    // 先へ向かって進む波（ばたつき）と、ゆっくりした突風のうねり
+    float gust = 0.7 + 0.3 * sin(uTime * 1.3 + 0.4) * sin(uTime * 0.71 + s * 0.2);
+    float w1 = sin(uTime * 7.3 - s), w2 = sin(uTime * 12.1 - s * 1.7 + 0.9);
+    p += (U * (0.75 * w1 + 0.3 * w2) * gust + S * (0.45 * w2 + 0.2 * w1) + uWind * (gust - 0.7) * 1.2) * A;
+  }
+  // ゆっくり上下にただよう（いちばん低いつま先でも地面より上）
+  p.y += 0.032 * sin(uTime * 0.85) + 0.01 * sin(uTime * 1.9 + 1.3);
+  vec3 origin = (modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
+  float boost = boostFor((modelMatrix * instanceMatrix * vec4(0.0, uHeight * 0.5, 0.0, 1.0)).xyz);
+  float px = uHeight * uPx / max(1.0, distance(origin, cameraPosition));
+  vFar = smoothstep(uMinPx * 4.0, uMinPx * 1.5, px);
+  vec4 wp = modelMatrix * instanceMatrix * vec4(p * boost, 1.0);
+  vW = wp.xyz;
+  vN = normalize(mat3(modelMatrix) * mat3(instanceMatrix) * normal);
+  vCol = aCol;
+  vPart = 10.0;
+  vThrust = 0.0;
+  gl_Position = projectionMatrix * viewMatrix * wp;
+}`;
+const SIL_FROM = 'gl_FragColor = vec4(col, 1.0);';
+if (!FIGURE_FRAG.includes(SIL_FROM) || !FIGURE_FRAG.includes('uniform float uGlow;')) throw new Error('FIGURE_FRAG の形が変わった（HERO_FRAG を直す）');
+const HERO_FRAG = FIGURE_FRAG.replace('uniform float uGlow;', 'uniform float uGlow, uSil;\nuniform vec3 uRim;').replace(SIL_FROM, /* glsl */`// 影絵: 光を背にした真っ黒な姿。輪郭の縁だけ、向こうの光がわずかににじむ
+  float edge = pow(1.0 - abs(dot(N, V)), 6.0);
+  col = mix(col, vec3(0.004) + uRim * edge * 0.22, uSil);
+  ${SIL_FROM}`);
 
 // ビルに隠れた部分だけを描く影絵（遠くの者だけ。近くでは自分の体の重なりが透けて見えるので消す）
 const XRAY_FRAG = /* glsl */`
@@ -331,7 +355,8 @@ export function buildEyeCloseup(enemyId) {
   return mesh;
 }
 
-export function createEnemyView(scene, tier, { sunDir = new THREE.Vector3(0.8, 0.42, -0.45).normalize() } = {}) {
+// heroBody: 主人公の体（buildHeroBody の戻り値）。省けば画質の段の細かさで組み立てる
+export function createEnemyView(scene, tier, { sunDir = new THREE.Vector3(0.8, 0.42, -0.45).normalize(), heroBody = null } = {}) {
   const uniforms = figureUniforms(sunDir);
   const group = new THREE.Group();
   group.name = 'figures';
@@ -395,14 +420,18 @@ export function createEnemyView(scene, tier, { sunDir = new THREE.Vector3(0.8, 0
   markers.name = 'soldier-markers';
   markersHidden.name = 'soldier-markers-hidden';
 
-  // 主人公（1体だけのインスタンスにして、同じ材質を使う）
-  const heroGeo = buildHeroGeometry();
-  heroGeo.setAttribute('aAnim', new THREE.InstancedBufferAttribute(new Float32Array([0, 0, 1, 1]), 4));
-  heroGeo.setAttribute('aPose', new THREE.InstancedBufferAttribute(new Float32Array([0, 0]), 2));
-  const hero = new THREE.InstancedMesh(heroGeo, mat, 1);
+  // 主人公（1体だけのインスタンス）。体の細かさは画質の段で決める（組み立ては段ごとに 1 回）
+  const body = heroBody ?? buildHeroBody({ detail: tier });
+  const heroGeo = body.geometry;
+  const heroUniforms = { ...uniforms, uSil: { value: 0 }, uWindK: { value: 1 }, uWind: { value: new THREE.Vector3(...HERO_WIND) }, uRim: { value: new THREE.Color(1.0, 0.72, 0.45) } };
+  const hero = new THREE.InstancedMesh(heroGeo, new THREE.ShaderMaterial({ uniforms: heroUniforms, vertexShader: HERO_VERT, fragmentShader: HERO_FRAG }), 1);
   hero.frustumCulled = false;
   hero.name = 'hero';
-  const heroXray = new THREE.InstancedMesh(heroGeo, xray.material, 1);
+  const heroXray = new THREE.InstancedMesh(heroGeo, new THREE.ShaderMaterial({
+    uniforms: heroUniforms, vertexShader: HERO_VERT, fragmentShader: XRAY_FRAG,
+    transparent: true, depthWrite: false, depthFunc: THREE.GreaterDepth,
+  }), 1);
+  heroXray.name = 'hero-xray';
   heroXray.instanceMatrix = hero.instanceMatrix;
   heroXray.frustumCulled = false;
   heroXray.renderOrder = 8;
@@ -414,12 +443,16 @@ export function createEnemyView(scene, tier, { sunDir = new THREE.Vector3(0.8, 0
 
   return {
     group, hero, mesh, shadows, tier, // 形は画質の段では変えない（透かしの重ねだけ high のみ）
+    heroBuildMs: body.buildMs, // 主人公の体を組み立てた時間（ms。同じ段の 2 回目からは組み立てずに使い回す）
     // 画質の段が途中で下がったとき
     setTier(t) { xray.visible = xrayFor(t); },
     // 毎フレーム: 軍勢の一覧を姿に写す。fronts は地面と同じ球の一覧（えぐれた地面の上に立つ）、
-    // pointScale は 1m を画素へ直す係数（距離 1m のとき）、glow は爆発の明るさ（0〜1）
-    sync(enemies, { fronts = [], pointScale = 500, glow = 0, dt = 0, pixelRatio = 1 } = {}) {
+    // pointScale は 1m を画素へ直す係数（距離 1m のとき）、glow は爆発の明るさ（0〜1）、
+    // silhouette は主人公を光を背にした影絵にする強さ（0〜1。リプレイの最後のカット）
+    sync(enemies, { fronts = [], pointScale = 500, glow = 0, dt = 0, pixelRatio = 1, silhouette = 0 } = {}) {
       time += dt;
+      heroUniforms.uSil.value = Math.min(1, silhouette * 1.2); // リプレイの影絵（0.9）で真っ黒に
+      heroUniforms.uWindK.value = 1 + 0.5 * silhouette; // 光の中では熱風が強い
       uniforms.uTime.value = time;
       uniforms.uMarker.value = 11 * pixelRatio;
       uniforms.uPx.value = pointScale;

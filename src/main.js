@@ -14,6 +14,7 @@ import { createExplosionView } from './render/explosionView.js';
 import { createFrontTracker } from './render/sphereDeform.js';
 import { createHeroAura } from './render/heroAura.js';
 import { createEnemyView } from './render/enemyView.js';
+import { buildHeroBody } from './render/heroBody.js';
 import { createCinematic, leadFor } from './render/cinematic.js';
 import { FINALE } from './render/finaleTimeline.js';
 import { planFinale, planRetreat } from './render/finalePlan.js';
@@ -60,6 +61,8 @@ cityScene.add(style.sky, ...style.lights, cityView.group);
 const handDetail = tier === 'high' ? 'high' : 'low';
 // 左手は右手の形を鏡に映して使い回す（組み立ては1回ぶん）
 const hand = createHandView({ right: buildHandModel({ detail: handDetail }), left: buildHandModel({ detail: handDetail, side: 'left' }) }, tier);
+// 主人公の体（宙に浮く人影）もコードで組み立てる。細かさは画質の段（重いシェーダーの準備より先に組み立てる）
+const heroBody = buildHeroBody({ detail: tier });
 
 // 入力・HUD・結果・音
 const audio = createAudio();
@@ -183,7 +186,7 @@ game.on('fizzle', () => { hand.fizzle(); hud.hint('まだ足りない。もっ�
 game.on('puff', (shot) => { explosionView.begin(shot); hand.release(shot); });
 
 // 軍勢と主人公の姿
-const enemyView = createEnemyView(cityScene, tier, { sunDir: style.sunDir });
+const enemyView = createEnemyView(cityScene, tier, { sunDir: style.sunDir, heroBody });
 const heroAura = createHeroAura(tier); // 浮いている主人公のまわりの力のゆらぎ
 cityScene.add(heroAura.group);
 
@@ -359,8 +362,9 @@ function stepWorld(wdt, live, enemies, cam, focus, glowScale = 1) {
   rubbleView.update();
   explosionView.update(wdt, live, cam, ps, fronts.crater);
   cityView.update(wdt, { fronts: list, heat: explosionView.ground.heat, ember: explosionView.ground.ember });
-  enemyView.sync(enemies, { fronts: list, pointScale: ps, glow: explosionView.ground.heat * glowScale, dt: wdt, pixelRatio: renderer.getPixelRatio() });
-  heroAura.update(wdt, ps);
+  // 光が弱まった分だけ、主人公は光を背にした影絵になる（リプレイの最後のカット）
+  enemyView.sync(enemies, { fronts: list, pointScale: ps, glow: explosionView.ground.heat * glowScale, dt: wdt, pixelRatio: renderer.getPixelRatio(), silhouette: 1 - glowScale });
+  heroAura.update(wdt, ps, 1 - glowScale);
 }
 
 function simulate(dt) {

@@ -21,3 +21,14 @@ test('update は時間と画素の係数を進めるだけ（足元の高さを�
   expect(a.motes.material.uniforms.uPx.value).toBe(700);
   expect(a.group.position.y).toBe(y);
 });
+
+test('主人公が影絵のとき（リプレイの最後のカット）は、体を包む殻と遠目の光を消す（黒い影に青い縁を足さない）', () => {
+  const a = createHeroAura('high');
+  a.update(0.1, 700);
+  expect(a.shell.material.uniforms.uFade.value).toBe(1);
+  a.update(0.1, 700, 0.9);
+  expect(a.shell.material.uniforms.uFade.value).toBeLessThan(0.05);
+  expect(a.halo.material.uniforms.uFade.value).toBeLessThan(0.05);
+  a.update(0.1, 700, 0);
+  expect(a.shell.material.uniforms.uFade.value).toBe(1);
+});

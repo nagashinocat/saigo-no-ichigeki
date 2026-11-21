@@ -41,9 +41,10 @@ void main() {
   gl_PointSize = clamp(uPx * 4.0 / max(0.1, dist), 8.0, 120.0) * (0.95 + 0.05 * sin(uTime * 1.6));
 }`;
 const HALO_FRAG = /* glsl */`
+uniform float uFade;
 void main() {
   float d = length(gl_PointCoord - 0.5) * 2.0;
-  float a = pow(1.0 - smoothstep(0.0, 1.0, d), 2.0) * 0.3;
+  float a = pow(1.0 - smoothstep(0.0, 1.0, d), 2.0) * 0.3 * uFade;
   gl_FragColor = vec4(vec3(0.62, 0.78, 1.0), a);
 }`;
 const SHELL_VERT = /* glsl */`
@@ -59,9 +60,10 @@ void main() {
   gl_Position = projectionMatrix * mv;
 }`;
 const SHELL_FRAG = /* glsl */`
+uniform float uFade;
 varying float vRim;
 void main() {
-  float a = clamp(vRim, 0.0, 1.0) * 0.3;
+  float a = clamp(vRim, 0.0, 1.0) * 0.3 * uFade;
   gl_FragColor = vec4(vec3(0.7, 0.82, 1.0), a);
 }`;
 
@@ -69,7 +71,7 @@ export function createHeroAura(tierName = 'mid') {
   const group = new THREE.Group();
   group.name = 'heroAura';
   group.position.y = CENTER_Y;
-  const uniforms = { uTime: { value: 0 }, uPx: { value: 500 } };
+  const uniforms = { uTime: { value: 0 }, uPx: { value: 500 }, uFade: { value: 1 } };
   const blend = { transparent: true, depthWrite: false, blending: THREE.AdditiveBlending };
 
   const seeds = new Float32Array(MOTES_MAX * 4);
@@ -105,9 +107,11 @@ export function createHeroAura(tierName = 'mid') {
       shell.visible = !!t.auraShell;
     },
     // 時間を進める。pointScale: 1m を画素へ直す係数（距離 1m のとき）
-    update(dt, pointScale = 500) {
+    // silhouette: 主人公が光を背にした影絵になる強さ（0〜1）。殻と遠目の光は消す（加算の青い縁が黒い影を明るくしてしまう）
+    update(dt, pointScale = 500, silhouette = 0) {
       uniforms.uTime.value += dt;
       uniforms.uPx.value = pointScale;
+      uniforms.uFade.value = Math.max(0, 1 - silhouette * 1.2);
     },
   };
   api.setTier(tierName);
