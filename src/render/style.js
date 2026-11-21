@@ -47,7 +47,8 @@ export const WINDOW_LAMP_MAX = Math.max(
   linLum(SHOP) * SHOP_GAIN,
 );
 const FOG_DENSITY = 0.0015;
-const FOG_START = 320;
+// S8: 霞み始める距離は街の半径に合わせる（S7 の 420 m の街で 320 m）。遠い地区（cityDress の ROOF / FAR）は霞の中で安く
+export const FOG_START = Math.round(CONFIG.cityRadius * 0.6);
 
 // sRGB で決めた色をシェーダーの線形値へ（見た目の色で調整しやすくするため）
 const GLSL_COMMON = /* glsl */`
@@ -843,7 +844,10 @@ export function createStyle(tierName) {
     sun.castShadow = true;
     sun.shadow.mapSize.set(4096, 4096);
     const s = sun.shadow.camera;
-    s.left = -470; s.right = 470; s.top = 470; s.bottom = -470; s.near = 50; s.far = 1300;
+    // 影を落とす範囲（街の半径の 0.7 倍。その外は霞の中）
+    const sr = Math.round(CONFIG.cityRadius * 0.7);
+    sun.position.copy(SUN_DIR).multiplyScalar(sr + 130);
+    s.left = -sr; s.right = sr; s.top = sr; s.bottom = -sr; s.near = 50; s.far = 2 * sr + 360;
     sun.shadow.bias = -0.0004;
     sun.shadow.normalBias = 0.6;
   }

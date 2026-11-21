@@ -1,6 +1,8 @@
 import { test, expect } from 'vitest';
 import * as THREE from 'three';
-import { dressCity, NEON, STREET_CLEAR, OVERHANG, PLAZA_KEEP, DENSITY, CLUTTER_DENSITY } from '../../src/render/cityDress.js';
+import { dressCity, NEON, STREET_CLEAR, OVERHANG, PLAZA_KEEP, DENSITY, CLUTTER_DENSITY, DRESS_DIST } from '../../src/render/cityDress.js';
+import { CONFIG } from '../../src/config.js';
+import { pathDist, TRANSIT } from '../../src/world/transit.js';
 import { buildSignAtlas, layout, ATLAS_SIZE } from '../../src/render/signAtlas.js';
 import { generateCity, GRID } from '../../src/world/cityGen.js';
 import { DUSK } from '../../src/render/style.js';
@@ -108,13 +110,14 @@ test('fix1: 縦に長い箱（角のネオン管・配管・塔の先）は 12m 
   for (const s of full.signs) if (s.type === 'strip') expect(s.h).toBeLessThanOrEqual(12 + 1e-6);
 });
 
-test('fix1: 壁と道の細かい飾りは layer "wall"。霞の中（300m より遠いビル）にはエアコン・配管・物干しを置かない', () => {
+// S8: 遠さの境目は街の半径に対する割合（DRESS_DIST.fine × R。S7 の 420 m の街では 300 m だった）
+test('fix1: 壁と道の細かい飾りは layer "wall"。霞の中（DRESS_DIST.fine × 街の半径より遠いビル）にはエアコン・配管・物干しを置かない', () => {
   const dist = new Map(city.buildings.map((b) => [b.id, b.dist]));
   const wall = full.boxes.filter((x) => x.layer === 'wall');
   expect(wall.length).toBeGreaterThan(2000);
   for (const x of wall) {
     const tiny = !x.a && (x.w <= 0.9 && x.h <= 0.72 || x.w <= 0.3); // エアコン・洗濯物・配管
-    if (tiny || (x.a && x.t < 0.1)) expect(dist.get(x.bid)).toBeLessThan(300);
+    if (tiny || (x.a && x.t < 0.1)) expect(dist.get(x.bid)).toBeLessThan(DRESS_DIST.fine * CONFIG.cityRadius);
   }
   // 屋上・区画の飾りは 'roof'
   expect(full.boxes.filter((x) => x.layer === 'roof').length).toBeGreaterThan(2000);
@@ -150,4 +153,35 @@ test('fix1: 看板の表と裏は、外から見てどちらも左から右へ�
     const lo = vs.reduce((a, b) => (b[0] < a[0] ? b : a)), hi = vs.reduce((a, b) => (b[0] > a[0] ? b : a));
     expect(hi[1]).toBeGreaterThan(lo[1]);
   }
+});
+
+// ---- S8: 遠い地区は安く、高架の通り道は空ける ----
+test('S8: 霞の始まり（DRESS_DIST.roof × R）より遠いビルには屋上の小さな飾り（空調・小屋・給水塔・アンテナ）を置かない。遠い地区（DRESS_DIST.far × R より外）は遠くから読める光（屋上の大看板・角の縦看板・ネオン管）だけ', () => {
+  const R = CONFIG.cityRadius;
+  const byId = new Map(city.buildings.map((b) => [b.id, b]));
+  for (const x of full.boxes) {
+    const b = byId.get(x.bid);
+    if (b.arch === 'landmark') continue; // 目印の塔の先はいつも
+    if (b.dist >= DRESS_DIST.roof * R && x.layer === 'roof' && !x.a && x.y > 0.01) {
+      // 屋上の上の箱は、屋上の大看板の骨組み（柱・横の梁）だけ
+      expect(x.w <= 0.26 || x.h <= 0.19, JSON.stringify(x)).toBe(true);
+    }
+  }
+  for (const t of full.tanks) expect(byId.get(t.bid).dist).toBeLessThan(DRESS_DIST.roof * R);
+  const farTypes = new Set(full.signs.filter((s) => byId.get(s.bid).dist >= DRESS_DIST.far * R).map((s) => s.type));
+  for (const t of farTypes) expect(['billboard', 'blade', 'strip']).toContain(t);
+  expect(farTypes.has('billboard') || farTypes.has('strip')).toBe(true);
+  for (const p of full.pools) expect(byId.get(p.bid).dist).toBeLessThan(DRESS_DIST.far * R);
+  // 遠い地区は面積あたりの看板の数が近くより少ない
+  const per = (lo, hi) => full.signs.filter((s) => { const d = byId.get(s.bid).dist; return d >= lo && d < hi; }).length / (Math.PI * (hi * hi - lo * lo));
+  expect(per(DRESS_DIST.far * R, R)).toBeLessThan(per(60, DRESS_DIST.fine * R) * 0.5);
+});
+
+test('S8: 高架の通り道（高速・環状線の帯）には飾りを置かない（張り出し看板や電線が橋桁・電車を突き抜けない）', () => {
+  const { expressway, rail } = city.transit.paths;
+  const inC = (x, z) => pathDist(expressway, x, z) < TRANSIT.expressway.half || pathDist(rail, x, z) < TRANSIT.rail.half;
+  for (const x of full.boxes) {
+    if (x.a) { expect(inC(x.a[0], x.a[2]) || inC(x.b[0], x.b[2])).toBe(false); } else expect(inC(x.x, x.z)).toBe(false);
+  }
+  for (const k of ['signs', 'pools', 'tanks']) for (const x of full[k]) expect(inC(x.x, x.z)).toBe(false);
 });

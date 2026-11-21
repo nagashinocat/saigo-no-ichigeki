@@ -1,6 +1,8 @@
 import { test, expect } from 'vitest';
 import * as THREE from 'three';
-import { createCityView } from '../../src/render/cityView.js';
+import { createCityView, REGIONS } from '../../src/render/cityView.js';
+import { createCityCamera, fitCityCamera } from '../../src/render/views.js';
+import { CONFIG } from '../../src/config.js';
 import { createStyle } from '../../src/render/style.js';
 import { generateCity } from '../../src/world/cityGen.js';
 
@@ -159,7 +161,8 @@ test('fix1: 段が下がると、飾りは間引きの値の小さい順に残�
 
 test('fix1: ビルは遊んでいる間は粗い箱、最後の一発から細かい箱（同じつぶれ・屋根の形の値を使う）', () => {
   const view = createCityView(city, createStyle('high'), 'high');
-  const m = view.meshes.tower;
+  // S8: ビルは種類と地区ごとの InstancedMesh（'tower:0' は中心の地区）
+  const m = view.meshes['tower:0'];
   const coarse = m.geometry;
   expect(view.detail).toBe('coarse');
   view.setDetail('fine');
@@ -171,7 +174,7 @@ test('fix1: ビルは遊んでいる間は粗い箱、最後の一発から細�
   expect(outline.geometry).toBe(m.geometry);
   // 低い家（20m 未満）は細かくしても縦は 3 段まで
   view.setDetail('fine');
-  const house = view.meshes.house.geometry;
+  const house = view.meshes['house:0'].geometry;
   const ys = new Set(); const pos = house.attributes.position;
   for (let i = 0; i < pos.count; i++) ys.add(pos.getY(i).toFixed(4));
   expect(ys.size).toBeLessThanOrEqual(4);
@@ -181,4 +184,42 @@ test('fix1: 飾りの乱数は街の種を使う（別の街なら別の並び�
   const a = createCityView(generateCity(7), createStyle('low'), 'low'), b = createCityView(generateCity(8), createStyle('low'), 'low');
   expect(generateCity(7).seed).toBe(7);
   expect(a.dressCounts).not.toEqual(b.dressCounts);
+});
+
+// ---- S8: 地区ごとの描画 ----
+test('S8: ビルは種類と地区（中心の円と外の扇）ごとの InstancedMesh。外の地区は境界の球を持ち、画面の外なら描かない。球はその地区のビルを全部含み、最後の一発からは押されて外へ動くビルの範囲まで広がる', () => {
+  const view = createCityView(city, createStyle('mid'), 'mid');
+  const R = CONFIG.cityRadius;
+  const keys = Object.keys(view.meshes);
+  expect(keys.filter((k) => k.endsWith(':0')).length).toBe(3);
+  expect(keys.length).toBeGreaterThan(6);
+  const inSphere = (s, p) => s.center.distanceTo(p) <= s.radius + 1e-6;
+  for (const b of city.buildings) {
+    const { mesh } = view.getBuildingParts(b.id).parts[0];
+    const region = Number(mesh.name.match(/-s(\d+)$/)?.[1] ?? 0);
+    expect(region === 0).toBe(b.dist < REGIONS.innerFrac * R);
+    if (region === 0) { expect(mesh.frustumCulled).toBe(false); continue; }
+    expect(mesh.frustumCulled).toBe(true);
+    for (const y of [0, b.h]) expect(inSphere(mesh.boundingSphere, new THREE.Vector3(b.x, y, b.z))).toBe(true);
+  }
+  view.setDetail('fine');
+  for (const m of Object.values(view.meshes)) {
+    if (!m.frustumCulled) continue;
+    // 爆心から外へ、最大の半径まで押されたビル（同じ向き）も球の内
+    const sample = city.buildings.find((b) => view.getBuildingParts(b.id).parts[0].mesh === m);
+    const dir = new THREE.Vector3(sample.x, 0, sample.z).normalize();
+    expect(inSphere(m.boundingSphere, dir.multiplyScalar(CONFIG.radius.max))).toBe(true);
+  }
+  view.setDetail('coarse');
+});
+
+test('S8: 上空の画面では、外の地区のうち画面に入るものだけを描く（後ろ・横の扇は描かない）', () => {
+  const view = createCityView(city, createStyle('mid'), 'mid');
+  const cam = createCityCamera();
+  fitCityCamera(cam, 390 / (844 * 0.65));
+  const frustum = new THREE.Frustum().setFromProjectionMatrix(new THREE.Matrix4().multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse));
+  const outer = Object.values(view.meshes).filter((m) => m.frustumCulled);
+  const drawn = outer.filter((m) => frustum.intersectsSphere(m.boundingSphere));
+  expect(drawn.length).toBeLessThan(outer.length / 2);
+  expect(drawn.length).toBeGreaterThan(0); // 奥（-z）の扇は描く
 });

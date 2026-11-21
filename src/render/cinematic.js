@@ -543,7 +543,8 @@ export function createCinematic(views, enemyView, explosionView, { renderer, sce
       spaceDist = aspect() < 1 ? 190 : 270;
       space.aim({ aspect: aspect(), dist: spaceDist, alt: 50, lookAhead: 420, lookUp: 0, fovH: SPACE_FOV.h, fovV: SPACE_FOV.v });
       const halfH = spaceDist * Math.tan(THREE.MathUtils.degToRad(space.camera.fov) / 2);
-      rMax = 0.17 * halfH * (0.5 + 0.5 * Math.sqrt(s.radius / cfg.radius.max));
+      // S8: 大きさの基準は S7 までの最大の半径（blast.smallRef）。広げた最大の一発（720 m）は前の最大より約 14% 大きく見える
+      rMax = 0.17 * halfH * (0.5 + 0.5 * Math.sqrt(s.radius / (cfg.blast.smallRef ?? cfg.radius.max)));
       screen.grade.bars = 0; screen.grade.fade = 0; screen.grade.streak = 0;
       cue('silence');
       self.update(0);

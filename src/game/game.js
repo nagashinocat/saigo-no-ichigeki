@@ -15,7 +15,8 @@ const MAX_DT = 0.1;
 //        → 'finale'（最後の一発が街を壊していく） → 'over'（'released': その一発の破壊額 / 'blackhole': 時間切れまで放たなかった）
 export function createGame({ seed, cfg = CONFIG }) {
   const city = generateCity(seed, cfg);
-  const enemies = createEnemies(createRng(seed + 1), cfg, { buildings: city.buildings });
+  // 見回る者（S8）は別の乱数（探して掴みに来る者の湧き方・動きは前のまま）
+  const enemies = createEnemies(createRng(seed + 1), cfg, { buildings: city.buildings, patrolRng: createRng((seed ^ 0x9a7b1) >>> 0) });
   const power = createPower(cfg.power);
   const charge = createCharge(power, cfg);
   const timer = createTimer(cfg.roundSeconds);
@@ -25,6 +26,8 @@ export function createGame({ seed, cfg = CONFIG }) {
   const byKey = new Map();
   for (const b of city.buildings) byKey.set('b' + b.id, b);
   for (const p of city.props) byKey.set('p' + p.id, p);
+  // 高架の橋桁の一区間（S8。'x' 高速 / 'r' 線路。id にもう接頭辞が付いている）
+  for (const s of city.transit?.segments ?? []) byKey.set(s.id, s);
   const destroyed = new Set();
 
   const listeners = {};

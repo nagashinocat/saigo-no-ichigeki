@@ -2,6 +2,7 @@ import { CONFIG } from '../config.js';
 import { GRID } from '../world/cityGen.js';
 
 const DEAD_KEEP_SEC = 3;
+const PATROL_ID = 100000;
 const LEAN_SEC = 0.12; // 傾きの見た目のなめらかさ（s）
 const P = GRID.PITCH;
 const DIRS = [[1, 0], [0, 1], [-1, 0], [0, -1]];
@@ -13,6 +14,21 @@ export function spawnRateAt(t, cfg = CONFIG) {
   const E = cfg.enemy;
   const k = Math.min(1, Math.max(0, (t - E.surgeStart) / (E.surgeEnd - E.surgeStart)));
   return E.spawnPerSec * (1 + (E.surgeMul - 1) * k * k * (3 - 2 * k));
+}
+
+// S8（持ち主 13:16「最大溜めなら軍勢を全員巻き込めるくらい」）: 街を見回る者（patrol）。広くなった街の外の帯
+// （band × cityRadius の距離の交差点だけ）を、道路に沿って走り回る。主人公を探さず（気配も感じず、見つけない）、
+// 広場へは来ない。主人公を探して掴みに来る者（ふだんの軍勢）の湧き方・動き・乱数には触れない（釣り合いは前のまま）。
+// 始めに count 人を帯の中に散らして置く（面積あたり同じくらいに）
+// 軍勢が街のどこまで行きうるか（m、爆心＝主人公からの水平の距離）。最大溜めの一発の半径（CONFIG.radius.max）は、
+// これに余裕を足した距離まで届く（tests/game/enemies.test.js、S9 の「最大溜めなら必ず全員倒せる」の前提）
+//  探す者: 交差点は roamDist の内か、主人公へ近づく向きだけ。湧く道は spawnDist の外端から 1.5 区画まで
+//  見回る者: 交差点は帯の外端まで。どちらも道の中の車線のずれと、角を丸く曲がるふくらみ（3 m）を足す
+export function maxEnemyReach(cfg = CONFIG) {
+  const E = cfg.enemy, lane = E.laneSpread * Math.SQRT2 + 3;
+  const hunt = Math.max(E.roamDist, E.spawnDist[1] + 1.5 * P) + lane;
+  const pat = E.patrol && E.patrol.count > 0 ? E.patrol.band[1] * cfg.cityRadius + lane : 0;
+  return Math.max(hunt, pat);
 }
 
 // 見つけたあと近づく速さ（m/s）。掴む手前の slowDist m で、なめらかに slowMin 倍まで落とす。距離は主人公からの水平の距離
@@ -54,7 +70,8 @@ export function lineOfSight(x, z, buildings, margin = 0) {
 //   searchTime（探した秒）、alert（気配を感じて主人公の方へ寄っていく）、grabTime（掴んだ・飛びついてからの秒）、
 //   layer（飛びついた者の重なりの段 0, 1, …）、unpile（重なりから下りて掴んでからの秒）、lean（なめらかにした turn。見た目の傾き）
 // buildings: 見通しを確かめる建物（遊んでいる間は壊れない）
-export function createEnemies(rng, cfg = CONFIG, { buildings = [] } = {}) {
+// patrolRng: 見回る者の乱数（省けば見回る者は置かない。探す者の乱数 rng とは別にして、釣り合いを変えない）
+export function createEnemies(rng, cfg = CONFIG, { buildings = [], patrolRng = null } = {}) {
   const E = cfg.enemy;
   const near = buildings.filter((b) => b.dist - Math.hypot(b.w, b.d) / 2 < E.spotDist);
   let list = [];
@@ -119,6 +136,49 @@ export function createEnemies(rng, cfg = CONFIG, { buildings = [] } = {}) {
     return e;
   }
 
+  // ---- 見回る者 ----
+  let patrolCount = 0; // 見回る者の id は PATROL_ID から（探す者の id の並びを変えない。見つける確かめの間合いが id で決まる）
+  const PB = E.patrol ? [E.patrol.band[0] * cfg.cityRadius, E.patrol.band[1] * cfg.cityRadius] : [0, 0];
+  const inBand = (i, j) => { const [x, z] = roadNode(i, j); const d = Math.hypot(x, z); return d >= PB[0] && d <= PB[1]; };
+  function patrolNext(e) {
+    const opts = [];
+    for (const [di, dj] of DIRS) {
+      if (di === -e.di && dj === -e.dj) continue;
+      if (inBand(e.ni + di, e.nj + dj)) opts.push([di, dj]);
+    }
+    if (!opts.length) opts.push([-e.di, -e.dj]);
+    const [di, dj] = opts[Math.floor(patrolRng() * opts.length) % opts.length];
+    e.di = di; e.dj = dj; e.ni += di; e.nj += dj;
+  }
+  function spawnPatrol() {
+    // 帯の中の交差点を、面積あたり同じくらいに選ぶ
+    let i = 0, j = 0;
+    for (let k = 0; k < 200; k++) {
+      const a = patrolRng() * Math.PI * 2, r = Math.sqrt(PB[0] ** 2 + patrolRng() * (PB[1] ** 2 - PB[0] ** 2));
+      i = Math.round((Math.cos(a) * r) / P - 0.5); j = Math.round((Math.sin(a) * r) / P - 0.5);
+      if (inBand(i, j)) break;
+    }
+    const lane = [(patrolRng() - 0.5) * 2 * E.laneSpread, (patrolRng() - 0.5) * 2 * E.laneSpread];
+    const [x, z] = roadNode(i, j);
+    const d = DIRS[Math.floor(patrolRng() * 4) % 4];
+    const e = { id: PATROL_ID + patrolCount++, patrol: true, x: x + lane[0], z: z + lane[1], state: 'search', speed: E.patrol.speed, turn: 0, searchTime: 0, alert: false, lane, ni: i, nj: j, di: d[0], dj: d[1] };
+    patrolNext(e); // 最初の行き先
+    e.heading = Math.atan2(e.dj, e.di);
+    place(e);
+    return e;
+  }
+  function patrolStep(e, dt) {
+    let [tx, tz] = target(e);
+    const lead = Math.max(1, e.speed / E.turnRate);
+    if ((tx - e.x) * e.di + (tz - e.z) * e.dj < lead) { patrolNext(e); [tx, tz] = target(e); }
+    const off = e.di * (e.z - tz) - e.dj * (e.x - tx);
+    steer(e, Math.atan2(e.dj, e.di) - Math.atan(off / E.lookAhead), E.turnRate, dt);
+    accel(e, E.patrol.speed, dt);
+    e.x += Math.cos(e.heading) * e.speed * dt;
+    e.z += Math.sin(e.heading) * e.speed * dt;
+    place(e);
+  }
+
   // 向きを want へ、毎秒 rate rad までで回す
   function steer(e, want, rate, dt) {
     const d = wrap(want - e.heading);
@@ -178,6 +238,7 @@ export function createEnemies(rng, cfg = CONFIG, { buildings = [] } = {}) {
 
   // 飛びついた者に重なりの段を、飛びついた順に 0, 1, … と振り直す
   const relayer = () => { let k = 0; for (const e of list) if (e.state === 'cling') e.layer = k++; };
+  if (patrolRng && E.patrol?.count > 0) for (let k = 0; k < E.patrol.count; k++) list.push(spawnPatrol());
 
   return {
     get list() { return list; },
@@ -204,6 +265,7 @@ export function createEnemies(rng, cfg = CONFIG, { buildings = [] } = {}) {
         e.heading ??= e.angle + Math.PI;
         e.speed ??= approachSpeed(e.dist, cfg);
         e.turn ??= 0;
+        if (e.patrol) { patrolStep(e, dt); e.lean = (e.lean ?? e.turn) + (e.turn - (e.lean ?? e.turn)) * (1 - Math.exp(-dt / LEAN_SEC)); continue; }
         if (e.state === 'search') searchStep(e, dt);
         if (e.state === 'chase') chaseStep(e, dt);
         // 傾きの見た目に使う、なめらかにした曲がる速さ（交差点の一瞬の曲がりでちらつかない）

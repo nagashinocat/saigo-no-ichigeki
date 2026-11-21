@@ -8,8 +8,10 @@ import { CONFIG } from '../config.js';
 //     ビルが飲まれていく様子・球の全体・宇宙での半球を見せる間）。
 // small を省くと最後の一発の曲線。
 
+// S8: 払う（small）の秒は、前の最大の半径 blast.smallRef m を基準に縮める（最大の半径を広げても、払うの広がり方・
+// 釣り合いは前のまま）。最後の一発は今の最大の半径（radius.max）が基準
 export function phaseTimes(radius, cfg = CONFIG, small = false) {
-  const k = Math.sqrt(radius / cfg.radius.max);
+  const k = Math.sqrt(radius / (small ? cfg.blast.smallRef ?? cfg.radius.max : cfg.radius.max));
   const creep = Math.max(cfg.blast.creepMin, cfg.blast.creepSec * k);
   if (small) return { creep, burst: Math.max(cfg.blast.burstMin, cfg.blast.burstSec * k), show: 0 };
   const F = cfg.finalBlast;

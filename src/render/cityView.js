@@ -5,6 +5,7 @@ import { GRID } from '../world/cityGen.js';
 import { CONFIG } from '../config.js';
 import { packFronts } from './sphereDeform.js';
 import { dressCity, DENSITY, CLUTTER_DENSITY, NEON } from './cityDress.js';
+import { createTransitView } from './transitView.js';
 
 // 街の見た目: 地面、ビル（種類ごとに InstancedMesh。1 棟は形の部品（cityGen の parts）の数だけインスタンスを持つ）、
 // 屋上や壁の飾り・看板・ネオン・店先の光の溜まり（cityDress.js。種類ごとに 1 つの InstancedMesh）、道路沿いの車・街灯・看板。
@@ -13,6 +14,7 @@ import { dressCity, DENSITY, CLUTTER_DENSITY, NEON } from './cityDress.js';
 // 爆発の球に沿ったゆがみ（ビルが球の面へ押し付けられてつぶれる・地面が球の形にえぐれる）は style.js のシェーダーが描く。
 
 const KINDS = ['house', 'office', 'tower'];
+const MAX_RANGES = 48; // 一つの値の、一度に送る飛び飛びの範囲の数の上限（超えたら全体を送る）
 const CAR_COLORS = ['#f4f4f2', '#c9ccd2', '#26282e', '#b8322e', '#2f5d9e', '#e8b93a', '#5f7f6a', '#8d8f94'];
 // 道路沿いの看板もネオンの色から（バイクの緑と重ねない）
 const SIGN_COLORS = Object.values(NEON).map((c) => '#' + new THREE.Color(...c).getHexString());
@@ -33,6 +35,12 @@ export function openBox(drop) {
 }
 // ビルの箱は、球の線に沿って曲がれるよう細かく分ける（縦を多めに）
 const BUILDING_SEGMENTS = { high: [4, 14, 4], mid: [3, 10, 3], low: [2, 6, 2] };
+// S8: 遠い地区（INNER_FRAC × 街の半径より外）のビルは、細かい箱でも分け方を少なく（遠くでは球の線の曲がりが小さく、画面でも小さい）
+const FAR_SEGMENTS = { high: [2, 6, 2], mid: [1, 5, 1], low: [1, 3, 1] };
+// S8: 地区ごとの描画（画面に入らない地区は描かない）。中心の円（INNER_FRAC × 半径の内）と、その外を SECTORS の扇に分ける。
+// 一つの地区・一つの種類が 1 つの InstancedMesh（境界の球を持ち、画面の外なら three が描かない）
+// 扇は軸の向き（±x・±z）を真ん中にする（上空カメラが見る -z の扇が一つにまとまる。4 つの扇も測った: task-S8-report）
+export const REGIONS = { innerFrac: 0.4, sectors: 8, offset: Math.PI / 8 };
 // 低い家（20m 未満。商店の並びの一軒ずつなど）は曲がりが小さいので縦の分け方を少なく（S7 で部品が増えた分の三角形を抑える）
 const HOUSE_V = { high: 3, mid: 3, low: 2 };
 // 2 段の細かさ（S7 fix 1）: 遊んでいる間はビルはつぶれない（小爆発はビルをゆがめない）ので粗い箱で描き、
@@ -42,14 +50,17 @@ const COARSE_SEGMENTS = [1, 2, 1];
 const SHADOW_SEGMENTS = [1, 3, 1];
 // 地面: 中心が細かい放射状のメッシュ（えぐれの縁がなめらかな円になるように）。街の外は粗く地平まで
 const GROUND_RINGS = { high: [190, 320], mid: [140, 240], low: [90, 160] };
-const GROUND_FINE_R = CONFIG.cityRadius + 150;
+// S8: 細かい範囲は街の半径に合わせる。輪の間隔は中心ほど細かく（RING_POW。広くしても小さな穴の縁はなめらかなまま）
+const GROUND_FINE_PAD = 150, RING_POW = 1.25;
 const GROUND_FAR_R = 8000, GROUND_FAR_RINGS = 30;
 
-function radialGround(tier) {
+function radialGround(tier, R = CONFIG.cityRadius) {
   const [rings, seg] = GROUND_RINGS[tier] ?? GROUND_RINGS.mid;
-  const step = GROUND_FINE_R / rings;
+  const GROUND_FINE_R = R + GROUND_FINE_PAD;
+  // 縁を円へ寄せる量（uRingStep）は、いちばん粗いところの輪の間隔
+  const step = GROUND_FINE_R * (1 - ((rings - 1) / rings) ** RING_POW);
   const radii = [];
-  for (let i = 1; i <= rings; i++) radii.push(i * step);
+  for (let i = 1; i <= rings; i++) radii.push(GROUND_FINE_R * (i / rings) ** RING_POW);
   for (let i = 1; i <= GROUND_FAR_RINGS; i++) radii.push(GROUND_FINE_R * (GROUND_FAR_R / GROUND_FINE_R) ** (i / GROUND_FAR_RINGS));
   const pos = new Float32Array((1 + radii.length * seg) * 3);
   let k = 3;
@@ -113,7 +124,8 @@ export function createCityView(city, style, tier) {
   const pick = (arr) => arr[Math.floor(rng() * arr.length)];
 
   // 地面（地平まで届く広さ。えぐれの縁がなめらかな円になるよう中心を細かく分ける）
-  const groundGeo = radialGround(tier);
+  const R = city.radius ?? CONFIG.cityRadius;
+  const groundGeo = radialGround(tier, R);
   const ground = new THREE.Mesh(groundGeo.geo, style.ground);
   ground.receiveShadow = shadows;
   ground.frustumCulled = false; // えぐれで頂点が下がるので、元の平らな境界では判定しない
@@ -121,68 +133,118 @@ export function createCityView(city, style, tier) {
   const u = style.uniforms;
   u.uRingStep.value = groundGeo.step;
 
-  // ビル（種類ごとに箱の形を持ち、つぶれ始めた時刻を部品ごとの aCrush、屋根の形を aShape に書く）
+  // ビル（種類と地区ごとに箱の形を持ち、つぶれ始めた時刻を部品ごとの aCrush、屋根の形を aShape に書く）
   const segs = BUILDING_SEGMENTS[tier] ?? BUILDING_SEGMENTS.mid;
+  const farSegs = FAR_SEGMENTS[tier] ?? FAR_SEGMENTS.mid;
   const byId = new Map(); // building id -> { parts: [{mesh, index}], extras: [{mesh, index}] }
-  const lod = []; // 種類ごと: { coarse, fine, meshes }
-  const meshes = {};
+  const lod = []; // 種類と地区ごと: { coarse, fine, meshes, region, sphere: { coarse, fine } }
+  const meshes = {}; // 'kind:region' -> InstancedMesh（テスト・調査用）
   const color = new THREE.Color(), base = new THREE.Color();
+  const innerR = REGIONS.innerFrac * R;
+  const sectorOf = (a) => Math.floor((((a + Math.PI + REGIONS.offset) / (2 * Math.PI)) % 1) * REGIONS.sectors) % REGIONS.sectors;
+  const regionOf = (b) => (b.dist < innerR ? 0 : 1 + sectorOf(Math.atan2(b.z, b.x)));
+  const sunDir = style.sunDir ?? new THREE.Vector3(0.8, 0.3, -0.45).normalize();
   for (const kind of KINDS) {
-    const list = city.buildings.filter((b) => b.kind === kind);
-    const n = list.reduce((a, b) => a + b.parts.length, 0);
-    const sg = kind === 'house' ? [segs[0], HOUSE_V[tier] ?? HOUSE_V.mid, segs[2]] : segs;
-    const crushAttr = new THREE.InstancedBufferAttribute(new Float32Array(Math.max(1, n) * 2), 2);
-    const shape = new THREE.InstancedBufferAttribute(new Float32Array(Math.max(1, n) * 2), 2);
-    const boxGeo = (sgm) => {
-      const g = new THREE.BoxGeometry(1, 1, 1, ...sgm).translate(0, 0.5, 0);
-      g.setAttribute('aCrush', crushAttr);
-      g.setAttribute('aShape', shape);
-      return g;
-    };
-    const geo = boxGeo(COARSE_SEGMENTS);
-    lod.push({ kind, coarse: geo, fine: boxGeo(sg), meshes: [] });
-    const mesh = instanced(geo, style.building(kind), n, { cast: shadows, receive: shadows });
-    lod[lod.length - 1].meshes.push(mesh);
-    if (style.buildingDepth) mesh.customDepthMaterial = style.buildingDepth;
-    mesh.name = 'buildings-' + kind;
-    const colors = style.kindColors[kind];
-    let i = 0;
-    for (const b of list) {
-      base.set(pick(colors)).multiplyScalar(0.9 + 0.14 * rng());
-      const entry = { parts: [], extras: [] };
-      for (const p of b.parts) {
-        mesh.setMatrixAt(i, boxMatrix(b.x + p.x, p.y, b.z + p.z, p.w, p.h, p.d));
-        // 商店の並びは一軒ずつ違う色、ほかは同じ色を部品ごとに少しだけ変える
-        if (b.arch === 'shop') color.set(colors[Math.floor(p.tone * colors.length) % colors.length]).multiplyScalar(0.86 + 0.2 * rng());
-        else color.copy(base).multiplyScalar(0.95 + 0.1 * p.tone);
-        mesh.setColorAt(i, color);
-        shape.setXY(i, p.shape?.[0] ?? 0, p.shape?.[1] ?? 0);
-        entry.parts.push({ mesh, index: i });
-        i++;
+    const all = city.buildings.filter((b) => b.kind === kind);
+    for (let region = 0; region <= REGIONS.sectors; region++) {
+      const list = all.filter((b) => regionOf(b) === region);
+      if (!list.length) continue;
+      const n = list.reduce((a, b) => a + b.parts.length, 0);
+      const near = region === 0;
+      const sg0 = near ? segs : farSegs;
+      const sg = kind === 'house' ? [sg0[0], Math.min(sg0[1], HOUSE_V[tier] ?? HOUSE_V.mid), sg0[2]] : sg0;
+      const crushAttr = new THREE.InstancedBufferAttribute(new Float32Array(n * 2), 2);
+      const shape = new THREE.InstancedBufferAttribute(new Float32Array(n * 2), 2);
+      const boxGeo = (sgm) => {
+        const g = new THREE.BoxGeometry(1, 1, 1, ...sgm).translate(0, 0.5, 0);
+        g.setAttribute('aCrush', crushAttr);
+        g.setAttribute('aShape', shape);
+        return g;
+      };
+      const geo = boxGeo(COARSE_SEGMENTS);
+      const entryL = { kind, region, coarse: geo, fine: boxGeo(sg), meshes: [], spheres: regionSpheres(list, region) };
+      lod.push(entryL);
+      const mesh = instanced(geo, style.building(kind), n, { cast: shadows, receive: shadows });
+      entryL.meshes.push(mesh);
+      if (style.buildingDepth) mesh.customDepthMaterial = style.buildingDepth;
+      mesh.name = 'buildings-' + kind + (region ? '-s' + region : '');
+      const colors = style.kindColors[kind];
+      let i = 0;
+      for (const b of list) {
+        base.set(pick(colors)).multiplyScalar(0.9 + 0.14 * rng());
+        const entry = { parts: [], extras: [] };
+        for (const p of b.parts) {
+          mesh.setMatrixAt(i, boxMatrix(b.x + p.x, p.y, b.z + p.z, p.w, p.h, p.d));
+          // 商店の並びは一軒ずつ違う色、ほかは同じ色を部品ごとに少しだけ変える
+          if (b.arch === 'shop') color.set(colors[Math.floor(p.tone * colors.length) % colors.length]).multiplyScalar(0.86 + 0.2 * rng());
+          else color.copy(base).multiplyScalar(0.95 + 0.1 * p.tone);
+          mesh.setColorAt(i, color);
+          shape.setXY(i, p.shape?.[0] ?? 0, p.shape?.[1] ?? 0);
+          entry.parts.push({ mesh, index: i });
+          i++;
+        }
+        byId.set(b.id, entry);
       }
-      byId.set(b.id, entry);
-    }
-    meshes[kind] = mesh;
-    group.add(mesh);
-    if (style.outline) {
-      const line = instanced(geo, style.outline, n);
-      line.instanceMatrix = mesh.instanceMatrix; // 同じ行列を使うので、隠すと線も消える
-      line.name = 'outline-' + kind;
-      lod[lod.length - 1].meshes.push(line);
-      group.add(line);
-    }
-    if (style.planarShadow) {
-      // 同じ aCrush / aShape を使う粗い箱（つぶすと影も同じようにつぶれる）
-      const sgeo = new THREE.BoxGeometry(1, 1, 1, ...SHADOW_SEGMENTS).translate(0, 0.5, 0);
-      sgeo.setAttribute('aCrush', crushAttr);
-      sgeo.setAttribute('aShape', shape);
-      const sh = instanced(sgeo, style.planarShadow, n);
-      sh.instanceMatrix = mesh.instanceMatrix;
-      sh.renderOrder = 1;
-      sh.name = 'planarShadow-' + kind;
-      group.add(sh);
+      meshes[kind + ':' + region] = mesh;
+      group.add(mesh);
+      if (style.outline) {
+        const line = instanced(geo, style.outline, n);
+        line.instanceMatrix = mesh.instanceMatrix; // 同じ行列を使うので、隠すと線も消える
+        line.name = 'outline-' + kind + (region ? '-s' + region : '');
+        entryL.meshes.push(line);
+        group.add(line);
+      }
+      if (style.planarShadow) {
+        // 同じ aCrush / aShape を使う粗い箱（つぶすと影も同じようにつぶれる）
+        const sgeo = new THREE.BoxGeometry(1, 1, 1, ...SHADOW_SEGMENTS).translate(0, 0.5, 0);
+        sgeo.setAttribute('aCrush', crushAttr);
+        sgeo.setAttribute('aShape', shape);
+        const sh = instanced(sgeo, style.planarShadow, n);
+        sh.instanceMatrix = mesh.instanceMatrix;
+        sh.renderOrder = 1;
+        sh.name = 'planarShadow-' + kind + (region ? '-s' + region : '');
+        entryL.shadow = sh;
+        group.add(sh);
+      }
     }
   }
+  // 地区の境界の球: coarse（遊んでいる間。ビルの箱と、日なたの向きに地面へ落ちる影の先）と、
+  // fine（最後の一発から。球に押されたビルは爆心から外へ、同じ扇の内を最大の半径まで動くので、扇の内の最大の半径までの球）
+  function regionSpheres(list, region) {
+    if (region === 0) return { coarse: null, shadow: null, fine: null };
+    const pts = [], tips = [];
+    for (const b of list) {
+      for (const sx of [-0.5, 0.5]) for (const sz of [-0.5, 0.5]) {
+        const x = b.x + sx * b.w, z = b.z + sz * b.d;
+        pts.push(new THREE.Vector3(x, 0, z), new THREE.Vector3(x, b.h, z));
+        // 平らな影（mid / low）の先: 屋上の角を日なたと逆の向きへ地面まで
+        tips.push(new THREE.Vector3(x - sunDir.x / sunDir.y * b.h, 0, z - sunDir.z / sunDir.y * b.h));
+      }
+    }
+    const coarse = new THREE.Sphere().setFromPoints(pts);
+    const shadow = new THREE.Sphere().setFromPoints([...pts, ...tips]);
+    const a0 = (region - 1) / REGIONS.sectors * 2 * Math.PI - Math.PI - REGIONS.offset, a1 = a0 + 2 * Math.PI / REGIONS.sectors;
+    const rMax = Math.max(CONFIG.radius.max, ...list.map((b) => b.dist + Math.hypot(b.w, b.d)));
+    const hMax = Math.max(...list.map((b) => b.h));
+    const wedge = [...pts, ...tips];
+    for (let k = 0; k <= 4; k++) {
+      const a = a0 + (a1 - a0) * k / 4;
+      for (const r of [innerR * 0.8, rMax]) for (const y of [0, hMax]) wedge.push(new THREE.Vector3(Math.cos(a) * r, y, Math.sin(a) * r));
+    }
+    return { coarse, shadow, fine: new THREE.Sphere().setFromPoints(wedge) };
+  }
+  // 地区の球をあてる（中心の地区はいつも描く）。平らな影は影の先まで含む球
+  const applySpheres = (level) => {
+    for (const l of lod) {
+      const fine = level === 'fine';
+      for (const [m, sp] of [...l.meshes.map((m) => [m, fine ? l.spheres.fine : l.spheres.coarse]), [l.shadow, fine ? l.spheres.fine : l.spheres.shadow]]) {
+        if (!m) continue;
+        m.frustumCulled = !!sp;
+        if (sp) m.boundingSphere = sp.clone();
+      }
+    }
+  };
+  applySpheres('coarse');
 
 
   // 屋上・壁の飾り、看板・ネオン、店先の光の溜まり（cityDress.js）。作るときの段の密度で作り、
@@ -346,12 +408,21 @@ export function createCityView(city, style, tier) {
   // 範囲だけ GPU へ送る（three は updateRanges があればその範囲だけを送り、なければ全体を送る）。
   // restore は全体を送る印（範囲なし）を付けるが、描く前に同じ値へ部分の範囲を足すと、全体が送られずに部分だけになる
   // （リプレイで、戻した飾りが GPU の上では隠れたままになった）。そこで restore のあと最初に範囲を足すときは、全体の範囲も足す
+  // S8: 大きな街が一気に壊れていくフレームでは、一つの値に飛び飛びの範囲が多くなる（飾りは並べ替えてあるので、1 棟の飾りが
+  // 散らばる）。範囲ごとに bufferSubData を呼ぶ代わりに、MAX_RANGES を超えたら全体を一度に送る
   const fullPending = new Set();
+  const isFull = (attr) => { const r = attr.updateRanges; return r.length > 0 && r[0].start === 0 && r[0].count >= attr.array.length; };
   const markRange = (attr, start, count) => {
-    if (fullPending.has(attr)) { fullPending.delete(attr); attr.addUpdateRange(0, attr.array.length); }
-    attr.addUpdateRange(start, count);
+    const full = () => { attr.clearUpdateRanges(); attr.addUpdateRange(0, attr.array.length); };
+    if (fullPending.has(attr)) { fullPending.delete(attr); full(); }
+    else if (isFull(attr)) { /* もう全体を送る */ }
+    else if (attr.updateRanges.length >= MAX_RANGES) full();
+    else attr.addUpdateRange(start, count);
     attr.needsUpdate = true;
   };
+  // S8: 高架の高速道路と環状線（transitView.js）。つぶれ・隠しは同じ markRange で送る
+  const transitV = city.transit ? createTransitView(city.transit, style, tier, { markRange }) : null;
+  if (transitV) group.add(transitV.group);
   const hide = ({ mesh, index }) => {
     mesh.setMatrixAt(index, ZERO);
     markRange(mesh.instanceMatrix, index * 16, 16);
@@ -368,6 +439,32 @@ export function createCityView(city, style, tier) {
   const veiled = new Map(), gone = new Set(), crushed = new Set();
   const matOf = ({ mesh, index }) => mesh.instanceMatrix.array.slice(index * 16, index * 16 + 16);
   const setMat = ({ mesh, index }, arr) => { mesh.instanceMatrix.array.set(arr, index * 16); markRange(mesh.instanceMatrix, index * 16, 16); };
+
+  let preTarget = null;
+  // 街を入れたシーン（光の数を同じにして、同じシェーダーで描く）の光だけを残し、細かい箱を 1 棟ずつだけ描く
+  function preloadFine(renderer, camera, scene) {
+    const tmp = new THREE.Group();
+    for (const l of lod) for (const m of l.meshes) {
+      const d = new THREE.InstancedMesh(l.fine, m.material, 1);
+      d.instanceMatrix = m.instanceMatrix;
+      if (m.instanceColor) d.instanceColor = m.instanceColor;
+      d.customDepthMaterial = m.customDepthMaterial;
+      d.castShadow = m.castShadow; d.receiveShadow = m.receiveShadow;
+      d.frustumCulled = false;
+      tmp.add(d);
+    }
+    const root = scene ?? group;
+    const vis = root.children.map((o) => o.visible);
+    root.children.forEach((o) => { if (!o.isLight) o.visible = false; });
+    root.add(tmp);
+    preTarget ??= new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType });
+    const prev = renderer.getRenderTarget();
+    renderer.setRenderTarget(preTarget);
+    renderer.render(root, camera);
+    renderer.setRenderTarget(prev);
+    root.remove(tmp);
+    root.children.forEach((o, i) => { o.visible = vis[i]; });
+  }
 
   return {
     group,
@@ -407,27 +504,37 @@ export function createCityView(city, style, tier) {
     // ビルの細かさ: 'coarse'（遊んでいる間）/ 'fine'（最後の一発から。球の線に沿って曲がる）
     setDetail(level) {
       for (const l of lod) for (const m of l.meshes) m.geometry = level === 'fine' ? l.fine : l.coarse;
+      applySpheres(level);
       detail = level;
     },
     get detail() { return detail; },
     // 初めて描くときに止まらないよう、街の材質を前もって作る（scene: 光の数を合わせるため、街を入れたシーン）。
     // 隠している壁の飾りも作る
+    // S8: 最後の一発で差し替える細かい箱の形も、ここで一度だけ 1 画素の的へ描いて GPU へ送っておく（差し替えた瞬間に止まらない）
     warmup(renderer, camera, scene = group) {
       const v = wallMesh.visible;
       wallMesh.visible = true;
       renderer.compile(scene, camera);
       wallMesh.visible = v;
+      preloadFine(renderer, camera, scene === group ? null : scene);
     },
     // 爆発の球に沿ったゆがみを進める。fronts: [えぐれの半径, ...今の球の半径]（createFrontTracker）、
     // heat: 球の明るさ（0〜1。押し付けられた面と穴の割れ目が光る）、ember: 熾火の残り（0〜1）
-    update(dt, { fronts = [], heat = 0, ember = 0 } = {}) {
+    // front / radius: 最後の一発の今の前線と半径（高架の電車が前線に触れたら脱線する）。高架で起きたこと（脱線・溶ける・落ちた）を返す
+    update(dt, { fronts = [], heat = 0, ember = 0, front = 0, radius = 0 } = {}) {
       time += dt;
       u.uTime.value = time;
       u.uFrontCount.value = packFronts(fronts, u.uFronts.value);
       u.uCrater.value = u.uFronts.value[0];
       u.uHeat.value = heat;
       u.uEmber.value = ember;
+      return transitV ? transitV.update(dt, { front, radius }) : [];
     },
+    // ---- 高架（S8）: 区間 id は 'x3'（高速）/ 'r5'（線路） ----
+    get transit() { return transitV; },
+    crushTransit(id, delay) { transitV?.crush(id, time, Math.max(1e-3, delay)); },
+    hideTransit(id) { transitV?.hide(id); },
+    transitState() { return transitV ? transitV.state() : null; },
     // 球の表面が通ったビル: 部品も飾りも看板も同じ時刻から delay 秒かけて、一つのビルとして球の線に沿ってつぶれていく
     // （看板はちらついて消える。つぶれ方を持たない航空灯だけすぐ隠す）。隠すのは hideBuilding
     crushBuilding(id, delay) {
@@ -488,7 +595,7 @@ export function createCityView(city, style, tier) {
           if (a.isInstancedBufferAttribute && !attrs.some((x) => x.attr === a)) attrs.push({ attr: a, array: a.array.slice() });
         }
       });
-      return { mats, attrs };
+      return { mats, attrs, transit: transitV ? transitV.state() : null };
     },
     // snapshot の姿へ戻す。一部の範囲だけ送る印は消して、全部を GPU へ送り直す
     restore(snap) {
@@ -499,6 +606,7 @@ export function createCityView(city, style, tier) {
         attr.needsUpdate = true;
         fullPending.add(attr);
       }
+      if (transitV && snap.transit) transitV.setState(snap.transit);
     },
   };
 }

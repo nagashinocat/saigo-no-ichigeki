@@ -66,6 +66,10 @@ export function createDestruction({ cityView, getTier, seed = 1 }) {
       hole = 0; time = 0;
     },
     setPhysicsFocus(pos) { focus = pos ? [pos[0], pos[1], pos[2]] : null; },
+    // S8: 高架で起きたこと（transitView の events）。脱線した車両が落ちた（land）ら破片と土煙。次の update で粉を返す
+    onTransit(events) {
+      for (const e of events) if (e.kind === 'land') trainDebris(e.target, pendingDust);
+    },
     // game の 'hit' を受ける
     onHit({ hit, target }) {
       const tier = getTier();
@@ -74,8 +78,17 @@ export function createDestruction({ cityView, getTier, seed = 1 }) {
       if (tier.rubbleMax !== rubbleLimit) { rubbleLimit = tier.rubbleMax; pendingDust.push(...rubble.setLimit(rubbleLimit)); }
       const id = Number(hit.id.slice(1));
       const isBuilding = hit.id[0] === 'b';
+      // S8: 高架の橋桁の一区間（'x' 高速 / 'r' 線路）。ビルと同じく、少しつぶれた形を見せてから破片になる
+      const isTransit = hit.id[0] === 'x' || hit.id[0] === 'r';
       if (hit.kind === 'vaporize') { // 溶ける演出は Task 9
-        if (isBuilding) cityView.hideBuilding(id); else cityView.hideProp(id);
+        if (isTransit) cityView.hideTransit?.(hit.id);
+        else if (isBuilding) cityView.hideBuilding(id); else cityView.hideProp(id);
+        return;
+      }
+      if (isTransit) {
+        const delay = CRUSH_DELAY[0] + (CRUSH_DELAY[1] - CRUSH_DELAY[0]) * rng();
+        cityView.crushTransit?.(hit.id, delay);
+        crushing.push({ id: hit.id, target, color: [0.42, 0.42, 0.44], at: time + delay, transit: true });
         return;
       }
       if (isBuilding) {
@@ -114,12 +127,45 @@ export function createDestruction({ cityView, getTier, seed = 1 }) {
         if (crushing[i].at > time + 1e-9) continue;
         const c = crushing[i];
         crushing.splice(i, 1);
-        fractureCrushed(c, fronts, dust);
+        if (c.transit) fractureSpan(c, fronts, dust); else fractureCrushed(c, fronts, dust);
       }
       if (near.bodies.length) dust.push(...near.step(dt));
       return dust;
     },
   };
+
+  // S8: つぶれきった橋桁の一区間を隠し、橋桁に沿って割れた板と土煙を出す（橋脚の根元からも）
+  function fractureSpan({ id, target: s, color }, fronts, dust) {
+    const tier = getTier();
+    cityView.hideTransit?.(id);
+    const n = Math.max(3, Math.round(tier.piecesPerBuilding * 0.6));
+    for (let i = 0; i < n; i++) {
+      const u = (i + 0.5) / n + (rng() - 0.5) * 0.3 / n;
+      const across = (rng() - 0.5) * s.width * 0.8;
+      const x = s.a[0] + (s.b[0] - s.a[0]) * u - Math.sin(s.heading) * across, z = s.a[1] + (s.b[1] - s.a[1]) * u + Math.cos(s.heading) * across;
+      const p = crushPoint([x, s.y - s.thick / 2, z], fronts, 1);
+      const L = Math.min(BIG_MAX, s.len / n * (0.8 + 0.5 * rng()));
+      const k = shade();
+      pool.spawn({ pos: p, vel: crushOrSlump(p), size: L, dims: [L, s.thick * (0.6 + 0.5 * rng()), s.width * (0.25 + 0.3 * rng())], color: [color[0] * k, color[1] * k, color[2] * k], keep: i % 3 === 0 });
+    }
+    for (let i = 0; i < 2; i++) {
+      const p = crushPoint([s.a[0] + (s.b[0] - s.a[0]) * rng(), rng() * s.y * 0.5, s.a[1] + (s.b[1] - s.a[1]) * rng()], fronts, 1);
+      dust.push({ pos: p, size: s.width * 0.7 });
+    }
+  }
+
+  // 電車の一両が脱線して落ちた・溶けた（transitView の events。target: { x, y, z, w, d, h, heading, color }）: 車体の破片と土煙
+  function trainDebris(t, dust) {
+    const tier = getTier();
+    const n = Math.max(3, Math.round(tier.piecesPerBuilding * 0.5));
+    for (let i = 0; i < n; i++) {
+      const u = (rng() - 0.5) * t.w;
+      const p = [t.x + Math.cos(t.heading) * u, Math.max(0.5, t.y + 1 + rng() * 2), t.z + Math.sin(t.heading) * u];
+      const s = 1 + 2.2 * rng(), k = shade();
+      pool.spawn({ pos: p, vel: pushVelocity(p, t.dist, rng), size: s * 1.6, dims: [s * 1.6, s * 0.6, s], color: [t.color[0] * k, t.color[1] * k, t.color[2] * k], keep: i === 0 });
+    }
+    dust.push({ pos: [t.x, Math.max(0, t.y), t.z], size: 8 });
+  }
 
   // つぶれきったビルを隠し、つぶれた形（crushPoint の k=1）の上から破片と土煙を出す
   function fractureCrushed({ id, target, color }, fronts, dust) {

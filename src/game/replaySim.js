@@ -11,6 +11,7 @@ export function replayTargets(city) {
   const out = [];
   for (const b of city.buildings) out.push({ id: 'b' + b.id, dist: b.dist, target: b });
   for (const p of city.props) out.push({ id: 'p' + p.id, dist: p.dist, target: p });
+  for (const s of city.transit?.segments ?? []) out.push({ id: s.id, dist: s.dist, target: s });
   return out;
 }
 

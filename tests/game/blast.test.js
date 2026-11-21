@@ -5,7 +5,10 @@ import { CONFIG } from '../../src/config.js';
 const shot = (radius) => ({ amount: 50, radius, isBig: true });
 
 const R = CONFIG.radius.max;
-const sec = (radius) => ({ creep: Math.max(0.25, CONFIG.blast.creepSec * Math.sqrt(radius / R)), burst: Math.max(0.2, CONFIG.blast.burstSec * Math.sqrt(radius / R)) });
+// 払う（小爆発）の秒の式。S8 で最大の半径を 440 → 720 m に広げたが、払うの秒は前の最大（blast.smallRef = 440 m）を基準のまま
+// （払うの広がり方と釣り合いを変えない）。前の式の R をその基準に置き換えた
+const RS = CONFIG.blast.smallRef;
+const sec = (radius) => ({ creep: Math.max(0.25, CONFIG.blast.creepSec * Math.sqrt(radius / RS)), burst: Math.max(0.2, CONFIG.blast.burstSec * Math.sqrt(radius / RS)) });
 const speedAt = (t, radius, small = false) => (frontAt(t + 1e-4, radius, CONFIG, small) - frontAt(t - 1e-4, radius, CONFIG, small)) / 2e-4;
 
 test('frontAt は単調増加、0 で 0、blastDuration で radius（払うも最後の一発も）', () => {
@@ -87,10 +90,12 @@ test('最後の一発: 弾ける期のはじめが最速、弾ける期の終わ
     expect(speedAt(end - show * 0.02, r)).toBeLessThan(speedAt(b + 1e-3, r) * 0.15);
   }
 });
-test('最大の一発の blastDuration は前（2.4 秒）の 1.5〜2 倍、見せる期の前線の速さは街を飲むのが見える速さ（最大の一発で 150 m/s 以下）', () => {
-  const before = sec(R).creep + sec(R).burst;
+// S8: 街を広げて最大の半径を 440 → 720 m にした（持ち主 13:16「爆発の規模をもっと上げて」）。見せる期の速さを 150 m/s 以下に保つため
+// 見せる期を 3.4 → 4.3 秒に延ばしたので、最大の一発は前（S7 まで 4.8 秒）より長い。上限を 2 → 2.5 倍へ（演出の全体は +1.5 秒の内）
+test('最大の一発の blastDuration は前（2.4 秒）の 1.5〜2.5 倍、見せる期の前線の速さは街を飲むのが見える速さ（最大の一発で 150 m/s 以下）', () => {
+  const before = CONFIG.blast.creepSec + CONFIG.blast.burstSec;
   expect(blastDuration(R) / before).toBeGreaterThanOrEqual(1.5);
-  expect(blastDuration(R) / before).toBeLessThanOrEqual(2);
+  expect(blastDuration(R) / before).toBeLessThanOrEqual(2.5);
   const { creep, burst } = phaseTimes(R);
   expect(speedAt(creep + burst + 1e-3, R)).toBeLessThan(150);
   expect(blastDuration(30)).toBeLessThan(1.6);

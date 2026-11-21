@@ -1,3 +1,4 @@
+import { CONFIG } from '../config.js';
 // 破片の演出用の動き（物理ではなく、決めた式で動かす）。three には依存しない。
 // 手前の破片だけは nearPhysics.js の物理を使う。
 import { groundHeight } from '../render/sphereDeform.js';
@@ -38,7 +39,7 @@ function outward(c, rng) {
 // 破片の初速。中心から外向き（水平）と上向き。blastFront が大きい（大きな一発）ほど速くなりやすい。
 export function pushVelocity(chunkCenter, blastFront, rng) {
   const [dirX, dirZ] = outward(chunkCenter, rng);
-  const t = clamp01(0.25 + 0.5 * (blastFront / 440) + (rng() - 0.5) * 0.5);
+  const t = clamp01(0.25 + 0.5 * (blastFront / CONFIG.radius.max) + (rng() - 0.5) * 0.5);
   const h = DEBRIS.horizontal[0] + (DEBRIS.horizontal[1] - DEBRIS.horizontal[0]) * t;
   const up = DEBRIS.upward[0] + (DEBRIS.upward[1] - DEBRIS.upward[0]) * rng();
   return [dirX * h, up, dirZ * h];

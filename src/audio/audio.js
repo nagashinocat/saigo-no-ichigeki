@@ -169,6 +169,8 @@ export function createAudio() {
   let debrisBus = null, debrisLp = null, collapseBufs = [];
   const collapseGate = createCollapseGate();
   let rumbleSrcs = null; // 最後の一発の地響き（鳴っている間だけ）
+  let transitNodes = null; // S8: 電車と高速の音（最初に鳴らすときに作る）
+  let clatterPhase = 0;
 
   function build() {
     const AC = window.AudioContext || window.webkitAudioContext;
@@ -418,6 +420,47 @@ export function createAudio() {
       const pan = ctx.createStereoPanner(); pan.pan.value = v.pan;
       src.connect(g); g.connect(pan); pan.connect(debrisBus);
       src.start(t); src.stop(t + v.dur + 0.02);
+    },
+    // S8: 電車の走行音・継ぎ目の音と、高速の風切り（transitSound.js の transitMix）。毎フレーム呼ぶ。null で消していく。
+    // 世界の音（master）を通るので、演出の無音・宇宙のこもりにも従う
+    transit(mix, dt = 0) {
+      if (!ready()) return;
+      const t = now();
+      if (!transitNodes) {
+        if (!mix) return;
+        const mk = (buf, type, f, q) => {
+          const src = ctx.createBufferSource(); src.buffer = buf; src.loop = true;
+          const flt = ctx.createBiquadFilter(); flt.type = type; flt.frequency.value = f; flt.Q.value = q;
+          const g = ctx.createGain(); g.gain.value = 0;
+          const pan = ctx.createStereoPanner();
+          src.connect(flt); flt.connect(g); g.connect(pan); pan.connect(master);
+          src.start(t, Math.random());
+          return { src, flt, g, pan };
+        };
+        const train = mk(brownBuf, 'lowpass', 150, 0.7);
+        const hiss = mk(noiseBuf, 'bandpass', 1900, 0.55);
+        // 車の流れのうねり（ゆっくり強弱）
+        const lfo = ctx.createOscillator(); lfo.frequency.value = 0.23;
+        const lg = ctx.createGain(); lg.gain.value = 0;
+        lfo.connect(lg); lg.connect(hiss.g.gain); lfo.start(t);
+        const clatter = ctx.createGain(); clatter.gain.value = 1; clatter.connect(train.pan);
+        transitNodes = { train, hiss, lfoGain: lg, clatter, clatterLevel: 0 };
+      }
+      const n = transitNodes;
+      const m = mix ?? { train: { gain: 0, clatter: 0, pan: 0, rate: 0 }, hiss: { gain: 0, pan: 0 } };
+      n.train.g.gain.setTargetAtTime(m.train.gain, t, 0.25);
+      n.train.pan.pan.setTargetAtTime(m.train.pan, t, 0.15);
+      n.hiss.g.gain.setTargetAtTime(m.hiss.gain, t, 0.3);
+      n.lfoGain.gain.setTargetAtTime(m.hiss.gain * 0.35, t, 0.3);
+      n.hiss.pan.pan.setTargetAtTime(m.hiss.pan, t, 0.2);
+      // 継ぎ目のガタン・ゴトン（台車の前と後ろ）。速さに合わせて刻む
+      if (m.train.clatter > 1e-4 && m.train.rate > 0 && dt > 0) {
+        clatterPhase += dt * m.train.rate;
+        if (clatterPhase >= 1) {
+          clatterPhase %= 1;
+          for (const [when, k] of [[0, 1], [0.11, 0.8]]) noiseBurst({ dur: 0.07, freq: 1100, gain: m.train.clatter * k, attack: 0.003, when, q: 1.4, dest: n.clatter });
+        }
+      }
     },
     // 瓦礫の音の道の状態（リプレイの始まりで 'replay'、遊びに戻ったら 'open'）
     debrisMode(mode) {

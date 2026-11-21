@@ -16,7 +16,7 @@ function playGame(seed, amount) {
   const enemies = game.enemies.list.map((e) => ({ ...e }));
   game.pressEnd();
   const shot = { amount, radius: radiusFor(amount), isBig: true };
-  for (let i = 0; i < 400 && game.phase !== 'over'; i++) game.update(1 / 60);
+  for (let i = 0; i < 600 && game.phase !== 'over'; i++) game.update(1 / 60); // S8: 最大の一発が 4.8 → 5.7 秒になったので 400 → 600 歩
   return { game, hits, enemies, shot };
 }
 

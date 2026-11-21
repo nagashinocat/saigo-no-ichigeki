@@ -43,6 +43,9 @@ export const PLAN = {
   flats: [110, 70, 40, 20, 0], // 通りの高さのまま飛ぶ長さ（m）の候補。長いほどよい
   riseLen: 7,
   slope: 0.2,
+  // S8: 広い街では逃げる道が長く（最大の半径 720 m の先まで）、街の中ほどの高いビルの上を通る。一気に上がる（rise）より、
+  // ゆるい坂（slope）を少し急にして越える方を先に試す
+  slopes: [0.2, 0.28, 0.38, 0.5],
   pathClear: 4,
   azOffsets: [0, 0.3, -0.3, 0.6, -0.6, 0.9, -0.9],
 };
@@ -111,25 +114,41 @@ function findRetreat(origin, base, buildings, ground, radius, lead) {
       return along > -20 && along < len + 20 && across < 30 + Math.max(o.w, o.d);
     });
     const floorY = xs.map((x) => ground([origin[0] + dir[0] * x, 0, origin[2] + dir[1] * x]) + 1);
+    // 各点で越えなければならない高さ（ビルの箱を margin だけ広げた中に入るなら、その屋上 + margin）。
+    // S8: 低く飛ぶ間の margin（clearance）と、上がってからの margin（pathClear。上がり始めの数 m も広い方で見る）の 2 通りだけを
+    // 向きごとに一度求め、低く飛ぶ長さの候補で使い回す（広い街の長い道で、放ったあとの一拍の計算が重くならないように）
+    // 道に沿った 10 m ごとの棚に、その範囲にかかるビルを入れておく（各点は自分の棚のビルだけ確かめる）
+    const BIN = 10, bins = new Map();
+    for (const o of corridor) {
+      const rx = o.x - origin[0], rz = o.z - origin[2], along = rx * dir[0] + rz * dir[1];
+      const ext = (Math.abs(dir[0]) * o.w + Math.abs(dir[1]) * o.d) / 2 + PLAN.pathClear + 1;
+      for (let k = Math.floor((along - ext) / BIN); k <= Math.floor((along + ext) / BIN); k++) (bins.get(k) ?? bins.set(k, []).get(k)).push(o);
+    }
+    const needAt = (m) => xs.map((x, i) => {
+      const px = origin[0] + dir[0] * x, pz = origin[2] + dir[1] * x;
+      let h = floorY[i];
+      for (const o of bins.get(Math.floor(x / BIN)) ?? []) if (Math.abs(px - o.x) < o.w / 2 + m && Math.abs(pz - o.z) < o.d / 2 + m) h = Math.max(h, o.h + m);
+      return h;
+    });
+    const needLow = needAt(PLAN.clearance - 0.2), needUp = needAt(PLAN.pathClear);
     for (const flat of PLAN.flats) {
-      const probe = { flat };
-      // 各点で越えなければならない高さ（ビルの箱を margin だけ広げた中に入るなら、その屋上 + margin）
-      const need = xs.map((x, i) => {
-        const m = retreatMargin(probe, x), px = origin[0] + dir[0] * x, pz = origin[2] + dir[1] * x;
-        let h = floorY[i];
-        for (const o of corridor) if (Math.abs(px - o.x) < o.w / 2 + m && Math.abs(pz - o.z) < o.d / 2 + m) h = Math.max(h, o.h + m);
-        return h;
-      });
+      const need = xs.map((x, i) => (x < flat ? needLow[i] : needUp[i]));
       let found = false;
       for (const rise of PLAN.rises) {
-        const path = { origin, dir, rise, riseLen: PLAN.riseLen, slope: PLAN.slope, flat };
-        if (!xs.every((x, i) => retreatPoint(path, x)[1] > need[i])) continue;
-        const score = rise * 0.5 - flat * 0.6 + Math.abs(off) * 40;
-        if (!best || score < best.score) best = { path, score };
-        found = true;
-        break;
+        for (const slope of PLAN.slopes) {
+          const path = { origin, dir, rise, riseLen: PLAN.riseLen, slope, flat };
+          if (!xs.every((x, i) => retreatPoint(path, x)[1] > need[i])) continue;
+          // 一気に高く上がる道（まっすぐ上へ逃げるように見える）は、低く飛ぶ長さより強く嫌う
+          const score = rise * 0.5 + Math.max(0, rise - 100) * 1.5 + (slope - PLAN.slope) * 150 - flat * 0.6 + Math.abs(off) * 40;
+          if (!best || score < best.score) best = { path, score };
+          found = true;
+          break;
+        }
+        if (found) break;
       }
-      if (found) break;
+      // S8: 低く飛ぶ長さが長い候補で見つかっても、短い候補の方が低い道になることがある（広い街の高いビル）。上がる高さが
+      // 十分低ければ、そこで止める
+      if (found && best.path.rise <= 60) break;
     }
   }
   return best ? best.path : { origin, dir: [Math.cos(radial), Math.sin(radial)], rise: 260, riseLen: PLAN.riseLen, slope: PLAN.slope, flat: 0 };

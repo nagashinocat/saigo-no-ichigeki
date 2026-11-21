@@ -1,4 +1,7 @@
 import { test, expect } from 'vitest';
+import { maxEnemyReach } from '../../src/game/enemies.js';
+import { radiusFor } from '../../src/game/charge.js';
+import { createGame } from '../../src/game/game.js';
 import { createEnemies, spawnRateAt, approachSpeed, lineOfSight, roadNode } from '../../src/game/enemies.js';
 import { createRng } from '../../src/rng.js';
 import { CONFIG } from '../../src/config.js';
@@ -336,4 +339,49 @@ test('届くまでの秒の分布: 前（中央 約 11 秒）より速く届く�
   expect(q(ts, 0.9)).toBeLessThan(18);
   expect(Math.max(...ts)).toBeLessThan(30);
   expect(ts.back).toBeLessThanOrEqual(1e-9); // 見つけてからは一度も離れない
+});
+
+// ---- S8: 広い街を見回る者と、最大溜めの一発が届く距離 ----
+test('S8: 見回る者は始めから count 人、広い街の帯（band × cityRadius）の道路を走り回り、主人公を探さず掴みにも来ない', () => {
+  const city = generateCity(7);
+  const E = createEnemies(createRng(2), CONFIG, { buildings: city.buildings, patrolRng: createRng(9) });
+  const P = CONFIG.enemy.patrol, lo = P.band[0] * CONFIG.cityRadius, hi = P.band[1] * CONFIG.cityRadius;
+  expect(E.list.filter((e) => e.patrol).length).toBe(P.count);
+  let minD = Infinity, maxD = 0;
+  const start = new Map(E.list.filter((e) => e.patrol).map((e) => [e.id, [e.x, e.z]]));
+  for (let i = 0; i < 60 * 30; i++) {
+    E.update(1 / 30);
+    for (const e of E.list) if (e.patrol) { minD = Math.min(minD, e.dist); maxD = Math.max(maxD, e.dist); expect(e.state).toBe('search'); }
+  }
+  expect(minD).toBeGreaterThan(lo - GRID.PITCH);
+  expect(maxD).toBeLessThan(hi + 6);
+  // 動き回っている（同じ所に留まらない）
+  const moved = E.list.filter((e) => e.patrol && Math.hypot(e.x - start.get(e.id)[0], e.z - start.get(e.id)[1]) > 50).length;
+  expect(moved).toBeGreaterThan(P.count * 0.7);
+});
+
+test('S8: 見回る者がいても、探して掴みに来る者の湧き方・動きは同じ（釣り合いを変えない）', () => {
+  const city = generateCity(3);
+  const a = createEnemies(createRng(4), CONFIG, { buildings: city.buildings });
+  const b = createEnemies(createRng(4), CONFIG, { buildings: city.buildings, patrolRng: createRng(77) });
+  for (let i = 0; i < 50 * 30; i++) { a.update(1 / 30); b.update(1 / 30); }
+  const hunt = (E) => E.list.filter((e) => !e.patrol).map((e) => [e.id, e.state, +e.x.toFixed(6), +e.z.toFixed(6)]);
+  expect(hunt(b)).toEqual(hunt(a));
+});
+
+test('S8: 最大溜めの一発の半径は、軍勢が街で行きうる一番遠い距離（maxEnemyReach）に 40 m 以上の余裕を足した距離より大きい。どの種でも、湧く・探す・見回るどの軍勢もその距離の内にいる', () => {
+  const reach = maxEnemyReach(CONFIG);
+  expect(radiusFor(CONFIG.power.max, CONFIG)).toBeGreaterThanOrEqual(reach + 40);
+  expect(reach).toBeGreaterThan(CONFIG.enemy.patrol.band[1] * CONFIG.cityRadius); // 見回る者の帯の外端まで
+  let far = 0;
+  for (const seed of [1, 2, 7, 11, 23]) {
+    const g = createGame({ seed });
+    g.pressStart();
+    for (let t = 0; t < 59.9; t += 1 / 30) {
+      g.update(1 / 30);
+      for (const e of g.enemies.list) far = Math.max(far, e.dist);
+    }
+  }
+  expect(far).toBeLessThanOrEqual(reach);
+  expect(far).toBeGreaterThan(reach - 40); // 見積もりが大きすぎない
 });

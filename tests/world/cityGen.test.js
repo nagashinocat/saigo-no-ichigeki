@@ -1,5 +1,6 @@
 import { test, expect } from 'vitest';
 import { generateCity } from '../../src/world/cityGen.js';
+import { pathDist, TRANSIT } from '../../src/world/transit.js';
 import { CONFIG } from '../../src/config.js';
 
 const avg = (a) => a.reduce((s, x) => s + x, 0) / a.length;
@@ -9,7 +10,7 @@ test('同じシードで同じ街', () => expect(generateCity(1)).toEqual(genera
 test('建物は広場の外、街の半径の内', () => {
   for (const b of generateCity(1).buildings) {
     expect(b.dist).toBeGreaterThan(12 + Math.max(b.w, b.d) / 2);
-    expect(b.dist).toBeLessThanOrEqual(420);
+    expect(b.dist).toBeLessThanOrEqual(CONFIG.cityRadius); // S8: 420 → 680 m
     expect(b.dist).toBeCloseTo(Math.hypot(b.x, b.z));
   }
 });
@@ -23,11 +24,12 @@ test('建物どうしが重ならない', () => {
   }
 });
 
-test('建物数は 400〜900、外側ほど低くなる傾向', () => {
+// S8: 街を 420 → 680 m に広げた（面積 約 2.6 倍）ので、建物数の範囲も広げた（前は 400〜900）
+test('建物数は 1300〜2200、外側ほど低くなる傾向', () => {
   for (const seed of [1, 2, 3, 42, 999]) {
     const { buildings } = generateCity(seed);
-    expect(buildings.length).toBeGreaterThanOrEqual(400);
-    expect(buildings.length).toBeLessThanOrEqual(900);
+    expect(buildings.length).toBeGreaterThanOrEqual(1300);
+    expect(buildings.length).toBeLessThanOrEqual(2200);
     const s = [...buildings].sort((a, b) => a.dist - b.dist);
     const n = Math.floor(s.length / 3);
     expect(avg(s.slice(0, n).map((b) => b.h))).toBeGreaterThan(avg(s.slice(-n).map((b) => b.h)));
@@ -91,13 +93,14 @@ import { GRID, ARCHETYPES } from '../../src/world/cityGen.js';
 
 const lotOf = (b) => [Math.round(b.x / GRID.PITCH) * GRID.PITCH, Math.round(b.z / GRID.PITCH) * GRID.PITCH];
 
-test('S7: どのシードでも形の種類がそろい、目印の超高層が 2〜4 本', () => {
+// S8: 広い街では目印の超高層を 2〜4 → 3〜5 本に
+test('S7: どのシードでも形の種類がそろい、目印の超高層が 3〜5 本', () => {
   for (const seed of [1, 2, 3, 7, 42]) {
     const bs = generateCity(seed).buildings;
     const count = Object.fromEntries(ARCHETYPES.map((a) => [a, bs.filter((b) => b.arch === a).length]));
     for (const a of ARCHETYPES) if (a !== 'landmark') expect(count[a], `${seed} ${a}`).toBeGreaterThanOrEqual(15);
-    expect(count.landmark).toBeGreaterThanOrEqual(2);
-    expect(count.landmark).toBeLessThanOrEqual(4);
+    expect(count.landmark).toBeGreaterThanOrEqual(3);
+    expect(count.landmark).toBeLessThanOrEqual(5);
     const lm = bs.filter((b) => b.arch === 'landmark');
     const others = bs.filter((b) => b.arch !== 'landmark');
     for (const b of lm) expect(b.h).toBeGreaterThan(1.3 * Math.max(...others.map((o) => o.h)));
@@ -156,11 +159,43 @@ test('S7: 広場の近く（見つける距離の内）の建物の足元は前�
 test('S7: 街の広さと区画の数は引数で変えられる（後の大きな街・高架の通り道のため）', () => {
   const small = generateCity(5, undefined, { radius: 200 });
   expect(Math.max(...small.buildings.map((b) => b.dist))).toBeLessThanOrEqual(200);
-  const big = generateCity(5, undefined, { radius: 600 });
+  // S8: 既定の街が 680 m になったので、大きな街は 900 m で確かめる
+  const big = generateCity(5, undefined, { radius: 900 });
   expect(big.buildings.length).toBeGreaterThan(generateCity(5).buildings.length);
-  expect(Math.max(...big.buildings.map((b) => b.dist))).toBeGreaterThan(450);
+  expect(Math.max(...big.buildings.map((b) => b.dist))).toBeGreaterThan(820);
   // 通り道の予約: その帯にかかる区画には建物を置かない
   const res = generateCity(5, undefined, { corridors: [{ axis: 'z', at: 6.5 * GRID.PITCH, half: GRID.PITCH / 2 }] });
   for (const b of res.buildings) expect(Math.abs(b.x - 6.5 * GRID.PITCH)).toBeGreaterThan(GRID.PITCH / 2 - b.w / 2 - 1e-6);
   expect(res.buildings.length).toBeLessThan(generateCity(5).buildings.length);
+});
+
+// ---- S8: 広い街・高架の通り道 ----
+test('S8: 街を広げても、広場のまわり（S7 までの街の範囲の内）の足元は前の大きさの街と同じ（見通しと釣り合いを変えない）', () => {
+  for (const seed of [3, 7]) {
+    const old = generateCity(seed, undefined, { radius: 420, transit: false }).buildings.filter((b) => b.dist < 100);
+    const now = generateCity(seed).buildings.filter((b) => b.dist < 100);
+    expect(now.length).toBe(old.length);
+    for (const b of now) {
+      const o = old.find((x) => Math.hypot(x.x - b.x, x.z - b.z) < 1e-9);
+      expect([b.x, b.z, b.w, b.d]).toEqual([o.x, o.z, o.w, o.d]);
+    }
+  }
+});
+
+test('S8: 高架の通り道（高速と環状線の帯）には建物の足元も道路沿いの小物も置かない', () => {
+  const city = generateCity(7);
+  const { expressway, rail } = city.transit.paths;
+  for (const b of city.buildings) {
+    expect(pathDist(expressway, b.x, b.z)).toBeGreaterThan(TRANSIT.expressway.half);
+    expect(pathDist(rail, b.x, b.z)).toBeGreaterThan(TRANSIT.rail.half);
+    // 足元の四角の角も帯の外
+    for (const sx of [-0.5, 0.5]) for (const sz of [-0.5, 0.5]) {
+      expect(pathDist(expressway, b.x + sx * b.w, b.z + sz * b.d)).toBeGreaterThan(TRANSIT.expressway.half - 1e-6);
+      expect(pathDist(rail, b.x + sx * b.w, b.z + sz * b.d)).toBeGreaterThan(TRANSIT.rail.half - 1e-6);
+    }
+  }
+  for (const p of city.props) {
+    expect(pathDist(expressway, p.x, p.z)).toBeGreaterThan(TRANSIT.expressway.half);
+    expect(pathDist(rail, p.x, p.z)).toBeGreaterThan(TRANSIT.rail.half);
+  }
 });

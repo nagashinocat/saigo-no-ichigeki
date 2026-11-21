@@ -30,7 +30,8 @@ export function idHash(id, salt = 0) {
 // 500 m で 0）、左右 pan（-1〜1。カメラから見た横の向き。後ろのものも左右に散る）。
 // camX / camZ: カメラの座標で見た命中の位置（x は右、-z が前）。dist: カメラからの距離
 export function collapseHitInfo({ id, w = 3, d = 3, h = 3 }, { camX, camZ, dist }) {
-  const isBuilding = String(id)[0] === 'b';
+  // ビルと、高架の橋桁（'x' 高速 / 'r' 線路）・電車の車両（'t'）は大きな崩れる音。道路沿いの小物はごく小さい
+  const isBuilding = 'bxrt'.includes(String(id)[0]);
   const size = isBuilding ? clamp(Math.cbrt(Math.max(1, w * d * h)) / 30, 0.08, 1) : 0.05;
   const near = clamp(1 - Math.log(Math.max(dist, 20) / 20) / Math.log(25), 0, 1);
   const pan = clamp((camX / (Math.abs(camX) + Math.abs(camZ) + 1e-6)) * 1.3, -0.95, 0.95);

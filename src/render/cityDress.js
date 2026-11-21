@@ -14,6 +14,8 @@
 import { createRng } from '../rng.js';
 import { GRID } from '../world/cityGen.js';
 import { layout } from './signAtlas.js';
+import { CONFIG } from '../config.js';
+import { pathDist } from '../world/transit.js';
 
 // ネオンの色（sRGB 0〜1）。軍勢のバイクの緑（DUSK.thrust / thrustLow、色相 136〜160°）から色相で十分離す（tests/render/cityDress.test.js）
 export const NEON = {
@@ -38,7 +40,14 @@ export const DENSITY = { high: 1, mid: 0.75, low: 0.5 };
 export const CLUTTER_DENSITY = { high: 1, mid: 0.6, low: 0.4 };
 const FLOOR = 3.3;
 const SEG_MAX = 12;        // m。縦に長い箱（角のネオン・配管・塔の先）の一つの長さの上限
-const FINE_DIST = 300;     // m。これより遠いビルには壁の小さな飾り（エアコン・配管・物干し）を置かない（霞の中）
+// S8: 遠さの境目は街の半径 R に対する割合（S7 の 420 m の街で 300 m / 380 m だった）。
+//  FINE: これより遠いビルには壁の小さな飾り（エアコン・配管・物干し）と道をまたぐ電線を置かない
+//  ROOF: これより遠いビル（霞の始まり、style.js の FOG_START と同じ割合）には屋上の小さな飾り（空調・小屋・給水塔・アンテナ）を置かない
+//  FAR: これより遠い地区は、遠くから読める光だけ（屋上の大看板・角の縦看板・縁のネオン管・航空灯）。店先・張り出し看板・
+//       提灯・壁の横長の看板・区画の小屋と、道の光の溜まりは置かない（遠い地区は安く）
+export const DRESS_DIST = { fine: 0.5, roof: 0.6, far: 0.72 };
+// 遠い地区の縦看板・縁のネオン管は、間引きの値 roll がこれ未満のものだけ（どの段でも同じ割合。縦の角のネオン管は目印の塔だけ）
+export const FAR_KEEP = 0.4;
 const STRIP_NEAR = 60;     // m。広場からこの距離の内のネオン管は控えめに
 
 // 汚れた・錆びた・色あせた増築の色（sRGB）
@@ -72,6 +81,8 @@ function openRoof(b, p) {
 export function dressCity(city, { density = 1, clutter = density, seed = 7 } = {}) {
   const tiles = layout();
   const out = { boxes: [], tanks: [], signs: [], pools: [], beacons: [] };
+  const R = city.radius ?? CONFIG.cityRadius;
+  const FINE_DIST = DRESS_DIST.fine * R, ROOF_DIST = DRESS_DIST.roof * R, FAR_DIST = DRESS_DIST.far * R;
   const byLot = new Map();
   for (const b of city.buildings) byLot.set(lotCenter(b.x) + ',' + lotCenter(b.z), b);
 
@@ -96,6 +107,11 @@ export function dressCity(city, { density = 1, clutter = density, seed = 7 } = {
       for (let i = 0; i < n; i++) sign({ ...spec, y: spec.y + (spec.h / n) * i, h: spec.h / n });
     };
     const fine = b.dist < FINE_DIST; // 霞の始まりより手前だけ、壁の小さな飾りを置く
+    const roofOK = b.dist < ROOF_DIST, near = b.dist < FAR_DIST;
+    const roofBox = (spec) => { if (roofOK) box(spec); };
+    const nearSign = (spec) => { if (near) sign(spec); };
+    const nearBox = (spec) => { if (near) box(spec); };
+    const nearPool = (spec) => { if (near) out.pools.push(spec); };
     const ang = Math.atan2(b.z, b.x);
     const cnBias = 0.5 + 0.38 * Math.sin(2 * ang + 1.3) + 0.25 * (r() - 0.5);
     const culture = r() < cnBias ? 'cn' : 'jp';
@@ -162,22 +178,23 @@ export function dressCity(city, { density = 1, clutter = density, seed = 7 } = {
       const nAc = 1 + Math.floor(r() * 3);
       for (let i = 0; i < nAc; i++) {
         const k = keepC(), w = 1.4 + 2.4 * r(), d = 1.4 + 2.4 * r(), h = 1 + 1.6 * r(), [x, z] = inset(w, d);
-        if (k) box({ x, y: top, z, w, h, d, ry: 0, color: pick(GRIME) });
+        if (k) roofBox({ x, y: top, z, w, h, d, ry: 0, color: pick(GRIME) });
       }
       if ((culture === 'cn' || r() < 0.3) && p.w > 6 && p.d > 6) { // 屋上の小屋
         const k = keepC(), w = 2.5 + 2 * r(), d = 2.5 + 2 * r(), [x, z] = inset(w, d);
-        if (k) box({ x, y: top, z, w, h: 2.4 + 0.6 * r(), d, ry: 0, color: pick(GRIME) });
+        if (k) roofBox({ x, y: top, z, w, h: 2.4 + 0.6 * r(), d, ry: 0, color: pick(GRIME) });
       }
       if (top > 12 && r() < 0.55) { // 給水塔
         const k = keepC(), rad = 1.1 + 0.7 * r(), [x, z] = inset(rad * 2, rad * 2);
-        if (k) out.tanks.push({ bid: b.id, roll, x, y: top, z, r: rad, h: 2.4 + 1.4 * r(), color: pick(GRIME) });
+        const h = 2.4 + 1.4 * r();
+        if (k && roofOK) out.tanks.push({ bid: b.id, roll, x, y: top, z, r: rad, h, color: pick(GRIME) });
       }
       const nAnt = Math.floor(r() * (culture === 'cn' ? 7 : 3)); // アンテナの林
       for (let i = 0; i < nAnt; i++) {
         const k = keepC(), h = 2 + 7 * r() * r(), [x, z] = inset(0.5, 0.5);
         if (!k) continue;
-        box({ x, y: top, z, w: 0.12, h, d: 0.12, ry: 0, color: METAL[0] });
-        if (r() < 0.5) box({ x, y: top + h * (0.6 + 0.35 * r()), z, w: 0.8 + 0.8 * r(), h: 0.07, d: 0.07, ry: r() * Math.PI, color: METAL[0] });
+        roofBox({ x, y: top, z, w: 0.12, h, d: 0.12, ry: 0, color: METAL[0] });
+        if (r() < 0.5) { const y = top + h * (0.6 + 0.35 * r()), w = 0.8 + 0.8 * r(), ry = r() * Math.PI; roofBox({ x, y, z, w, h: 0.07, d: 0.07, ry, color: METAL[0] }); }
       }
       if (b.arch === 'landmark') addSpire(px, top, pz);
       // 屋上の大看板（骨組みつき）。カメラ（+z の上）の側を向くものが多い
@@ -210,11 +227,11 @@ export function dressCity(city, { density = 1, clutter = density, seed = 7 } = {
         const s = (-0.5 + (i + 0.5) / n) * f.width + (r() - 0.5) * 0.2, lit = r() < 0.55, c = col(r() < 0.5 ? 'lantern' : culture), tile = pick(tiles.shop).uv;
         if (!k || w < 2 || h > base.h) continue;
         const ax = f.c[0] + f.t[0] * s, az = f.c[1] + f.t[1] * s;
-        box({ x: ax + f.n[0] * dep / 2, y: 0, z: az + f.n[1] * dep / 2, w, h, d: dep, ry: faceRy(f.n), color: pick(GRIME) });
+        nearBox({ x: ax + f.n[0] * dep / 2, y: 0, z: az + f.n[1] * dep / 2, w, h, d: dep, ry: faceRy(f.n), color: pick(GRIME) });
         if (lit && room - dep > 0.3) {
-          sign(flick({ type: 'shop', x: ax + f.n[0] * (dep + 0.08), y: 0.3, z: az + f.n[1] * (dep + 0.08), w: w * 0.85, h: Math.min(2.4, h - 0.5), t: 0.1, ry: faceRy(f.n), tile, color: c }));
+          nearSign(flick({ type: 'shop', x: ax + f.n[0] * (dep + 0.08), y: 0.3, z: az + f.n[1] * (dep + 0.08), w: w * 0.85, h: Math.min(2.4, h - 0.5), t: 0.1, ry: faceRy(f.n), tile, color: c }));
           const reach = Math.max(0, f.gap - dep) + 3.2;
-          out.pools.push({ bid: b.id, roll, x: ax + f.n[0] * (dep + reach / 2), z: az + f.n[1] * (dep + reach / 2), w: w + 3, d: reach, ry: faceRy(f.n), color: c });
+          nearPool({ bid: b.id, roll, x: ax + f.n[0] * (dep + reach / 2), z: az + f.n[1] * (dep + reach / 2), w: w + 3, d: reach, ry: faceRy(f.n), color: c });
         }
       }
     }
@@ -229,9 +246,9 @@ export function dressCity(city, { density = 1, clutter = density, seed = 7 } = {
         const k = keep(), w = f.width * (0.45 + 0.4 * r()), s = (r() - 0.5) * (f.width - w), c = col(r() < 0.5 ? 'lantern' : culture);
         if (!k || f.gap < 0.2) continue;
         const x = f.c[0] + f.t[0] * s + f.n[0] * 0.12, z = f.c[1] + f.t[1] * s + f.n[1] * 0.12;
-        sign(flick({ type: 'shop', x, y: 0.35, z, w, h: 2.5, t: 0.12, ry: faceRy(f.n), tile: pick(tiles.shop).uv, color: c, mode: 0 }));
+        nearSign(flick({ type: 'shop', x, y: 0.35, z, w, h: 2.5, t: 0.12, ry: faceRy(f.n), tile: pick(tiles.shop).uv, color: c, mode: 0 }));
         const reach = Math.max(0, f.gap) + 3.2;
-        out.pools.push({ bid: b.id, roll, x: f.c[0] + f.t[0] * s + f.n[0] * reach / 2, z: f.c[1] + f.t[1] * s + f.n[1] * reach / 2, w: w + 3, d: reach, ry: faceRy(f.n), color: c });
+        nearPool({ bid: b.id, roll, x: f.c[0] + f.t[0] * s + f.n[0] * reach / 2, z: f.c[1] + f.t[1] * s + f.n[1] * reach / 2, w: w + 3, d: reach, ry: faceRy(f.n), color: c });
       }
     }
     if (culture === 'cn') {
@@ -247,9 +264,9 @@ export function dressCity(city, { density = 1, clutter = density, seed = 7 } = {
           if (y + h > Math.min(tall - 1, 34)) break;
           if (k && L >= 1.4) {
             const ax = f.c[0] + f.t[0] * s, az = f.c[1] + f.t[1] * s;
-            sign(flick({ type: 'cantilever', x: ax + f.n[0] * (0.15 + L / 2), y, z: az + f.n[1] * (0.15 + L / 2), w: L, h, t: 0.35, ry: outRy(f.n), tile: pick(tiles.band).uv, color: col('cn') }));
-            box({ a: [ax, y + h + 0.12, az], b: [ax + f.n[0] * (L + 0.2), y + h + 0.12, az + f.n[1] * (L + 0.2)], t: 0.12, color: METAL[0] });
-            box({ a: [ax, y + h + 1.1, az], b: [ax + f.n[0] * (L + 0.2), y + h + 0.12, az + f.n[1] * (L + 0.2)], t: 0.08, color: METAL[0] });
+            nearSign(flick({ type: 'cantilever', x: ax + f.n[0] * (0.15 + L / 2), y, z: az + f.n[1] * (0.15 + L / 2), w: L, h, t: 0.35, ry: outRy(f.n), tile: pick(tiles.band).uv, color: col('cn') }));
+            nearBox({ a: [ax, y + h + 0.12, az], b: [ax + f.n[0] * (L + 0.2), y + h + 0.12, az + f.n[1] * (L + 0.2)], t: 0.12, color: METAL[0] });
+            nearBox({ a: [ax, y + h + 1.1, az], b: [ax + f.n[0] * (L + 0.2), y + h + 0.12, az + f.n[1] * (L + 0.2)], t: 0.08, color: METAL[0] });
           }
           y += h + 0.25 + 1.2 * r();
         }
@@ -257,7 +274,7 @@ export function dressCity(city, { density = 1, clutter = density, seed = 7 } = {
       // 壁の横長の看板
       if (r() < 0.7) {
         const f = pick(faces), k = keep();
-        if (k && tall > 6 && f.gap > 0.35) sign(flick({ type: 'band', x: f.c[0] + f.n[0] * 0.18, y: 3.2 + 0.4 * r(), z: f.c[1] + f.n[1] * 0.18, w: f.width * (0.5 + 0.35 * r()), h: 1.2 + 0.7 * r(), t: 0.25, ry: faceRy(f.n), tile: pick(tiles.band).uv, color: col('cn') }));
+        if (k && tall > 6 && f.gap > 0.35) nearSign(flick({ type: 'band', x: f.c[0] + f.n[0] * 0.18, y: 3.2 + 0.4 * r(), z: f.c[1] + f.n[1] * 0.18, w: f.width * (0.5 + 0.35 * r()), h: 1.2 + 0.7 * r(), t: 0.25, ry: faceRy(f.n), tile: pick(tiles.band).uv, color: col('cn') }));
       }
     } else {
       // ビルの角を縦に走る看板
@@ -266,7 +283,7 @@ export function dressCity(city, { density = 1, clutter = density, seed = 7 } = {
         const f = r() < 0.6 ? (faces[0].n[0] === 1 && r() < 0.5 ? faces[0] : faces[1]) : pick(faces);
         const k = keep(), bw = Math.min(1.4 + 0.7 * r(), Math.max(0.8, f.gap + OVERHANG - 0.4)), bh = Math.min(18, Math.max(5, tall - 6) * (0.4 + 0.5 * r()));
         const end = r() < 0.5 ? -1 : 1, s = end * (f.width / 2 - 0.5), y = STREET_CLEAR + 0.3 + 2 * r();
-        if (!k || tall < 10 || y + bh > tall - 0.5) continue;
+        if (!k || tall < 10 || y + bh > tall - 0.5 || (!near && roll >= FAR_KEEP)) continue;
         const ax = f.c[0] + f.t[0] * s, az = f.c[1] + f.t[1] * s;
         sign(flick({ type: 'blade', x: ax + f.n[0] * (0.2 + bw / 2), y, z: az + f.n[1] * (0.2 + bw / 2), w: bw, h: bh, t: 0.3, ry: outRy(f.n), tile: pick(tiles.blade).uv, color: col('jp') }));
       }
@@ -275,12 +292,12 @@ export function dressCity(city, { density = 1, clutter = density, seed = 7 } = {
         const f = pick(faces), n = 2 + Math.floor(r() * 4), out0 = Math.min(0.5, f.gap - 0.35);
         for (let i = 0; i < n; i++) {
           const k = keep(), s = (i / Math.max(1, n - 1) - 0.5) * (f.width - 1.5);
-          if (k && out0 > 0) sign(flick({ type: 'lantern', x: f.c[0] + f.t[0] * s + f.n[0] * out0, y: 3.0, z: f.c[1] + f.t[1] * s + f.n[1] * out0, w: 0.6, h: 0.95, t: 0.6, ry: faceRy(f.n), tile: pick(tiles.lantern).uv, color: col('lantern'), mode: 1 }));
+          if (k && out0 > 0) nearSign(flick({ type: 'lantern', x: f.c[0] + f.t[0] * s + f.n[0] * out0, y: 3.0, z: f.c[1] + f.t[1] * s + f.n[1] * out0, w: 0.6, h: 0.95, t: 0.6, ry: faceRy(f.n), tile: pick(tiles.lantern).uv, color: col('lantern'), mode: 1 }));
         }
       }
       if (r() < 0.5) {
         const f = pick(faces), k = keep();
-        if (k && tall > 8 && f.gap > 0.35) sign(flick({ type: 'band', x: f.c[0] + f.n[0] * 0.18, y: 3.4 + 2 * r(), z: f.c[1] + f.n[1] * 0.18, w: f.width * (0.4 + 0.4 * r()), h: 1.0 + 0.8 * r(), t: 0.25, ry: faceRy(f.n), tile: pick(tiles.band).uv, color: col('jp') }));
+        if (k && tall > 8 && f.gap > 0.35) nearSign(flick({ type: 'band', x: f.c[0] + f.n[0] * 0.18, y: 3.4 + 2 * r(), z: f.c[1] + f.n[1] * 0.18, w: f.width * (0.4 + 0.4 * r()), h: 1.0 + 0.8 * r(), t: 0.25, ry: faceRy(f.n), tile: pick(tiles.band).uv, color: col('jp') }));
       }
     }
     // ネオン管: ビルの縁と段の縁（日本寄りと目印の超高層に多い）
@@ -295,7 +312,7 @@ export function dressCity(city, { density = 1, clutter = density, seed = 7 } = {
       for (const p of b.parts) {
         if (p.h < 12 && b.arch !== 'shop') continue;
         const k = keep();
-        if (!k) continue;
+        if (!k || (!near && b.arch !== 'landmark' && roll >= FAR_KEEP)) continue;
         const px = b.x + p.x, pz = b.z + p.z, top = p.y + p.h - (p.shape && p.shape[0] ? p.h * p.shape[1] : 0);
         // 段の上の縁を一周
         facesOf(b, p).forEach((f, fi) => {
@@ -304,7 +321,7 @@ export function dressCity(city, { density = 1, clutter = density, seed = 7 } = {
           sign({ type: 'strip', x: f.c[0] + f.n[0] * 0.12, y: top - 0.32, z: f.c[1] + f.n[1] * 0.12, w: len, h: 0.22, t: 0.18, ry: faceRy(f.n), tile: null, color: c, mode: 2, gain: 1.1 * sg });
         });
         // 縦の角（1〜2 本）
-        if (p.h > 25) {
+        if (p.h > 25 && (near || b.arch === 'landmark')) {
           const corners = [[1, 1], [-1, 1], [1, -1], [-1, -1]];
           const m = b.arch === 'landmark' ? 4 : 1 + Math.floor(r() * 2);
           for (let i = 0; i < m; i++) {
@@ -315,7 +332,7 @@ export function dressCity(city, { density = 1, clutter = density, seed = 7 } = {
       }
     }
     // 道をまたぐ電線（向かいの区画のビルへ）
-    if (open && b.dist < 380) {
+    if (open && fine) {
       for (const f of faces) {
         if (r() > 0.35) continue;
         const k = keepC();
@@ -341,6 +358,15 @@ export function dressCity(city, { density = 1, clutter = density, seed = 7 } = {
       box({ x, y: top, z, w: 2.4, h: h * 0.3, d: 2.4, ry: Math.PI / 4, color: METAL[1] });
       out.beacons.push({ bid: b.id, x, y: top + h - 1.2, z });
     }
+  }
+  // S8: 高架の通り道（高速・環状線の帯）にかかる飾り（張り出し看板・電線・小屋など）は置かない（橋桁や電車を突き抜けない）。
+  // 帯の近くのビルの飾りだけ確かめる
+  if (city.transit) {
+    const cs = [[city.transit.paths.expressway, city.transit.config.expressway.half], [city.transit.paths.rail, city.transit.config.rail.half]];
+    const nearC = new Set(city.buildings.filter((b) => cs.some(([p, h]) => pathDist(p, b.x, b.z) < h + Math.hypot(b.w, b.d) / 2 + 12)).map((b) => b.id));
+    const inC = (x, z) => cs.some(([p, h]) => pathDist(p, x, z) < h);
+    const clear = (it) => !nearC.has(it.bid) || (it.a ? !inC(it.a[0], it.a[2]) && !inC(it.b[0], it.b[2]) : !inC(it.x, it.z));
+    for (const k of ['boxes', 'tanks', 'signs', 'pools', 'beacons']) out[k] = out[k].filter(clear);
   }
   // 密度で間引く（看板・光の溜まりは density、箱・給水塔は clutter）
   out.signs = out.signs.filter((x) => x.roll < density);

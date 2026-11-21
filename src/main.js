@@ -28,6 +28,8 @@ import { createHud } from './ui/hud.js';
 import { createResult } from './ui/result.js';
 import { createAudio, finaleBoomOpts } from './audio/audio.js';
 import { createHitFeed } from './audio/hitFeed.js';
+import { transitObstacles } from './world/transit.js';
+import { transitMix } from './audio/transitSound.js';
 import { createBgm } from './audio/bgm.js';
 
 const MAX_FRAME_DT = 0.1;
@@ -239,13 +241,15 @@ const standing = new Set(game.city.buildings.map((b) => b.id)); // まだ壊れ�
   planFinale({ shot: warm, rng: createRng(seed ^ 0x5eed), lead: leadFor(warm.radius), buildings: game.city.buildings, enemies: game.enemies.list });
 }
 let finalBlastSize = 0;
+const transitObs = game.city.transit ? transitObstacles(game.city.transit) : [];
 game.on('cinematicStart', (shot) => {
   takeReplaySnapshot(shot);
   // 放つ瞬間は撮る場所だけを決め、重い逃げる道の計算は演出の止まった一拍の間に回す（必要になるのは約 4 秒後）
   const buildings = game.city.buildings.filter((b) => standing.has(b.id)), crater = fronts.crater, lead = leadFor(shot.radius);
   const plan = planFinale({ shot, rng: shotRng, crater, lead, buildings, enemies: game.enemies.list, retreat: false });
   finalBlastSize = Math.sqrt(shot.radius / CONFIG.radius.max);
-  cinematic.play(plan, shot, { buildings, retreat: () => planRetreat(plan, { buildings, crater, radius: shot.radius, lead }) });
+  // 逃げる道は高架の橋桁もよける（S8）
+  cinematic.play(plan, shot, { buildings, retreat: () => planRetreat(plan, { buildings: [...buildings, ...transitObs], crater, radius: shot.radius, lead }) });
 });
 game.on('cinematicEnd', () => cinematic.end());
 // 演出の音の段取り
@@ -272,6 +276,7 @@ cinematic.on('end', () => {
 function vaporTarget({ hit, target }) {
   const id = Number(hit.id.slice(1));
   if (hit.id[0] === 'b') return { x: target.x, z: target.z, w: target.w, d: target.d, h: target.h, color: cityView.getBuildingColor(id) };
+  if (hit.id[0] === 'x' || hit.id[0] === 'r') return { x: target.x, z: target.z, w: Math.min(target.w, target.len), d: Math.min(target.d, target.len), h: target.y, color: [0.42, 0.42, 0.44] };
   const vis = cityView.getPropVisual(id);
   return { x: vis?.x ?? target.x, z: vis?.z ?? target.z, w: 2.6, d: 2.6, h: 2.2, color: vis?.color };
 }
@@ -291,6 +296,16 @@ game.on('hit', (e) => {
 const hitFeed = createHitFeed();
 const burstSeen = new Set();
 
+// S8: 高架で起きたこと（電車が脱線した・溶けた・落ちた）: 溶ける見た目、落ちた車両の破片、崩れる音（画面の出来事の位置から）
+function onTransit(events) {
+  destruction.onTransit(events);
+  for (const e of events) {
+    if (e.kind === 'vaporize') explosionView.vaporize(e.target);
+    const hit = { hit: { id: e.target.id + e.kind[0], kind: e.kind }, target: e.target };
+    if (replay.active) hitFeed.replayHit(hit); else hitFeed.gameHit(hit);
+  }
+}
+
 // ---- リプレイ（仕様 12 章の絵コンテ 6〜7）----
 // 最後の一発の直前の街を覚えておき、同じ一発を決まった刻みで起こし直す（同じ種なら同じリプレイ。何度でも見せ直せる）。
 // 街の姿（ビルと props の置き場所・つぶれ）は、最後の一発より前には変わらない（小爆発は軍勢だけを払う）ので、
@@ -300,6 +315,7 @@ let replaySnap = null; // { shot, targets, enemies, buildings }
 let replaySim = null;
 function takeReplaySnapshot(shot) {
   if (standing.size !== game.city.buildings.length) citySnap = cityView.snapshot();
+  citySnap.transit = cityView.transitState(); // 高速の車と電車は、放った瞬間の位置から（リプレイでも同じ所を走っている）
   replaySnap = {
     shot,
     targets: replayTargets(game.city),
@@ -378,6 +394,7 @@ function stepGame(gdt) {
 // 世界（破片・粉・ビルのつぶれ・爆発の見た目・軍勢・主人公のまわり）を wdt 秒進める。
 // live: game.blasts と同じ形の一発の一覧、enemies: 軍勢の一覧、cam: 今描いているカメラ、focus: 手前の物理の焦点（null なら全部プール）
 // glowScale: 軍勢と主人公が爆発の光で白く光る強さの倍率（リプレイの最後のカットは影絵にするので 0 へ）
+const _frustum = new THREE.Frustum(), _projView = new THREE.Matrix4(), _sph = new THREE.Sphere(), _sphC = new THREE.Vector3();
 function stepWorld(wdt, live, enemies, cam, focus, glowScale = 1) {
   const ps = pointScaleFor(cam);
   destruction.setPhysicsFocus(focus);
@@ -389,11 +406,17 @@ function stepWorld(wdt, live, enemies, cam, focus, glowScale = 1) {
   debrisView.update();
   rubbleView.update();
   explosionView.update(wdt, live, cam, ps, fronts.crater);
-  cityView.update(wdt, { fronts: list, heat: explosionView.ground.heat, ember: explosionView.ground.ember });
+  // 最後の一発の前線（高架の電車が触れたら脱線する）
+  const big = live.find((b) => !b.shot.small);
+  const transitEvents = cityView.update(wdt, { fronts: list, heat: explosionView.ground.heat, ember: explosionView.ground.ember, front: big?.front ?? 0, radius: big?.shot.radius ?? 0 });
+  if (transitEvents.length) onTransit(transitEvents);
   // 光が弱まった分だけ、主人公は光を背にした影絵になる（リプレイの最後のカット）
   // 最後の一発の演出・リプレイ・時間切れの結末の間は、上空カメラ用の補助表示（目印・透かし）を出さない
-  const aids = !(cinematic.active || replay.active || blackhole.active);
-  enemyView.sync(enemies, { fronts: list, pointScale: ps, glow: explosionView.ground.heat * glowScale, dt: wdt, pixelRatio: renderer.getPixelRatio(), silhouette: 1 - glowScale, aids });
+  const aids = !(debugCam || cinematic.active || replay.active || blackhole.active);
+  // 街を見回る者（S8）は、今のカメラの画面に入る者だけ描く（遠くの見えないバイクの頂点を描かない）
+  _frustum.setFromProjectionMatrix(_projView.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse));
+  const shown = enemies.filter((e) => !e.patrol || _frustum.intersectsSphere(_sph.set(_sphC.set(e.x, 3, e.z), 12)));
+  enemyView.sync(shown, { fronts: list, pointScale: ps, glow: explosionView.ground.heat * glowScale, dt: wdt, pixelRatio: renderer.getPixelRatio(), silhouette: 1 - glowScale, aids });
   heroAura.update(wdt, ps, 1 - glowScale);
 }
 
@@ -430,14 +453,22 @@ function finishFrame(dt, live) {
   hand.update(dt, h.level, h.active, h.steady);
   hud.update({ remaining: game.timer.remaining, power: game.power.value, max: CONFIG.power.max, canPuff: game.canPuff });
   // 最後の一発を放ってから結果までずっと HUD は出さない（両手が組み合わさる間も、リプレイの間も）
-  hud.setVisible(!cinematic.active && !replay.active && !blackhole.active);
-  updateAudio(live);
+  hud.setVisible(!debugCam && !cinematic.active && !replay.active && !blackhole.active);
+  updateAudio(live, dt);
   updateResult(dt);
 }
 
 // 音: 貯めの唸り、じわじわ期の脈動、弾けた瞬間の爆発、崩落
-function updateAudio(live) {
+const _camV = new THREE.Vector3();
+function updateAudio(live, dt = 0) {
   audio.chargeHum(game.charge.active ? game.power.level : 0);
+  // 電車と高速（S8）: 今の画面のカメラから見た一番近い車両・高速の点の距離と左右。演出・リプレイ・結末の間は鳴らさない
+  if (cityView.transit && !cinematic.active && !replay.active && !blackhole.active && audio.running) {
+    const cam = cityCam();
+    cam.updateMatrixWorld();
+    const src = cityView.transit.sources(cam.position);
+    audio.transit(transitMix(src, (p) => { _camV.set(p.x, p.y ?? 0, p.z).applyMatrix4(cam.matrixWorldInverse); return { x: _camV.x, z: _camV.z }; }), dt);
+  } else audio.transit(null, dt);
   // BGM: 最初のタップで鳴らせるようになり、遊びが始まったら鳴らしはじめる（一度だけ）。その前のフレームで楽器の音を作っておく
   if (bgm.state === 'off') bgm.prepare();
   if (game.phase === 'playing' && audio.running) bgm.start();
@@ -480,11 +511,13 @@ function collapseHits(stage = null) {
 }
 // 白の間の最初のフレームで、そのあとの画面全体の描画を温める（白から街への切り替わりで止まらない）
 let whiteWarmed = false;
+let debugCam = null; // 撮影用（?debug の __debug.look）: 画面全体を決まったカメラで描く
 function draw() {
   // mid / low: 壁と道の細かい飾りは、近いカメラ（演出の全画面・リプレイ・結末）のときだけ描く
-  cityView.setCloseView(blackhole.active || replay.active || cinematic.white || cinematic.fullscreen);
+  cityView.setCloseView(!!debugCam || blackhole.active || replay.active || cinematic.white || cinematic.fullscreen);
   if (!cinematic.white) whiteWarmed = false;
-  if (blackhole.active) blackhole.draw();
+  if (debugCam) views.renderFull(cityScene, debugCam, explosionView.screen);
+  else if (blackhole.active) blackhole.draw();
   else if (replay.active) views.renderFull(cityScene, replay.camera, replay.screen);
   else if (cinematic.white) {
     views.renderWhite(whiteWarmed ? null : { scene: cinematic.renderScene ?? cityScene, camera: cinematic.camera, fx: cinematic.screen });
@@ -538,6 +571,14 @@ const debugHooks = {
     return { simMs: (t1 - t0) / n, drawMs: performance.now() - t1 };
   },
   draw,
+  // 画面全体を決まったカメラで描く（撮影用）: { pos: [x, y, z], look: [x, y, z], fov }。null で戻す
+  look(o) {
+    if (!o) { debugCam = null; return; }
+    debugCam = new THREE.PerspectiveCamera(o.fov ?? 60, views.size.w / Math.max(1, views.size.h), 1, 6000);
+    debugCam.position.fromArray(o.pos);
+    debugCam.lookAt(new THREE.Vector3().fromArray(o.look));
+    debugCam.updateMatrixWorld();
+  },
   // 手の画面の入力を固定する: { level, active, steady }（steady は光の安定 0〜1）。null で戻す
   hand(input) { handInput = input ? { level: 0, active: false, steady: 1, ...input } : null; },
   // 手の画面だけに、放つ瞬間を起こす（shot = { amount, isBig }。isBig でなければ小爆発）

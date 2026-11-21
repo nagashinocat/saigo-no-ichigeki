@@ -19,7 +19,7 @@ export const ENEMY_LOOK = {
   minPx: 16,         // 画面の上でこの高さ（CSS の px）より小さければ大きく描く
   maxBoost: 3,
 };
-const CAPACITY = 160;
+const CAPACITY = 200; // S8: 街を見回る者（26 人）の分を足した
 
 const hash = (n) => { const x = Math.sin(n * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
 
@@ -635,12 +635,19 @@ export function createEnemyView(scene, tier, { sunDir = new THREE.Vector3(0.8, 0
         sh[n * 4 + 3] = b.keep * fade;
         n++;
       };
-      for (const e of enemies) {
-        if (n >= CAPACITY) break;
-        if (focus && e.id === focus.id) continue; // 演出の一人は下で、演出の姿勢で描く
-        const b = bikePose(e, fronts, time);
-        if (!b) continue; // 吹き飛んで消えた
-        place(b, e.id, e.state === 'dead' ? 1 - (e.deadTime ?? 0) / BIKE.deadFling : 1);
+      // 主人公を探す者を先に、街を見回る者（S8、e.patrol）をあとに並べる。目印と透かし（上空カメラの補助）は探す者だけ
+      // （見回る者は主人公を狙わないので、目印で脅威に見せない）
+      let nHunt = 0;
+      for (const pass of [false, true]) {
+        for (const e of enemies) {
+          if (n >= CAPACITY) break;
+          if (!!e.patrol !== pass) continue;
+          if (focus && e.id === focus.id) continue; // 演出の一人は下で、演出の姿勢で描く
+          const b = bikePose(e, fronts, time);
+          if (!b) continue; // 吹き飛んで消えた
+          place(b, e.id, e.state === 'dead' ? 1 - (e.deadTime ?? 0) / BIKE.deadFling : 1);
+        }
+        if (!pass) nHunt = n;
       }
       // 演出の一人: 専用の体（setRiderBody）があればその網で、なければ instanced の体で
       const fp = focus?.pose;
@@ -657,8 +664,9 @@ export function createEnemyView(scene, tier, { sunDir = new THREE.Vector3(0.8, 0
           focusAnim.needsUpdate = focusPose.needsUpdate = true;
         } else if (n < CAPACITY) place({ anchor: 0, ...fp }, focus.id ?? 0.5, 1);
       }
-      mesh.count = xray.count = shadows.count = trails.count = n;
-      markerGeo.setDrawRange(0, n);
+      mesh.count = shadows.count = trails.count = n;
+      xray.count = nHunt;
+      markerGeo.setDrawRange(0, nHunt);
       markerPos.needsUpdate = true;
       mesh.instanceMatrix.needsUpdate = true;
       shadows.instanceMatrix.needsUpdate = true;

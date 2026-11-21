@@ -1,5 +1,6 @@
 import { createRng } from '../rng.js';
 import { CONFIG } from '../config.js';
+import { transitCorridors, buildTransit, pathDist } from './transit.js';
 
 const BLOCK = 18;            // 区画の一辺 m
 const ROAD = 8;              // 道路幅 m
@@ -7,6 +8,9 @@ const PITCH = BLOCK + ROAD;  // 格子の間隔 m
 // 描画（道路の格子）が同じ寸法を使えるように公開する
 export const GRID = { BLOCK, ROAD, PITCH };
 
+const HEIGHT_FRAC = 0.7;     // 高さの山の裾（街の半径に対する割合）
+const CORE_N = 18;           // 芯の区画の範囲（±区画。S7 までの半径 420 m の街の格子）
+const EMPTY_R = 420;         // 空き地の割合が外へ向けて増えきる距離 m
 const FOOTPRINT = [8, 17];   // 建物の幅・奥行き m（区画内に収まる）
 const CENTER_MAX_H = 150;    // 中心付近の最大の高さ m
 const EDGE_H = [6, 15];      // 街の端の高さ m
@@ -39,7 +43,8 @@ const ARCH_WEIGHTS = {
 const FLOOR = 3.3;          // 商店の階の高さ m
 const RESHAPE_DIST = 60;
 const FILL_DIST = 70, FILL_P = 0.65; // あいた区画を埋める（中心からの区画の距離 m、割合）    // これより外の区画だけ足元の広さを変える（広場の近くの見通しは前のまま）
-const LANDMARK = { count: [2, 4], dist: [150, 300], h: [205, 265], spacing: 0.9 };
+// S8: 目印の超高層は街の広さに合わせて（dist は R に対する割合。広い街では本数も少し増やす）
+const LANDMARK = { count: [3, 5], dist: [0.22, 0.6], h: [205, 265], spacing: 0.8 };
 // 屋根の形（cityView の aShape.x）: 0 平ら、1〜4 片流れ（+x, -x, +z, -z へ下がる）、5 四方へ下がる（角を落とした・とがった頂）
 export const SHAPE = { flat: 0, shedPX: 1, shedNX: 2, shedPZ: 3, shedNZ: 4, hip: 5 };
 
@@ -149,21 +154,38 @@ function reshapeFootprint(arch, cx, cz, x, z, w, d, r, block) {
 
 // opts（S7）: radius 街の半径（既定は cfg.cityRadius）、variety 形の種類をつけるか（false で S6 までの箱だけの街）、
 // corridors 通り道の予約 [{ axis: 'x' | 'z', at: m, half: m }]（その帯にかかる区画には建物を置かない。後の高架・線路のため）、
-// landmarks 目印の超高層の本数の範囲 [min, max]
+// landmarks 目印の超高層の本数の範囲 [min, max]、
+// transit（S8）高架の高速道路と環状線（world/transit.js）を通すか（既定 true。その道筋の帯は corridors に足す）。
+// S8: 芯（S7 までの街の範囲 ±CORE_N 区画）は前と同じ一本の乱数を同じ順に引き、その外は区画ごとの乱数（種と区画の番号から）。
+// 街を広げても広場のまわりの足元は前のまま（見通しと釣り合いを変えない）。
+// corridors の帯: { axis: 'x' | 'z', at, half }（その帯にかかる区画には建物を置かない）、
+//   または { path（transit.js の makePath）, half }（足元が道筋から half m の内にかかる建物を置かない）
 export function generateCity(seed, cfg = CONFIG, opts = {}) {
-  const { radius = cfg.cityRadius, variety = true, corridors = [], landmarks = LANDMARK.count } = opts;
-  const rng = createRng(seed);
-  const arng = createRng((seed ^ 0x51ab7) >>> 0); // 形の種類（足元の乱数の引き方を変えない）
+  const { radius = cfg.cityRadius, variety = true, landmarks = LANDMARK.count, transit = true } = opts;
   const R = radius;
+  const corridors = [...(opts.corridors ?? []), ...(transit ? transitCorridors(R) : [])];
+  const lotRng = (i, j, salt) => createRng(lotSeed(seed, i, j, salt));
+  const coreRng = createRng(seed), coreArng = createRng((seed ^ 0x51ab7) >>> 0);
   const n = Math.ceil(R / PITCH) + 1;
   const buildings = [];
   const props = [];
-  const blocked = (cx, cz) => corridors.some((c) => Math.abs((c.axis === 'z' ? cx : cz) - c.at) < c.half + BLOCK / 2);
+  const axisC = corridors.filter((c) => c.axis), pathC = corridors.filter((c) => c.path);
+  const blocked = (cx, cz) => axisC.some((c) => Math.abs((c.axis === 'z' ? cx : cz) - c.at) < c.half + BLOCK / 2);
+  // 足元（x, z, w, d）が道筋の帯にかかるか（足元の四角の外接円で見る）
+  const onPath = (x, z, w, d) => pathC.some((c) => pathDist(c.path, x, z) < c.half + Math.hypot(w, d) / 2);
+  const inCorridor = (x, z, pad = 0) => axisC.some((c) => Math.abs((c.axis === 'z' ? x : z) - c.at) < c.half + pad) || pathC.some((c) => pathDist(c.path, x, z) < c.half + pad);
 
   for (let i = -n; i <= n; i++) {
     for (let j = -n; j <= n; j++) {
       const cx = i * PITCH, cz = j * PITCH;
-      const t0 = Math.hypot(cx, cz) / R;
+      // 芯の区画（S7 までの街の範囲）は前と同じ一本の乱数を同じ順に引く（広場のまわりの足元・見通し・釣り合いを前のまま）。
+      // その外は区画ごとの乱数
+      const core = Math.abs(i) <= CORE_N && Math.abs(j) <= CORE_N;
+      if (!core && Math.hypot(cx, cz) > R + PITCH) continue; // 街の外の区画（何も置かない）
+      const rng = core ? coreRng : lotRng(i, j, 1);
+      const arng = core ? coreArng : lotRng(i, j, 2); // 形の種類（足元の乱数の引き方を変えない）
+      // 空き地の割合は中心からの距離 m で決める（街の広さによらない。広場のまわりの空き地は前のまま）
+      const t0 = Math.min(1, Math.hypot(cx, cz) / EMPTY_R);
       // 乱数の消費順を固定するため、先に全部引く
       const skip = rng(), w = FOOTPRINT[0] + (FOOTPRINT[1] - FOOTPRINT[0]) * rng();
       const d = FOOTPRINT[0] + (FOOTPRINT[1] - FOOTPRINT[0]) * rng();
@@ -180,7 +202,8 @@ export function generateCity(seed, cfg = CONFIG, opts = {}) {
       if ((empty && !fill) || dist > R || dist <= cfg.plazaRadius + Math.max(w, d) / 2 || blocked(cx, cz)) {
         // 建物なし
       } else {
-        const t = dist / R;
+        // 高さの山は中心から HEIGHT_FRAC × R で裾まで下がる（S8: 広い街の外の地区は低く、遠くまで見通せる）
+        const t = Math.min(1, dist / (HEIGHT_FRAC * R));
         let h = Math.max(EDGE_H[0], edge + (CENTER_MAX_H - edge) * (1 - t) ** 2 * noise);
         const near = dist < NEAR_DIST;
         const arch = fill ? (ar[0] < 0.7 ? 'shop' : 'slab') : variety ? pickArch(ar[0], near ? ARCH_WEIGHTS.near : ARCH_WEIGHTS.far) : 'box';
@@ -197,6 +220,7 @@ export function generateCity(seed, cfg = CONFIG, opts = {}) {
           const re = reshapeFootprint(arch, cx, cz, x, z, w, d, [ar[17], ar[18], ar[19]], BLOCK);
           if (Math.hypot(re.x, re.z) <= R) fp = re;
         }
+        if (!onPath(fp.x, fp.z, fp.w, fp.d)) {
         const b = { id: buildings.length, x: fp.x, z: fp.z, w: fp.w, d: fp.d, h, dist: Math.hypot(fp.x, fp.z), arch, kind: 'house', value: 0 };
         const shaped = variety ? shapeBuilding(b, arch, ar) : { h, parts: [part(0, 0, b.w, b.d, 0, h, ar[3])] };
         // 部品（塔屋など）で上限を超えたら全体を縮める
@@ -206,6 +230,7 @@ export function generateCity(seed, cfg = CONFIG, opts = {}) {
         b.parts = shaped.parts;
         b._r = ar;
         buildings.push(b);
+        }
       }
 
       // 道路沿いの props。区画の東側か北側の道路に置く（交差点は避ける）
@@ -214,7 +239,8 @@ export function generateCity(seed, cfg = CONFIG, opts = {}) {
         const px = propSide < 0.5 ? cx + across : cx + along;
         const pz = propSide < 0.5 ? cz + along : cz + across;
         const pd = Math.hypot(px, pz);
-        if (pd > cfg.plazaRadius && pd <= R) {
+        // 高架の通り道（橋脚が立つ帯）には置かない
+        if (pd > cfg.plazaRadius && pd <= R && !inCorridor(px, pz, 2)) {
           const kind = propKind < 0.5 ? 'car' : propKind < 0.8 ? 'lamp' : 'sign';
           props.push({ id: props.length, x: px, z: pz, dist: pd, value: PROP_VALUE[kind], kind });
         }
@@ -227,14 +253,25 @@ export function generateCity(seed, cfg = CONFIG, opts = {}) {
     b.kind = kindOf(b.h);
     b.value = b.w * b.h * b.d * RATE[b.kind];
   }
-  return { seed, buildings, props };
+  const city = { seed, radius: R, buildings, props };
+  if (transit) city.transit = buildTransit(R);
+  return city;
+}
+
+// 区画 (i, j) の乱数の種（種・区画の番号・用途から。混ぜ方は murmur3 の仕上げ）
+function lotSeed(seed, i, j, salt) {
+  let h = (seed ^ Math.imul(i + 0x9e37, 0x85ebca6b) ^ Math.imul(j + 0x7f4a, 0xc2b2ae35) ^ Math.imul(salt, 0x27d4eb2f)) >>> 0;
+  h ^= h >>> 16; h = Math.imul(h, 0x85ebca6b) >>> 0;
+  h ^= h >>> 13; h = Math.imul(h, 0xc2b2ae35) >>> 0;
+  h ^= h >>> 16;
+  return h >>> 0;
 }
 
 // 目印の超高層: 街の中ほどの帯から、向きが離れた 2〜4 区画を選んで、段々の超高層にする。
 // 上空カメラ（+z の上から -z を見下ろす）の画面の上の方（奥）に来るものを選びやすくする
 function placeLandmarks(buildings, rng, [lo, hi], R) {
   const count = lo + Math.floor(rng() * (hi - lo + 1));
-  const d0 = Math.min(LANDMARK.dist[0], R * 0.36), d1 = Math.min(LANDMARK.dist[1], R * 0.72);
+  const d0 = LANDMARK.dist[0] * R, d1 = LANDMARK.dist[1] * R;
   const cand = buildings.filter((b) => b.dist >= d0 && b.dist <= d1 && b.w >= 10 && b.d >= 10)
     .map((b) => ({ b, s: rng() + 0.8 * Math.max(0, -b.z / b.dist) }))
     .sort((a, b) => b.s - a.s);
