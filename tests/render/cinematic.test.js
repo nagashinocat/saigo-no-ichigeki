@@ -1,10 +1,9 @@
 import { test, expect } from 'vitest';
 import * as THREE from 'three';
-import { leadFor, minLeadFor, createChase, createCinematic, barsFor, shellRadius, FLING_LEAD, spaceSparkTime } from '../../src/render/cinematic.js';
+import { leadFor, minLeadFor, createChase, createCinematic, barsFor, shellRadius, FLING, spaceSparkTime, VEIL_NEAR, CHASE_HOLD } from '../../src/render/cinematic.js';
 import { createEnemies } from '../../src/game/enemies.js';
 import { createTimeline } from '../../src/render/finaleTimeline.js';
 import { planFinale, planRetreat } from '../../src/render/finalePlan.js';
-import { buildEyeCloseup } from '../../src/render/enemyView.js';
 import { generateCity } from '../../src/world/cityGen.js';
 import { radiusFor } from '../../src/game/charge.js';
 import { createRng } from '../../src/rng.js';
@@ -15,7 +14,8 @@ const city = generateCity(3);
 const shotOf = (amount) => ({ amount, radius: radiusFor(amount), isBig: true });
 const SHOTS = [shotOf(CONFIG.power.minRelease), shotOf(60), shotOf(CONFIG.power.max)];
 const enemy = (id, angle, dist, state = 'approach') => ({ id, angle, dist, state, deadTime: 0 });
-const ARMY = [enemy(1, 0.3, 40), enemy(2, 2.1, 30), enemy(4, 5.2, 55)];
+const patrol = (id, angle, dist) => ({ ...enemy(id, angle, dist, 'search'), patrol: true });
+const ARMY = [enemy(1, 0.3, 40), enemy(2, 2.1, 30), enemy(4, 5.2, 55), patrol(11, 0.8, 120), patrol(12, 2.6, 210), patrol(13, 4.4, 330), patrol(14, 5.9, 410)];
 
 test('追われて引くカメラ: 生きた front を読み、常に front + minLead より先にいて、戻らず、front が急に速くなるとカメラも速くなる', () => {
   const chase = createChase(30);
@@ -72,7 +72,7 @@ test('追われて引くカメラ: hold で止まり、ゆっくり進む光の�
 // createCinematic の進み方（描画の部品は小さな身代わり）
 function makeCinematic(size = { w: 390, h: 844 }, shot = SHOTS[2], opts = {}) {
   const views = { size };
-  const enemyView = { setHeroYaw() {}, eyeCloseup: (id) => buildEyeCloseup(id) };
+  const enemyView = { setHeroYaw() {} };
   const explosionView = { screen: { flash: 0.3, time: 0, heat: null }, cameraInfo: { front: 0, shake: 0.002 } };
   const renderer = { getRenderTarget: () => null, setRenderTarget() {}, render() {}, getPixelRatio: () => 1, compile() {} };
   const sun = new THREE.DirectionalLight(0xffffff, 4), fill = new THREE.HemisphereLight(0xffffff, 0x000000, 1.6);
@@ -85,7 +85,7 @@ function makeCinematic(size = { w: 390, h: 844 }, shot = SHOTS[2], opts = {}) {
 }
 const advance = (cin, sec, dt = 1 / 60) => { const out = []; for (let t = 0; t < sec - 1e-9; t += dt) { cin.update(dt); out.push({ stage: cin.stage, g: cin.gameDt, w: cin.worldDt }); } return out; };
 
-test('createCinematic: 手の画面 → 真っ白 → 体感時間（街） → 追われて引く → 宇宙 → 終わると end を一度だけ知らせ、最後の絵のまま待つ', () => {
+test('createCinematic: 手の画面 → 真っ白 → 遠くの軍勢の後ろ（スローでふくらむ → 弾けて飲まれる） → 追われて引く → 宇宙 → 終わると end を一度だけ知らせ、最後の絵のまま待つ', () => {
   const { cin, plan, log, shot } = makeCinematic();
   expect(cin.active).toBe(false);
   expect(cin.gameDt).toBeNull();
@@ -99,11 +99,11 @@ test('createCinematic: 手の画面 → 真っ白 → 体感時間（街） → 
   expect(cin.white).toBe(true);
   expect(cin.fullscreen).toBe(true);
   advance(cin, 0.3);
-  expect(cin.stage).toBe('contact');
+  expect(cin.stage).toBe('swell');
   expect(cin.white).toBe(false);
   expect(cin.renderScene).toBeNull(); // 街の場面
-  advance(cin, 1.2);
-  expect(cin.stage).toBe('beat');
+  advance(cin, tl.burst + 0.02 - cin.time);
+  expect(cin.stage).toBe('race');
   advance(cin, tl.snap + 0.2 - cin.time);
   expect(cin.stage).toBe('chase');
   expect(cin.renderScene).toBeNull();
@@ -122,36 +122,43 @@ test('createCinematic: 手の画面 → 真っ白 → 体感時間（街） → 
   expect(cin.fullscreen).toBe(false);
 });
 
-test('音の段取り: 無音 → 心臓の鼓動（一拍の間だけ、3回） → 時間が戻る → 宇宙 → 地鳴り → 終わり（それぞれ一度だけ）', () => {
+test('音の段取り（音は画面に従う）: 無音 → 白が晴れて爆発が始まる（erupt）→ 弾けた瞬間（burst）→ 宇宙 → 地鳴り → 終わり（それぞれ一度だけ。鼓動はもうない）', () => {
   const { cin, plan, log, shot } = makeCinematic();
+  const at = [];
+  cin.on('cue', (c) => at.push([c.name, cin.time, cin.stage]));
   cin.play(plan, shot);
-  const stages = [];
-  cin.on('cue', (c) => stages.push([c.name, cin.stage]));
   advance(cin, cin.timeline.end + 0.5);
-  expect(log).toEqual(['silence', 'heart0', 'heart1', 'heart2', 'snap', 'space', 'rumble', 'END']);
-  for (const [name, stage] of stages) if (name === 'heart') expect(stage).toBe('beat');
+  expect(log).toEqual(['silence', 'erupt', 'burst', 'space', 'rumble', 'END']);
+  const tl = cin.timeline;
+  const t = (n) => at.find((x) => x[0] === n)[1];
+  expect(t('erupt') - tl.white).toBeGreaterThanOrEqual(0);
+  expect(t('erupt') - tl.white).toBeLessThan(1 / 60 + 1e-9);
+  expect(t('burst') - tl.burst).toBeGreaterThanOrEqual(0);
+  expect(t('burst') - tl.burst).toBeLessThan(1 / 60 + 1e-9);
 });
 
-test('ゲームの時計は演出の時刻表どおりに進み（合計が一致）、体感時間の一拍の間は世界がほとんど止まる', () => {
+test('ゲームの時計は演出の時刻表どおりに進み（合計が一致）、世界の進みはスローの間に減らず、弾けたあと現実の速さ', () => {
   const { cin, plan, shot } = makeCinematic();
   cin.play(plan, shot);
   const tl = cin.timeline;
   const frames = advance(cin, tl.end);
   const sum = frames.reduce((a, f) => a + f.g, 0);
   expect(sum).toBeCloseTo(tl.gameClock(cin.time), 6);
-  // 爆発は宇宙の半球がふくらみきる時刻（domeEnd、押しつぶされる前）に終わる（ゲームは over になれる）。追う間はまだ広がっている
   expect(tl.gameClock(tl.domeEnd)).toBeGreaterThanOrEqual(CONFIG.cinematic.freezeSec + blastDuration(shot.radius) - 1e-9);
   expect(tl.gameClock(tl.chaseEnd)).toBeLessThan(CONFIG.cinematic.freezeSec + blastDuration(shot.radius));
-  for (const f of frames.filter((x) => x.stage === 'beat')) expect(f.w).toBeLessThan(0.02 / 60);
   for (const f of frames.filter((x) => x.stage === 'hands')) { expect(f.g).toBe(0); expect(f.w).toBe(0); }
+  // 世界の進み（1 フレームあたり）: 白が晴れてから弾けるまで減らない（小さな丸めは許す）。弾けたあとは現実の速さ
+  let prev = 0;
+  for (const f of frames.filter((x) => x.stage === 'swell')) { expect(f.w).toBeGreaterThanOrEqual(prev - 1e-9); prev = f.w; }
+  for (const f of frames.filter((x) => x.stage === 'chase')) expect(f.w).toBeCloseTo(1 / 60, 6);
 });
 
-test('一拍の間は街の光を弱め（光を背にした壁が影に沈む）、時間が戻ると元に戻す', () => {
+test('軍勢の後ろのカットの間は街の光を少し弱め（遠くの爆発の光が際立つ）、追うカットで元に戻す', () => {
   const { cin, plan, shot, lights } = makeCinematic();
   const base = [lights.sun.intensity, lights.fill.intensity];
   cin.play(plan, shot);
-  advance(cin, 2);
-  expect(lights.fill.intensity).toBeLessThan(base[1] * 0.5);
+  advance(cin, 1.5);
+  expect(lights.fill.intensity).toBeLessThan(base[1] * 0.8);
   advance(cin, cin.timeline.snap + 0.3 - cin.time);
   expect([lights.sun.intensity, lights.fill.intensity]).toEqual(base);
 });
@@ -186,7 +193,7 @@ test('追われて引くカメラは、前線（迫る球の表面）より外�
   }
 });
 
-test('画質の段は演出を始めるたびに読む: 始めは high でも、段が下がっていれば目の画像・雲の段数・星・ガラス片はその段の重さ', () => {
+test('画質の段は演出を始めるたびに読む: 始めは high でも、段が下がっていれば雲の段数・星はその段の重さ', () => {
   let tier = 'high';
   const { cin, plan, shot } = makeCinematic(undefined, undefined, { tier: 'high', getTier: () => tier });
   cin.play(plan, shot);
@@ -197,14 +204,11 @@ test('画質の段は演出を始めるたびに読む: 始めは high でも、
   cin.play(plan, shot);
   const lo = cin.quality;
   expect(lo.tier).toBe('low');
-  expect(lo.eye[0]).toBeLessThan(hi.eye[0]);
   expect(lo.space.oct).toBeLessThan(hi.space.oct);
   expect(lo.space.stars).toBeLessThan(hi.space.stars);
-  expect(lo.props.shards).toBeLessThan(hi.props.shards);
-  expect(lo.props.motes).toBeLessThan(hi.props.motes);
 });
 
-test('逃げる道を後回しにした plan: 放つ瞬間には求めず、止まった一拍の間に一度だけ求め、追われて引く道に使う', () => {
+test('逃げる道を後回しにした plan: 放つ瞬間・白の間には求めず、スローの間に一度だけ求め、追われて引く道に使う', () => {
   const { cin, shot } = makeCinematic();
   const lazy = planFinale({ shot, buildings: city.buildings, enemies: ARMY, rng: createRng(3), lead: leadFor(shot.radius), retreat: false });
   expect(lazy.retreat).toBeNull();
@@ -212,8 +216,8 @@ test('逃げる道を後回しにした plan: 放つ瞬間には求めず、止�
   const resolve = () => { calls++; return planRetreat(lazy, { buildings: city.buildings, radius: shot.radius, lead: leadFor(shot.radius) }); };
   cin.play(lazy, shot, { retreat: resolve });
   const tl = cin.timeline;
-  while (cin.time < tl.contact - 0.02) { cin.update(1 / 60); expect(calls).toBe(0); }
-  while (cin.time < tl.beatEnd - 0.02) cin.update(1 / 60);
+  while (cin.time < tl.white - 0.02) { cin.update(1 / 60); expect(calls).toBe(0); }
+  while (cin.time < tl.burst - 0.02) cin.update(1 / 60);
   expect(calls).toBe(1);
   expect(lazy.retreat).toBeNull(); // 渡した plan は書き換えない
   while (cin.time < tl.snap + 0.5) cin.update(1 / 60);
@@ -225,7 +229,7 @@ test('逃げる道を後回しにした plan: 放つ瞬間には求めず、止�
 
 test('宇宙の衝撃波の殻もゆっくりふくらむ: いつも半球の少し先にいて、ふくらむ速さは 1 秒あたり 0.6 rMax 以下', () => {
   for (const shot of SHOTS) {
-    const tl = createTimeline({ radius: shot.radius, hitDist: 30 });
+    const tl = createTimeline({ radius: shot.radius });
     const dt = 1 / 120;
     let prev = shellRadius(tl.domeAt(tl.chaseEnd)), maxRate = 0;
     for (let t = tl.chaseEnd + dt; t <= tl.flatten; t += dt) {
@@ -239,175 +243,144 @@ test('宇宙の衝撃波の殻もゆっくりふくらむ: いつも半球の少
   }
 });
 
-// ---- ガラスの一拍（持ち主の絵コンテ 2026-11-21 09:40）----
-function makeShoulder(shot = SHOTS[2], size = { w: 390, h: 844 }) {
+// ---- R0b: 遠くの軍勢の後ろ（持ち主 22:15）----
+function makeBeat(shot = SHOTS[2], size = { w: 390, h: 844 }, opts = {}) {
   const focus = [];
-  const enemyView = { setHeroYaw() {}, eyeCloseup: (id) => buildEyeCloseup(id), setFocus: (f) => focus.push(f && { id: f.id, pose: f.pose }) };
+  const enemyView = { setHeroYaw() {}, setFocus: (f) => focus.push(f && { id: f.id, pose: f.pose, group: f.group }) };
   const explosionView = { screen: { flash: 0, time: 0, heat: null }, cameraInfo: { front: 0, shake: 0 } };
   const renderer = { getRenderTarget: () => null, setRenderTarget() {}, render() {}, getPixelRatio: () => 1, compile() {} };
-  const cin = createCinematic({ size }, enemyView, explosionView, { renderer, scene: new THREE.Scene() });
+  const cin = createCinematic({ size }, enemyView, explosionView, { renderer, scene: new THREE.Scene(), ...opts });
   const plan = planFinale({ shot, buildings: city.buildings, enemies: ARMY, rng: createRng(3), lead: leadFor(shot.radius) });
   return { cin, plan, shot, focus };
 }
+const project = (cam, p) => new THREE.Vector3(...p).project(cam);
 
-test('時間が戻る瞬間（resume）に snap の合図（爆発の音が開く）。それまでは鼓動だけ', () => {
-  const { cin, plan, shot } = makeShoulder();
-  const got = [];
-  cin.on('cue', (c) => got.push([c.name + (c.arg ?? ''), cin.time, cin.stage]));
-  cin.play(plan, shot);
-  advance(cin, cin.timeline.snap + 0.2);
-  const snap = got.find((x) => x[0] === 'snap');
-  expect(snap[2]).toBe('snap');
-  expect(snap[1] - cin.timeline.resume).toBeLessThan(1 / 60 + 1e-9);
-  expect(got.filter((x) => x[1] < snap[1]).map((x) => x[0])).toEqual(['silence', 'heart0', 'heart1', 'heart2']);
-});
-
-test('乗り手: 画面全体になってから決めた場所に、爆心を向いて描かれ、光の壁が届くまでほとんど動かず、届くとバイクごとカメラの方へ吹き飛び、追うカットで消え、やめると戻る', () => {
-  const { cin, plan, shot, focus } = makeShoulder();
-  cin.play(plan, shot);
-  const tl = cin.timeline;
-  expect(focus).toEqual([]); // 両手の間（2画面）はまだ
-  advance(cin, tl.white + 0.05);
-  expect(focus).toHaveLength(1);
-  expect(focus[0].id).toBe(plan.riderId);
-  const pose = focus[0].pose;
-  const base = plan.rider.pos;
-  advance(cin, tl.engulf - FLING_LEAD - 0.02 - cin.time);
-  expect(pose.keep).toBe(1);
-  expect(Math.hypot(pose.x - base[0], pose.y - base[1], pose.z - base[2])).toBeLessThan(0.1);
-  expect(pose.yaw).toBeCloseTo(plan.rider.yaw, 1);
-  expect(Math.abs(pose.head)).toBeGreaterThan(0.1); // ガラス片の方へ頭を向けている
-  // 吹き飛ぶ間、乗り手は光の壁のすぐ前にいる（飲まれて透けずに、壁を背にした影のまま飛ぶ）。カメラが飲まれるまで
-  while (cin.time < Math.min(tl.camHit, tl.snap) - 1e-9) {
-    advance(cin, 1 / 60);
-    expect(Math.hypot(pose.x, pose.y + 1, pose.z), `t=${cin.time.toFixed(3)}`).toBeGreaterThan(tl.front(cin.time));
-  }
-  advance(cin, tl.engulf + 0.2 - cin.time);
-  const out = plan.rider.out;
-  const moved = (pose.x - base[0]) * out[0] + (pose.z - base[2]) * out[2];
-  expect(moved).toBeGreaterThan(2); // カメラの方（外）へ
-  expect(pose.y).toBeGreaterThan(base[1] + 0.5);
-  expect(Math.abs(pose.pitch)).toBeGreaterThan(0.8); // 回りながら
-  advance(cin, tl.snap + 0.05 - cin.time);
-  expect(pose.keep).toBe(0);
-  cin.stop();
-  expect(focus.at(-1)).toBeNull();
-});
-
-test('目が合う一瞬: 映り込みは tl.eye の間だけ（0.4〜0.7 秒）。その真ん中ではガラス片は乗り手の顔の前（カメラから見て頭より遠く、頭に隠れない）で、鏡の面はカメラと乗り手の目の間を向き（像のずれ ≈ 0）、目はまっすぐ前を見て、寄ったカメラの画面の中で幅の 6 割以上。ヘルメットは画面の縁', () => {
-  for (const size of [{ w: 390, h: 844 }, { w: 1280, h: 720 }]) {
-    const { cin, plan, shot } = makeShoulder(SHOTS[1], size);
+test('乗り手の列: 画面全体になってから決めた隊形に描かれ（撮る一人と列の者）、光の壁が届くまで浮いて爆心を向き、届くと壁の前を外へ運ばれて回り、追いつかれたら消える。やめると戻る', () => {
+  for (const shot of SHOTS) {
+    const { cin, plan, focus } = makeBeat(shot);
     cin.play(plan, shot);
     const tl = cin.timeline;
-    let seen = 0;
-    const dt = 1 / 60;
-    while (cin.time < tl.beatEnd) {
-      advance(cin, dt);
-      const g = cin.beat.glass;
-      if (g && g.reflect > 0.5) seen += dt;
-      if (g && g.reflect > 0) { expect(cin.time).toBeGreaterThanOrEqual(tl.eye[0] - 1e-9); expect(cin.time).toBeLessThanOrEqual(tl.eye[1] + 1e-9); }
+    expect(focus).toEqual([]); // 両手の間（2画面）はまだ
+    advance(cin, tl.white + 0.05);
+    expect(focus).toHaveLength(1);
+    expect(focus[0].id).toBe(plan.riderId);
+    expect(focus[0].group.map((g) => g.id)).toEqual(plan.riders.slice(1).map((r) => r.id));
+    const poses = [focus[0].pose, ...focus[0].group.map((g) => g.pose)];
+    // スローの間: 決めた場所のそばに浮いて、爆心を向く
+    advance(cin, tl.burst - 0.05 - cin.time);
+    plan.riders.forEach((r, i) => {
+      const p = poses[i];
+      expect(p.keep).toBe(1);
+      expect(Math.hypot(p.x - r.pos[0], p.y - r.pos[1], p.z - r.pos[2])).toBeLessThan(0.3);
+      expect(Math.abs(Math.atan2(Math.sin(p.yaw - r.yaw), Math.cos(p.yaw - r.yaw)))).toBeLessThan(0.1);
+    });
+    // 弾けてから: 見えている間は、いつも光の壁（球の表面）の外（壁を背にした影）。押されると外へ動き、回る
+    const moved = poses.map(() => 0), spun = poses.map(() => 0), gone = poses.map(() => false);
+    while (cin.time < tl.snap - 1e-9) {
+      advance(cin, 1 / 60);
+      const f = tl.front(cin.time);
+      poses.forEach((p, i) => {
+        const r = plan.riders[i];
+        if (p.keep > 0) expect(Math.hypot(p.x, p.y, p.z), `rider ${i} t=${cin.time.toFixed(3)}`).toBeGreaterThan(f - 0.31);
+        else gone[i] = true;
+        moved[i] = Math.max(moved[i], Math.hypot(p.x, p.z) - Math.hypot(r.pos[0], r.pos[2]));
+        spun[i] = Math.max(spun[i], Math.abs(p.pitch));
+      });
     }
-    expect(seen).toBeGreaterThanOrEqual(0.4);
-    expect(seen).toBeLessThanOrEqual(0.7);
-    // 真ん中
-    const c2 = makeShoulder(SHOTS[1], size);
-    c2.cin.play(c2.plan, shot);
-    const mid = (tl.eye[0] + tl.eye[1]) / 2;
-    advance(c2.cin, mid);
-    const g = c2.cin.beat.glass;
-    expect(g.reflect).toBe(1);
-    const camPos = c2.cin.camera.position;
-    const head = new THREE.Vector3(...c2.plan.rider.head), eyeP = c2.cin.beat.eyePos;
-    // 鏡の面は後ろ（カメラと乗り手の目の間）を向く: カメラの視線がそこで返ると乗り手の目に届く（像のずれ ≈ 0）
-    const n = new THREE.Vector3(0, 0, 1).applyQuaternion(g.quat);
-    const toC = camPos.clone().sub(g.pos).normalize(), toE = eyeP.clone().sub(g.pos).normalize();
-    expect(n.dot(toC)).toBeGreaterThan(0.95);
-    expect(Math.abs(n.dot(toC) - n.dot(toE))).toBeLessThan(0.01);
-    expect(Math.hypot(...g.slide)).toBeLessThan(0.08);
-    // ガラス片は乗り手の顔の前（光の壁の側）: カメラから見て乗り手の頭より遠く、頭と目より前にある
-    expect(g.pos.distanceTo(camPos)).toBeGreaterThan(head.distanceTo(camPos) + 0.8);
-    expect(g.pos.distanceTo(camPos)).toBeLessThan(3.5);
-    const fwd = new THREE.Vector3(...c2.plan.rider.fwd);
-    expect(g.pos.clone().sub(eyeP).dot(fwd)).toBeGreaterThan(0.8);
-    // 頭とヘルメットに隠れない: カメラからガラス片の真ん中と左右の縁への線は、頭（半径 0.16 m）を通らない
-    for (const k of [-0.5, 0, 0.5]) for (const v of [-0.25, 0, 0.25]) {
-      const q = g.pos.clone().add(new THREE.Vector3(k * g.width, v * g.width, 0).applyQuaternion(g.quat));
-      const ray = new THREE.Ray(camPos.clone(), q.clone().sub(camPos).normalize());
-      expect(ray.distanceToPoint(head), `${k},${v}`).toBeGreaterThan(0.16);
-    }
-    expect(c2.cin.beat.eye.uLook.value).toBeCloseTo(-0.55, 2); // 黒目がまっすぐ（こちらを見る）
-    expect(c2.cin.beat.eye.uOpen.value).toBeGreaterThan(0.4);
-    // 画面の中、縦長では幅の 6 割以上
-    const cam = c2.cin.camera;
-    const ndc = g.pos.clone().project(cam);
-    expect(Math.abs(ndc.x)).toBeLessThan(0.7);
-    expect(Math.abs(ndc.y)).toBeLessThan(0.7);
-    const edge = g.pos.clone().add(new THREE.Vector3(g.width / 2, 0, 0).applyQuaternion(g.quat)).project(cam);
-    const e2 = g.pos.clone().add(new THREE.Vector3(-g.width / 2, 0, 0).applyQuaternion(g.quat)).project(cam);
-    if (size.w < size.h) expect(Math.abs(edge.x - e2.x) / 2).toBeGreaterThan(0.6);
-    // 乗り手のヘルメットは画面の縁に入る（肩越し）
-    const hp = head.clone().project(cam);
-
-    expect(Math.abs(hp.x)).toBeLessThan(1.05);
-    expect(Math.abs(hp.y)).toBeLessThan(0.9);
+    expect(gone.every(Boolean)).toBe(true); // カメラが飲まれるまでに全員飲まれる
+    for (const m of moved) expect(m).toBeGreaterThan(1);
+    for (const sp of spun) expect(sp).toBeGreaterThan(0.3);
+    advance(cin, 0.05);
+    for (const p of poses) expect(p.keep).toBe(0);
+    cin.stop();
+    expect(focus.at(-1)).toBeNull();
   }
 });
 
-test('肩越しのカットの間だけ、光の壁が触れたビルをその瞬間に一時的に隠し（半分だけ球の面へ押されたビルの壁が引き伸ばされてレンズの前を横切らない）、追うカットへ切り替わると戻す（そこから先はつぶれていく）。触れる前は隠さない', () => {
-  const veiled = new Map(), restored = new Map();
-  const shot = SHOTS[0];
-  const enemyView = { setHeroYaw() {}, eyeCloseup: (id) => buildEyeCloseup(id), setFocus() {} };
-  const explosionView = { screen: { flash: 0, time: 0, heat: null }, cameraInfo: { front: 0, shake: 0 } };
-  const renderer = { getRenderTarget: () => null, setRenderTarget() {}, render() {}, getPixelRatio: () => 1, compile() {} };
-  const cin = createCinematic({ size: { w: 390, h: 844 } }, enemyView, explosionView, { renderer, scene: new THREE.Scene(),
-    veilBuilding: (id, on) => (on ? veiled.set(id, cin.time) : restored.set(id, cin.time)) });
-  const plan = planFinale({ shot, buildings: city.buildings, enemies: ARMY, rng: createRng(3), lead: leadFor(shot.radius) });
-  cin.play(plan, shot, { buildings: city.buildings });
-  const tl = cin.timeline;
-  const near = (b) => Math.hypot(Math.max(0, Math.abs(b.x) - b.w / 2), Math.max(0, Math.abs(b.z) - b.d / 2));
-  while (cin.time < tl.snap + 0.5) {
-    cin.update(1 / 60);
-    for (const b of city.buildings) {
-      if (veiled.has(b.id)) continue;
-      if (cin.time >= tl.white && cin.time < tl.snap) expect(near(b), `building ${b.id} t=${cin.time.toFixed(3)}`).toBeGreaterThan(tl.front(cin.time) - 1e-6);
+test('カメラ: スローの間、地平の爆心（光の玉）と撮る一人が画面の中に入り、撮る一人は爆心より下。弾けて光の壁が迫ると画角が広がる', () => {
+  for (const size of [{ w: 390, h: 844 }, { w: 1280, h: 720 }]) {
+    for (const shot of SHOTS) {
+      const { cin, plan } = makeBeat(shot, size);
+      cin.play(plan, shot);
+      const tl = cin.timeline;
+      advance(cin, tl.white + 0.1);
+      const fov0 = cin.camera.fov;
+      while (cin.time < tl.burst) {
+        const gz = project(cin.camera, [0, tl.creepFront * 0.5, 0]);
+        const lead = project(cin.camera, [plan.rider.pos[0], plan.rider.pos[1] + 1, plan.rider.pos[2]]);
+        expect(Math.abs(gz.x)).toBeLessThan(0.6);
+        expect(Math.abs(gz.y)).toBeLessThan(0.6);
+        expect(gz.z).toBeLessThan(1);
+        expect(Math.abs(lead.x)).toBeLessThan(0.9);
+        expect(lead.y).toBeGreaterThan(-0.95);
+        expect(lead.y).toBeLessThan(gz.y);
+        expect(lead.z).toBeLessThan(1);
+        advance(cin, 0.1);
+      }
+      advance(cin, tl.camHit - 0.03 - cin.time);
+      expect(cin.camera.fov).toBeGreaterThan(fov0 + 8);
+      expect(cin.screen.flash).toBeGreaterThan(0.3); // 光の壁がカメラに届く手前から白へ
     }
-    if (cin.time < tl.snap) expect(restored.size).toBe(0);
   }
-  expect(veiled.size).toBeGreaterThan(0);
-  for (const [id, at] of veiled) {
-    const b = city.buildings.find((x) => x.id === id);
-    expect(at).toBeGreaterThanOrEqual(tl.white);
-    expect(at).toBeLessThan(tl.snap + 1e-9);
-    expect(near(b)).toBeLessThanOrEqual(tl.front(at) + 1e-6);
-    // 追うカットへ切り替わった最初のフレームで戻す
-    expect(restored.get(id)).toBeGreaterThanOrEqual(tl.snap);
-    expect(restored.get(id)).toBeLessThan(tl.snap + 1 / 60 + 1e-9);
-  }
-  // やめたときも戻す（一度だけ）
-  const n = restored.size;
-  cin.stop();
-  expect(restored.size).toBe(n);
 });
 
-test('光の壁の面は不透明で深さを書く（後ろの明るい爆発の球や街の影が透けたり上に描かれたりして、壁の中に段々の板が見えない）', () => {
-  const { cin, plan, shot } = makeShoulder();
-  cin.play(plan, shot);
-  advance(cin, 2);
-  let wall = null;
-  cin.propsGroup.traverse((o) => { if (o.name === 'cine-wall') wall = o; });
-  expect(wall.visible).toBe(true);
-  expect(wall.material.transparent).toBe(false);
-  expect(wall.material.depthTest).toBe(true);
-  expect(wall.material.depthWrite).toBe(true);
-  expect(wall.renderOrder).toBeGreaterThan(0); // 不透明の街・乗り手・瓦礫のあと
-  expect(wall.material.fragmentShader).toMatch(/gl_FragColor = vec4\([^;]*, 1\.0\);/);
+test('カメラのそば（VEIL_NEAR 以内）のビルだけ、軍勢の後ろのカットの間、光の壁が触れた瞬間に一時的に隠し、追うカットへ切り替わると戻す。遠くのビルは隠さない（飲まれてつぶれていくのを見せる）', () => {
+  for (const shot of SHOTS) {
+    const veiled = new Map(), restored = new Map();
+    const { cin, plan } = makeBeat(shot, undefined, { veilBuilding: (id, on) => (on ? veiled.set(id, cin.time) : restored.set(id, cin.time)) });
+    cin.play(plan, shot, { buildings: city.buildings });
+    const tl = cin.timeline;
+    const near = (b) => Math.hypot(Math.max(0, Math.abs(b.x) - b.w / 2), Math.max(0, Math.abs(b.z) - b.d / 2));
+    const byCam = (b) => Math.hypot(Math.max(0, Math.abs(b.x - plan.camPos[0]) - b.w / 2), Math.max(0, Math.abs(b.z - plan.camPos[2]) - b.d / 2));
+    while (cin.time < tl.snap + 0.3) {
+      cin.update(1 / 60);
+      if (cin.time < tl.snap) expect(restored.size).toBe(0);
+    }
+    for (const [id, at] of veiled) {
+      const b = city.buildings.find((x) => x.id === id);
+      expect(byCam(b)).toBeLessThan(VEIL_NEAR);
+      expect(at).toBeGreaterThanOrEqual(tl.white);
+      expect(at).toBeLessThan(tl.snap + 1e-9);
+      expect(near(b)).toBeLessThanOrEqual(tl.front(at) + 1e-6);
+      expect(restored.get(id)).toBeGreaterThanOrEqual(tl.snap);
+      expect(restored.get(id)).toBeLessThan(tl.snap + 1 / 60 + 1e-9);
+    }
+    const n = restored.size;
+    cin.stop();
+    expect(restored.size).toBe(n);
+  }
+});
+
+test('持ち主 23:01: 追うカットで引ききったカメラは、宇宙へ切り替わる直前の球（前線の半径）を、縦長でも横長でも画面の内に余白をもって収める', () => {
+  expect(1 + CHASE_HOLD.gap).toBeGreaterThanOrEqual(1.9);
+  for (const size of [{ w: 390, h: 844 }, { w: 1280, h: 720 }]) {
+    for (const shot of SHOTS) {
+      const { cin, plan } = makeCinematic(size, shot);
+      cin.play(plan, shot);
+      const tl = cin.timeline;
+      advance(cin, tl.chaseEnd - 0.02);
+      expect(cin.stage).toBe('chase');
+      const cam = cin.camera, f = tl.front(cin.time);
+      // 球の見かけの半径（中心から）が、短い向きの画角の半分の 0.9 倍以内
+      const d = cam.position.length();
+      const halfV = THREE.MathUtils.degToRad(cam.fov) / 2, half = cam.aspect < 1 ? Math.atan(Math.tan(halfV) * cam.aspect) : halfV;
+      expect(Math.asin(Math.min(1, f / d)), `${size.w} r=${shot.radius.toFixed(0)}`).toBeLessThan(0.9 * half);
+      // 球の左右の縁と頂は画面の内
+      const right = new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld, 0).setY(0).normalize();
+      for (const p of [right.clone().multiplyScalar(f), right.clone().multiplyScalar(-f), new THREE.Vector3(0, f, 0)]) {
+        const q = p.project(cam);
+        expect(Math.abs(q.x)).toBeLessThan(1);
+        expect(Math.abs(q.y)).toBeLessThan(1);
+      }
+    }
+  }
 });
 
 // S8 fix2: 宇宙の火花は一斉に弾けず、宇宙の光の半球の縁に沿って広がる輪になる（前は追う間に飲まれた者が、宇宙の最初の
 // フレームで一斉に弾けていた）
 test('fix2: spaceSparkTime は時刻表の半球の縁から決まり、遠い者ほど遅い。半球の中の者は -Infinity、半径の外は Infinity', () => {
   const R = CONFIG.radius.max;
-  const tl = createTimeline({ radius: R, hitDist: 40 });
+  const tl = createTimeline({ radius: R });
   expect(spaceSparkTime(tl, 0.3 * R, R)).toBe(-Infinity);
   expect(spaceSparkTime(tl, 1.05 * R, R)).toBe(Infinity);
   let prev = tl.chaseEnd;

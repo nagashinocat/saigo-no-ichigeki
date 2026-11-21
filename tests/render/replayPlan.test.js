@@ -80,3 +80,25 @@ test('S9: 撃退失敗の引きの絵は、爆心と生き残り全員を画面�
     }
   }
 });
+
+test('持ち主 23:01: 引きの絵は、爆発の穴の縁（半径の ring 倍の輪）も帯に収め、横に余白を残す（穴を見ないときより遠くから）', () => {
+  const R = CONFIG.radius.max;
+  for (const aspect of [390 / 844, 16 / 9]) {
+    for (const survivors of [[{ x: 600, z: 40 }], [{ x: -20, z: -740 }, { x: 760, z: 30 }]]) {
+      const v = aftermathView({ survivors, aspect, az: 0.7, radius: R });
+      const cam = new THREE.PerspectiveCamera(v.fov, aspect, 1, 9000);
+      cam.position.fromArray(v.pos);
+      cam.lookAt(new THREE.Vector3().fromArray(v.look));
+      cam.updateMatrixWorld();
+      for (let k = 0; k < 24; k++) {
+        const a = k / 24 * 2 * Math.PI;
+        const p = new THREE.Vector3(Math.cos(a) * R, 3, Math.sin(a) * R).project(cam);
+        expect(Math.abs(p.x)).toBeLessThan(AFTERMATH.fitX + 0.02);
+        expect(p.y).toBeLessThan(AFTERMATH.fitTop + 0.03);
+        expect(p.y).toBeGreaterThan(AFTERMATH.fitBot - 0.03);
+      }
+      const plain = aftermathView({ survivors, aspect, az: 0.7 });
+      expect(Math.hypot(...v.pos)).toBeGreaterThanOrEqual(Math.hypot(...plain.pos) - 1e-6);
+    }
+  }
+});

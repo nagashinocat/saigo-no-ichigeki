@@ -169,14 +169,15 @@ test('boom: 演出の無音の間は鳴らさず、無音が明けたら hold / 
   expect(Math.max(...srcs.map((x) => x.stopT))).toBeGreaterThan(10 + 2 + 4);
 });
 
-test('最後の一発の取り決め: 時刻表の「時間が戻る」（resume）から宇宙へ切り替わるまで鳴り続け、時間が戻る間に開く', async () => {
+test('最後の一発の取り決め: 弾けた瞬間（resume = burst）から宇宙へ切り替わるまで鳴り続け、光の壁が軍勢を飲むまでに開く', async () => {
   const { finaleBoomOpts } = await import('../../src/audio/audio.js');
-  const { createTimeline, FINALE } = await import('../../src/render/finaleTimeline.js');
-  const tl = createTimeline({ radius: CONFIG.radius.max, hitDist: 40 });
-  const o = finaleBoomOpts(tl, FINALE.burstRamp);
+  const { createTimeline } = await import('../../src/render/finaleTimeline.js');
+  const R = CONFIG.radius.max;
+  const tl = createTimeline({ radius: R, riderDist: R * 0.46, camDist: R * 0.46 + 14 });
+  const o = finaleBoomOpts(tl);
   expect(o.hold).toBeCloseTo(tl.chaseEnd - tl.resume);
   expect(o.hold).toBeGreaterThan(1);
-  expect(o.open).toBe(FINALE.burstRamp);
+  expect(o.open).toBeCloseTo(tl.engulf - tl.resume, 6);
   const r = boomRecipe(1, { ...o, rng: seeded() });
   expect(r.roar.dur).toBeGreaterThan(tl.chaseEnd - tl.resume); // 宇宙のこもり（muffle）まで途切れない
 });

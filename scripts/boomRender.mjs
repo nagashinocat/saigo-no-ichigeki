@@ -3,7 +3,7 @@
 import { resolve } from 'node:path';
 import { createServer } from 'vite';
 import { chromium } from 'playwright';
-import { createTimeline, FINALE } from '../src/render/finaleTimeline.js';
+import { createTimeline } from '../src/render/finaleTimeline.js';
 import { CONFIG } from '../src/config.js';
 import { finaleBoomOpts } from '../src/audio/audio.js';
 import { collapseHitInfo } from '../src/audio/collapse.js';
@@ -15,22 +15,22 @@ const FPS = 30; // 瓦礫の音はゲームと同じく毎フレーム呼ぶ（�
 
 // 試聴の場面（puff / final / boom / debris / stress）。T0 は放つ瞬間
 export function finaleScenes() {
-  // 力満タンの一発（最善の操作で満タンが最後の数秒）。狙うビルまでの距離はふつうの値
+  // 力満タンの一発（最善の操作で満タンが最後の数秒）。R0b: 遠くの軍勢（半径の 0.46）の後ろ 14 m のカメラ
   const radius = CONFIG.radius.max;
-  const tl = createTimeline({ radius, hitDist: 40 });
+  const tl = createTimeline({ radius, riderDist: radius * 0.46, camDist: radius * 0.46 + 14 });
   const size = Math.sqrt(radius / CONFIG.radius.max);
   const T0 = 1.0; // 放つ瞬間
   const finalCues = [
     [T0, 'silence'],
-    ...tl.beats.map((b, i) => [T0 + b, 'heart', i]),
-    [T0 + tl.resume, 'snap'], // cinematic.js は時間が戻る瞬間（resume）に 'snap' を出す
+    [T0 + tl.erupt, 'erupt'], // cinematic.js は白が晴れて爆発が始まる瞬間に 'erupt'、弾けた瞬間に 'burst' を出す
+    [T0 + tl.burst, 'burst'],
     [T0 + tl.chaseEnd, 'space'],
     [T0 + tl.rumble, 'rumble'],
   ];
-  // 瓦礫: 本物の街（種 1）のビル・小物が、演出の時刻表の前線に飲まれる瞬間。鳴らすのは main.js と同じ段（時間が戻ってから
+  // 瓦礫: 本物の街（種 1）のビル・小物が、演出の時刻表の前線に飲まれる瞬間。鳴らすのは main.js と同じ段（爆発が始まってから
   // 横一線の光が消えるまで）。カメラは前線の少し先を逃げる（近さは前線からの距離の目安、左右は爆心から見た向き）
   const city = generateCity(1);
-  const STAGES = new Set(['snap', 'chase', 'space', 'flatten']);
+  const STAGES = new Set(['swell', 'race', 'chase', 'space', 'flatten']);
   const items = [...city.buildings.map((b) => ({ ...b, key: 'b' + b.id })), ...city.props.map((p) => ({ ...p, key: 'p' + p.id }))]
     .filter((b) => b.dist <= radius);
   const finalFrames = [];
@@ -63,10 +63,10 @@ export function finaleScenes() {
       debrisFrames.push([t, hits]);
     }
   }
-  const stressFrames = finalFrames.map(([t, hits]) => [t, hits.length ? hits : (t > T0 + tl.snap && t < T0 + tl.lineEnd)
+  const stressFrames = finalFrames.map(([t, hits]) => [t, hits.length ? hits : (t > T0 + tl.burst && t < T0 + tl.lineEnd)
     ? Array.from({ length: 6 }, (_, k) => collapseHitInfo({ id: `b${Math.round(t * 1000)}_${k}`, w: 30, d: 30, h: 90 }, { camX: k % 2 ? 10 : -10, camZ: -10, dist: 15 }))
     : []]);
-  const fin = { size, ...finaleBoomOpts(tl, FINALE.burstRamp) };
+  const fin = { size, ...finaleBoomOpts(tl) };
   const scenes = [
     { name: 'puff', dur: 3.5, cues: [[1.0, 'boom', Math.sqrt(CONFIG.puff.radius / CONFIG.radius.max)]] },
     { name: 'final', dur: T0 + tl.rumble + 7, cues: finalCues, frames: finalFrames, ...fin, metricsAt: T0 + tl.resume },
@@ -106,16 +106,15 @@ export async function renderScenes(scenes, { modPath = 'src/audio/audio.js', SR 
       ctx.createDynamicsCompressor = () => (lim = mk());
       window.AudioContext = function () { return ctx; };
       const audio = createAudio(); audio.unlock();
-      const tlArg = { resume: sc.resume, beatEnd: sc.resume, snap: sc.snap, chaseEnd: sc.chaseEnd, flatten: sc.flatten, lineEnd: sc.lineEnd };
+      const tlArg = { erupt: sc.erupt, burst: sc.burst, resume: sc.resume, beatEnd: sc.resume, engulf: sc.engulf, snap: sc.snap, chaseEnd: sc.chaseEnd, flatten: sc.flatten, lineEnd: sc.lineEnd };
       const run = (name, arg) => {
         if (name === 'boom') audio.boom(arg);
         else if (name === 'boomOnly') audio.boom(sc.size, { hold: sc.hold, open: sc.open, heavy: sc.heavy });
         else if (name === 'silence') audio.silence();
         else if (name === 'heart') audio.heartbeat(arg);
-        else if (name === 'snap') { // main.js と同じ
-          audio.unsilence(); audio.boom(sc.size, { hold: sc.hold, open: sc.open, heavy: sc.heavy });
-          if (audio.finaleRumble) audio.finaleRumble(tlArg);
-        }
+        else if (name === 'erupt') { audio.unsilence(); if (audio.finaleRumble) audio.finaleRumble(tlArg); } // main.js と同じ
+        else if (name === 'burst') audio.boom(sc.size, { hold: sc.hold, open: sc.open, heavy: sc.heavy });
+        else if (name === 'debrisMode') audio.debrisMode(arg); // リプレイ（'replay'）の瓦礫の音の道
         else if (name === 'space') audio.muffle(1.4);
         else if (name === 'rumble') audio.deepRumble();
         else if (name === 'bgmLoud') {
@@ -141,7 +140,7 @@ export async function renderScenes(scenes, { modPath = 'src/audio/audio.js', SR 
       }
       const buf = await ctx.startRendering();
       return { left: Array.from(buf.getChannelData(0)), right: Array.from(buf.getChannelData(1)), red, redAt };
-    }, { sc: { ...sc, resume: tl.resume, snap: tl.snap, chaseEnd: tl.chaseEnd, flatten: tl.flatten, lineEnd: tl.lineEnd }, mod, SR });
+    }, { sc: { ...sc, erupt: tl.erupt, burst: tl.burst, resume: tl.resume, engulf: tl.engulf, snap: tl.snap, chaseEnd: tl.chaseEnd, flatten: tl.flatten, lineEnd: tl.lineEnd }, mod, SR });
       out.push({ name: sc.name, sc, left: Float32Array.from(r.left), right: Float32Array.from(r.right), red: r.red, redAt: r.redAt });
     }
   } finally {

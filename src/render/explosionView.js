@@ -203,6 +203,7 @@ export function createExplosionView(scene, tierName, { sunDir = null, seed = 7 }
   for (const s of spheres) { s.mesh.visible = s.ring.visible = false; group.add(s.mesh, s.ring); }
 
   let time = 0, flash = 0, shake = 0;
+  let birthK = 1; // 弾けた瞬間に球が白く飛ぶ強さの倍率（R0b: 遠くの軍勢の後ろのカットでは弱める。setBirthScale）
   // 毎フレーム作り直さず、中身だけ書き換えて返す
   const cameraInfo = { front: 0, shake: 0 };
   const heat = { center: [0, 0, 0], radius: 0, strength: 0 };
@@ -307,7 +308,7 @@ export function createExplosionView(scene, tierName, { sunDir = null, seed = 7 }
         u.uTime.value = time;
         u.uRadius.value = r * pulse;
         u.uFade.value = fade;
-        u.uBirth.value = (s.burst ? 1 : 0.3) * Math.exp(-(s.burst ? s.burstAge : s.age) / (s.burst ? BURST_FLARE_SEC : 0.12));
+        u.uBirth.value = birthK * (s.burst ? 1 : 0.3) * Math.exp(-(s.burst ? s.burstAge : s.age) / (s.burst ? BURST_FLARE_SEC : 0.12));
         u.uScale.value = 3.5 + r / 60;
         const ringR = s.ringFront * 1.25 + 10;
         s.ring.scale.setScalar(ringR);
@@ -372,6 +373,8 @@ export function createExplosionView(scene, tierName, { sunDir = null, seed = 7 }
     },
     // 爆心近くで光に溶ける対象: { x, z, w, d, h, color }
     vaporize(target) { vapor.add(time, target); },
+    // R0b: 弾けた瞬間に球全体が白く飛ぶ強さ（uBirth）の倍率。カメラのそばまで迫る大きな球が白く飛ぶと、bloom で画面全体が白い膜になる
+    setBirthScale(k) { birthK = k; },
     get busy() { return flash > 0 || spheres.some((s) => s.active) || vapor.busy(time); },
     // 上空カメラへ: 見えている球の一番大きい半径・揺れ (rad)
     get cameraInfo() { return cameraInfo; },

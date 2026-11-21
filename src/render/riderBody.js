@@ -5,7 +5,7 @@ import { FIELD } from './heroBody.js';
 import { RIDER, bikeParts, SUIT, PLATE, DARK, HELM, BOOT, HULL, DECK, BELLY, HOUSING } from './hoverBike.js';
 import { srgb, part } from './figureGeo.js';
 
-// 演出の肩越しのカットで大きく映る軍勢の一人（浮遊バイクの乗り手）の体。instanced の軍勢（hoverBike.js）は箱と筒の寄せ集めで、
+// 演出（最後の一発の軍勢の後ろのカット）でいちばん手前に映る軍勢の一人（浮遊バイクの乗り手）の体。instanced の軍勢（hoverBike.js）は箱と筒の寄せ集めで、
 // 遠くでは読みやすいが、背後から画面の 3 分の 1 を占めると箱に見える。この一人だけは主人公（heroBody.js）と同じやり方で、
 // 距離の場を滑らかにつないで Surface Nets で網にする。背後から逆光の影絵になっても人として読めるように、輪郭に段と折れを作る:
 // 卵形のヘルメット（あごから首へつながり、前に目の開き、中に覆面）、首から肩へ下りる僧帽筋、肩当ての二枚の段、

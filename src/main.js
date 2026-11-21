@@ -18,7 +18,6 @@ import { buildHeroBody, createHeroBodyBuilder } from './render/heroBody.js';
 import { createRiderBodyBuilder } from './render/riderBody.js';
 import { createBodyPrep } from './render/bodyPrep.js';
 import { createCinematic, leadFor } from './render/cinematic.js';
-import { FINALE } from './render/finaleTimeline.js';
 import { planFinale, planRetreat } from './render/finalePlan.js';
 import { createReplay } from './render/replay.js';
 import { createBlackhole } from './render/blackhole.js';
@@ -84,7 +83,7 @@ const hand = createHandView({ right: buildHandModel({ detail: handDetail }), lef
 // 画質の段の細かい体は最初のフレームのあと、手の空いた時間に区切りごとに組み立てて差し替える（heroUpgrade）
 const heroBody = buildHeroBody({ detail: 'low' });
 const heroBuilder = tier === 'low' ? null : createHeroBodyBuilder({ detail: tier });
-// 最後の一発の肩越しのカットで大きく映る軍勢の一人の体（riderBody.js）。主人公の細かい体のあと、手の空いた時間に組み立てる
+// 最後の一発の軍勢の後ろのカットで、いちばん手前に映る軍勢の一人の体（riderBody.js）。主人公の細かい体のあと、手の空いた時間に組み立てる
 // （low の段は粗い格子）。遅くとも最後の一発を放つときまでに組み立てて渡す
 const riderBuilder = createRiderBodyBuilder({ detail: tier });
 
@@ -214,9 +213,9 @@ function warmBoth(fn) {
 warmBoth(() => explosionView.warmup(renderer, views.cityCamera));
 // 街の材質（ビル・飾り・看板・光の溜まり）も両方の段の分を前もって作る（段が下がって描き方が変わった瞬間に止まらないように）
 warmBoth(() => cityView.warmup(renderer, views.cityCamera, cityScene));
-// 最後の一発: 放つ瞬間から、時間が戻るまで世界の音は消える（鳴るのは心臓の鼓動だけ。音の段取りは演出が cue で知らせる）
+// 最後の一発: 放つ瞬間から、白が晴れて爆発が始まるまで世界の音は消える（音の段取りは演出が cue で知らせる）
 game.on('shot', (shot) => {
-  bgm.stop(); // 放った瞬間にぴたりと止める（演出の無音・鼓動・爆音のため）
+  bgm.stop(); // 放った瞬間にぴたりと止める（演出の無音・爆音のため）
   cityView.setDetail('fine'); // ビルを球の線に沿って曲がる細かい箱へ（遊んでいる間は粗い箱）
   explosionView.begin(shot); hand.release(shot);
 });
@@ -229,7 +228,7 @@ game.on('puff', (shot) => { explosionView.begin(shot); hand.release(shot); });
 const enemyView = createEnemyView(cityScene, tier, { sunDir: style.sunDir, heroBody });
 // 軍勢・主人公の陰影と推進の光を、暗めの夕方の光に合わせる（材質どうしで共有している uniform の値を書き換える）
 style.tintFigures(enemyView.mesh.material.uniforms);
-// 細かい主人公の体と肩越しの一人の体の組み立て（bodyPrep.js）: 最初のフレームのあとの手の空いた時間と TAP を待つ画面で少しずつ、
+// 細かい主人公の体と演出の一人の体の組み立て（bodyPrep.js）: 最初のフレームのあとの手の空いた時間と TAP を待つ画面で少しずつ、
 // TAP の直後（画面は黒）に残りを一度に。導入の再生中は手の空いた時間の組み立てを止める（音の時計に合わせた絵が飛ばない）。
 // 導入のバイクの拍の近いバイクも、演出・リプレイ・時間切れの結末で近くに映る主人公も、かならず画質の段の体になる
 const bodyPrep = createBodyPrep({
@@ -368,8 +367,8 @@ function introTick(dt) {
   renderIntroAt(introFlow.time, { alive: introAlive });
 }
 
-// 最後の一発の演出（画面全体、仕様 12 章の絵コンテ 1〜5）: 白 → 軍勢の一人の肩越しのガラスの一拍（飛んでくるガラスに映った目と
-// 目が合う）→ 時間が戻りその一人が飲まれる → 弾ける爆発から逃げる → 宇宙から見た光の半球と衝撃波の輪 → 横一線の光 → 無音と地鳴り（cinematic.js）
+// 最後の一発の演出（画面全体、仕様 12 章の絵コンテ 1〜5）: 白 → 遠くの軍勢の後ろから、地平の爆発がスローでふくらみ、弾けて
+// 光の壁が街を走り軍勢とカメラを一気に飲む（R0b）→ 弾ける爆発から逃げる → 宇宙から見た光の半球と衝撃波の輪 → 横一線の光 → 無音と地鳴り（cinematic.js）
 // 画質の段は演出を始めるたびに読む（途中で段が下がっていれば、その段の重さで演じる）
 const cinematic = createCinematic(views, enemyView, explosionView, { renderer, scene: cityScene, sunDir: style.sunDir, tier, getTier: () => tier, lights: { sun: style.lights[0], fill: style.lights[2] }, veilBuilding: (id, on) => cityView.veilBuilding(id, on) });
 warmBoth(() => cinematic.warmup(renderer, views.cityCamera));
@@ -400,7 +399,7 @@ let finalBlastSize = 0;
 const transitObs = game.city.transit ? transitObstacles(game.city.transit) : [];
 game.on('cinematicStart', (shot) => {
   takeReplaySnapshot(shot);
-  // 放つ瞬間は撮る場所だけを決め、重い逃げる道の計算は演出の止まった一拍の間に回す（必要になるのは約 4 秒後）
+  // 放つ瞬間は撮る場所だけを決め、重い逃げる道の計算はスローでふくらむ間に回す（必要になるのは追うカットから）
   const buildings = game.city.buildings.filter((b) => standing.has(b.id)), crater = fronts.crater, lead = leadFor(shot.radius);
   const plan = planFinale({ shot, rng: shotRng, crater, lead, buildings, enemies: game.enemies.list, retreat: false });
   finalBlastSize = Math.sqrt(shot.radius / CONFIG.radius.max);
@@ -411,12 +410,12 @@ game.on('cinematicEnd', () => cinematic.end());
 // 演出の音の段取り
 cinematic.on('cue', ({ name, arg }) => {
   if (name === 'silence') audio.silence();
-  else if (name === 'heart') audio.heartbeat(arg);
-  else if (name === 'snap') {
+  else if (name === 'erupt') {
+    // 白が晴れて地平で爆発が始まる: 世界の音が戻り、遠い地鳴りが時刻表どおりにふくらみ（スローの間）、弾けて光の壁が届くと最大、
+    // 宇宙でこもり、横一線の光とともに消える
     audio.unsilence();
-    audio.boom(finalBlastSize, finaleBoomOpts(cinematic.timeline, FINALE.burstRamp));
-    audio.finaleRumble(cinematic.timeline); // 地響き: 時刻表どおりにふくらみ、宇宙でこもり、横一線の光とともに消える
-  }
+    audio.finaleRumble(cinematic.timeline);
+  } else if (name === 'burst') audio.boom(finalBlastSize, finaleBoomOpts(cinematic.timeline)); // 弾けた瞬間に爆発の音が開く
   else if (name === 'space') audio.muffle(1.4);
   else if (name === 'rumble') audio.deepRumble();
 });
@@ -569,7 +568,11 @@ function stepWorld(wdt, live, enemies, cam, focus, glowScale = 1) {
   const shaping = live.some((b) => b.shot.small) ? live.filter((b) => !b.shot.small) : live;
   const list = fronts.update(shaping);
   destruction.pool.setCrater(fronts.crater);
-  if (wdt > 0) explosionView.dust(destruction.update(wdt, list));
+  if (wdt > 0) {
+    explosionView.dust(destruction.update(wdt, list));
+    // 落ちて止まった大きな破片: 瓦礫の崩れる音へ（画面の出来事の場所から。持ち主 23:01）
+    for (const p of destruction.lastSettled) hitFeed.settleHit(p);
+  }
   debrisView.update();
   rubbleView.update();
   explosionView.update(wdt, live, cam, ps, fronts.crater);
@@ -600,7 +603,7 @@ function simulate(dt) {
     return;
   }
   // 最後の一発の演出の間は、ゲームの時計（爆発の前線の進み）も、描画側の世界（破片・粉・ビルのつぶれ・爆発の見た目）の時間も、
-  // 演出の時刻表が決める（白の間に進め、体感時間の一拍の間はほとんど止め、時間が戻ると一気に弾ける）。
+  // 演出の時刻表が決める（白の間に進め、スローでじわじわふくらみ、弾けた瞬間から現実の速さ）。
   cinematic.update(dt);
   // 時間切れの結末: 演出を先に進める（始まったフレームは進めない）。ゲームは終わっていて、世界と軍勢の見た目だけが動く
   blackhole.update(dt);
@@ -608,10 +611,13 @@ function simulate(dt) {
   const cdt = cinematic.gameDt;
   if (cdt === null) game.update(dt); else stepGame(cdt);
   const wdt = cinematic.active ? cinematic.worldDt : dt;
+  explosionView.setBirthScale(cinematic.active ? cinematic.blastBirthScale : 1);
   const cam = cityCam();
   const live = game.blasts;
   // 手前の物理は、演出の間は演出のカメラの近くの破片だけ（ふだんは null で全部プール）
   stepWorld(wdt, live, game.enemies.list, cam, cinematic.active ? cam.position.toArray(_focusAt) : null);
+  // R0b: 遠くの軍勢の後ろのカットの間は、爆心の光が近くの街まで真っ白に照らさないよう上限を当てる
+  if (cinematic.active) explosionView.light.intensity = Math.min(explosionView.light.intensity, cinematic.blastLightCap);
   // 上空カメラは、ゲームが動いている間はいつも進める（演出の終わりにこの姿勢へなじむ）
   // 大きな一発の演出の間は、終わった一発の「保つ」時間を進めない（演出が全体の構図で止まったあと、2画面でも保ってから戻る）
   if (!cinematic.frozen) views.updateCamera(dt, explosionView.cameraInfo, live, cinematic.active);
@@ -706,7 +712,7 @@ function draw() {
 let last = performance.now();
 let paused = false;
 let firstFrameMs = null; // ページを開いてから最初のフレームを描き終えるまで（ms。計測用）
-// 最初のフレームのあと: 主人公の細かい体 → 肩越しの一人の体の順に、手の空いた時間に区切り 1 つずつ組み立てる（bodyPrep）
+// 最初のフレームのあと: 主人公の細かい体 → 演出の一人の体の順に、手の空いた時間に区切り 1 つずつ組み立てる（bodyPrep）
 function onFirstFrame() { bodyPrep.startIdle(); }
 function frame(now) {
   const dt = Math.min(Math.max((now - last) / 1000, 0), MAX_FRAME_DT);

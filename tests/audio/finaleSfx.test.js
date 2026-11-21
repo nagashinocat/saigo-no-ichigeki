@@ -5,17 +5,18 @@
 import { test, expect, afterEach } from 'vitest';
 import { boomRecipe, createAudio, finaleBoomOpts, rumbleKeys, rumbleAt, RUMBLE, DEBRIS_LEVEL } from '../../src/audio/audio.js';
 import { createHitFeed, COLLAPSE_STAGES } from '../../src/audio/hitFeed.js';
-import { COLLAPSE, createCollapseGate, collapseVoice, collapseHitInfo, renderCollapse, idHash } from '../../src/audio/collapse.js';
-import { createTimeline, FINALE } from '../../src/render/finaleTimeline.js';
+import { COLLAPSE, createCollapseGate, collapseVoice, collapseHitInfo, renderCollapse, renderCollapseVariant, idHash } from '../../src/audio/collapse.js';
+import { createTimeline } from '../../src/render/finaleTimeline.js';
 import { createGame } from '../../src/game/game.js';
 import { CONFIG } from '../../src/config.js';
 
 const PUFF = Math.sqrt(CONFIG.puff.radius / CONFIG.radius.max);
 const seeded = (seed = 1) => () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+// R0b: 遠くの軍勢の後ろ（乗り手は半径の 0.36〜0.56、カメラはその 14 m 後ろ）
 const timelines = () => [
-  createTimeline({ radius: CONFIG.radius.max, hitDist: 40 }),
-  createTimeline({ radius: CONFIG.radius.max * 0.5, hitDist: 25 }),
-  createTimeline({ radius: CONFIG.radius.max, hitDist: 120 }),
+  createTimeline({ radius: CONFIG.radius.max, riderDist: CONFIG.radius.max * 0.46, camDist: CONFIG.radius.max * 0.46 + 14 }),
+  createTimeline({ radius: CONFIG.radius.max * 0.5, riderDist: CONFIG.radius.max * 0.5 * 0.4, camDist: CONFIG.radius.max * 0.5 * 0.4 + 14 }),
+  createTimeline({ radius: CONFIG.radius.max, riderDist: CONFIG.radius.max * 0.56, camDist: CONFIG.radius.max * 0.56 + 14 }),
 ];
 
 // ---- 前の版の設計図（H2〜S5 の boomRecipe をそのまま写したもの。払う・ふつうの一発は今もこれと同じでなければならない）----
@@ -84,7 +85,7 @@ test('払うの音の設計図は前と同じ（ふつうの一発・hold つき
 
 test('最後の一発の取り決めは heavy: 1。立ち上がり（attack）はそのまま鋭く、低い一打は低く長く強く歪み、胴（80〜180 Hz）と圧のふくらみがあり、うなりと地響きは長い。超低域の層は 30 Hz より上だけ', () => {
   const tl = timelines()[0];
-  const o = finaleBoomOpts(tl, FINALE.burstRamp);
+  const o = finaleBoomOpts(tl);
   expect(o.heavy).toBe(1);
   const was = oldRecipe(1, { hold: o.hold, open: o.open, rng: seeded() });
   const now = boomRecipe(1, { ...o, rng: seeded() });
@@ -222,7 +223,7 @@ const lastAbove = (x, rms) => { let last = 0; for (let t = 0; t + 0.1 <= x.lengt
 // 鳴らす窓を 16 秒に広げた
 test('最後の爆発音は前より重い（オフラインで鳴らして測る）: スマホで聞こえる 100〜300 Hz が最初の 1.5 秒で +3 dB 以上、低い一打の基音が低く、うなりが長く、超低域も厚い', () => {
   const tl = timelines()[0];
-  const o = finaleBoomOpts(tl, FINALE.burstRamp);
+  const o = finaleBoomOpts(tl);
   const was = renderLow(oldRecipe(1, { hold: o.hold, open: o.open, rng: seeded() }), 16);
   const now = renderLow(boomRecipe(1, { ...o, rng: seeded() }), 16);
   // 基音（一打の最初の 0.5 秒でいちばん力のある周波数）
@@ -248,39 +249,52 @@ test('最後の爆発音は前より重い（オフラインで鳴らして測�
   const below120 = (x) => lowpass(lowpass(x, 120, 0.707), 120, 0.707);
   const sWas = below120(was.sub), sNow = below120(now.sub);
   const db = (t0, t1) => 10 * Math.log10(energy(sNow, t0, t1) / energy(sWas, t0, t1));
-  if (process.env.S3_LOG) console.log(JSON.stringify({ hold: o.hold, sub06: db(0, 6), subTail: db(o.hold, 6), mix06: 10 * Math.log10(energy(below120(mix(now)), 0, 6) / energy(below120(mix(was)), 0, 6)) }));
+  if (process.env.S3_LOG) console.log(JSON.stringify({ hold: o.hold, sub06: db(0, 6), subTail: db(o.hold, 6), t27: db(o.hold, o.hold + 2.7), t2: db(o.hold + 1, o.hold + 3.7), mix06: 10 * Math.log10(energy(below120(mix(now)), 0, 6) / energy(below120(mix(was)), 0, 6)) }));
   expect(db(0, 6)).toBeGreaterThanOrEqual(0.5);
-  expect(db(o.hold, 6)).toBeGreaterThanOrEqual(1.5);
+  // R0b: hold は 3.3 → 2.6 秒に縮んだ（弾けてから追うカットまでが短い）。hold の直後の 1 秒は前の版とほぼ同じ大きさ（-0.7 dB）で、
+  // 重い一発の尾はその先で長く残る（hold + 1 〜 hold + 3.7 秒で +4.9 dB）。尾の厚さはそこで測る
+  expect(db(o.hold + 1, o.hold + 3.7)).toBeGreaterThanOrEqual(1.5);
   expect(lastAbove(now.sub, 0.01)).toBeGreaterThanOrEqual(lastAbove(was.sub, 0.01));
 });
 
 // ---- 地響き（時刻表に沿う）----
-test('地響きの折れ線: 時間が戻る（resume）まで 0、弾けた直後に最大、見せる期（追われる間）はうなり続け、宇宙でこもって弱まり、横一線の光とともに消える', () => {
+test('地響きの折れ線（R0b、音は画面に従う）: 白が晴れて爆発が始まる（erupt）まで 0、スローの間に遠い地鳴りがふくらみ、弾けて光の壁が軍勢を飲むと轟き、追うカットの直後に最大、見せる期はうなり続け、宇宙でこもって弱まり、横一線の光とともに消える', () => {
   for (const tl of timelines()) {
     const keys = rumbleKeys(tl);
     for (let i = 1; i < keys.length; i++) expect(keys[i].t).toBeGreaterThan(keys[i - 1].t);
+    expect(keys[0].t).toBe(tl.erupt);
     const at = (t) => rumbleAt(keys, t);
-    // ガラスの一拍（鼓動だけ）とその前は無音
-    for (const t of [0, tl.contact, (tl.contact + tl.beatEnd) / 2, tl.resume - 1e-3]) expect(at(t).g).toBe(0);
-    // 時間が戻ってから弾けるまでにふくらむ
-    expect(at(tl.resume + 0.1).g).toBeGreaterThan(0);
-    expect(at(tl.snap).g).toBeGreaterThan(at(tl.resume + 0.1).g);
-    // 最大は弾けた直後（snap から 0.5 秒以内）
+    // 白の間とその前は無音
+    for (const t of [0, tl.hands, tl.erupt - 1e-3]) expect(at(t).g).toBe(0);
+    // スローの間: 遠く小さく、だんだんふくらむ（弾けるまで 0.35 以下・こもった低い音）
+    let prev = 0;
+    for (let t = tl.erupt + 0.05; t < tl.burst; t += 0.05) { const g = at(t).g; expect(g).toBeGreaterThanOrEqual(prev); expect(g).toBeLessThanOrEqual(0.35); prev = g; }
+    expect(at(tl.burst - 0.01).f).toBeLessThanOrEqual(95);
+    // 弾けてから光の壁が軍勢を飲むまでに大きくなる
+    expect(at(tl.engulf).g).toBeGreaterThan(at(tl.burst).g + 0.3);
+    // 最大は追うカットへ切り替わった直後（snap から 0.5 秒以内）
     let peakT = 0, peak = 0;
-    for (let t = tl.resume; t < tl.end; t += 0.01) if (at(t).g > peak) { peak = at(t).g; peakT = t; }
-    expect(peak).toBeCloseTo(1, 5);
+    for (let t = tl.erupt; t < tl.end; t += 0.01) if (at(t).g > peak) { peak = at(t).g; peakT = t; }
+    expect(peak).toBeCloseTo(1, 2);
+    expect(at(tl.snap + 0.3).g).toBeCloseTo(1, 9);
     expect(peakT).toBeGreaterThanOrEqual(tl.snap);
     expect(peakT).toBeLessThan(tl.snap + 0.5);
-    // 追われる間（見せる期）はずっと強い
     for (let t = tl.snap + 0.3; t < tl.chaseEnd; t += 0.05) expect(at(t).g).toBeGreaterThanOrEqual(0.8);
-    // 宇宙: こもる（低域だけ）・弱まる。消えるまで鳴り続ける
     const sp = at(tl.chaseEnd + 0.5);
     expect(sp.f).toBeLessThanOrEqual(80);
     expect(sp.g).toBeLessThan(at(tl.chaseEnd - 0.05).g);
     expect(sp.g).toBeGreaterThan(0.2);
     expect(at(tl.chaseEnd - 0.05).f).toBeGreaterThanOrEqual(140);
-    // 横一線の光が消えたら無音（そのあとの無音 → 地鳴り）
     for (const t of [tl.lineEnd, (tl.lineEnd + tl.rumble) / 2, tl.rumble, tl.end]) expect(at(t).g).toBe(0);
+  }
+});
+
+test('爆発の音の取り決め（R0b）: 弾けた瞬間（burst = resume）に開き、うなりは光の壁が軍勢を飲む（engulf）までかけて開いて、宇宙へ切り替わるまで鳴り続ける', () => {
+  for (const tl of timelines()) {
+    const o = finaleBoomOpts(tl);
+    expect(o.hold).toBeCloseTo(tl.chaseEnd - tl.burst, 9);
+    expect(o.open).toBeCloseTo(Math.min(1.2, Math.max(0.15, tl.engulf - tl.burst)), 9);
+    expect(o.heavy).toBe(1);
   }
 });
 
@@ -332,7 +346,7 @@ const reaches = (ctx, n, target, seen = new Set()) => {
 };
 const hit = (id, o = {}) => ({ id, size: 0.6, near: 0.7, pan: 0, ...o });
 
-test('地響きの音: 時間が戻る瞬間に時刻表どおり最後まで予定され、演出の道（cine）を通ってこもりの out へ（世界の音 master は通らない）。横一線の光が消えたら止まる', () => {
+test('地響きの音: 爆発が始まる瞬間（erupt）に時刻表どおり最後まで予定され、演出の道（cine）を通ってこもりの out へ（世界の音 master は通らない）。横一線の光が消えたら止まる', () => {
   const tl = timelines()[0];
   const { ctx, audio, master, cine, out } = setup();
   const n0 = ctx.nodes.length;
@@ -346,17 +360,17 @@ test('地響きの音: 時間が戻る瞬間に時刻表どおり最後まで予
     expect(reaches(ctx, s, out)).toBe(true);
     expect(reaches(ctx, s, master)).toBe(false);
     // 地鳴り（tl.rumble）の前に止まる
-    expect(s.stopT).toBeGreaterThan(10 + (tl.lineEnd - tl.resume) - 1e-6);
-    expect(s.stopT).toBeLessThan(10 + (tl.rumble - tl.resume));
+    expect(s.stopT).toBeGreaterThan(10 + (tl.lineEnd - tl.erupt) - 1e-6);
+    expect(s.stopT).toBeLessThan(10 + (tl.rumble - tl.erupt));
   }
-  // 大きさの予定は rumbleKeys の時刻（resume を今として）どおり。最大は弾けた直後
+  // 大きさの予定は rumbleKeys の時刻（erupt を今として）どおり。最大は追うカットの直後
   const env = mine.filter((n) => n.kind === 'gain').find((g) => g.gain.ev.length >= rumbleKeys(tl).length);
   const keys = rumbleKeys(tl);
-  expect(env.gain.ev.map((e) => e.t)).toEqual(keys.map((k) => 10 + k.t - tl.resume).map((t) => expect.closeTo(t, 6)));
+  expect(env.gain.ev.map((e) => e.t)).toEqual(keys.map((k) => 10 + k.t - tl.erupt).map((t) => expect.closeTo(t, 6)));
   expect(Math.max(...env.gain.ev.map((e) => e.v))).toBeCloseTo(RUMBLE.gain, 6);
   // 低域の通し幅も宇宙で下がる
   const lp = mine.find((n) => n.kind === 'filter' && n.frequency.ev.length >= keys.length);
-  const fSpace = lp.frequency.ev.find((e) => e.t > 10 + tl.chaseEnd - tl.resume + 0.1).v;
+  const fSpace = lp.frequency.ev.find((e) => e.t > 10 + tl.chaseEnd - tl.erupt + 0.1).v;
   expect(fSpace).toBeLessThanOrEqual(80);
   // 宇宙へ: out がこもる（地響きも一緒にこもる）
   audio.muffle(1.4);
@@ -394,13 +408,14 @@ test('瓦礫の音の頻度の上限: 毎フレーム 10 発ずつ命中して�
   expect(g2.take([hit('b3')], 1)?.merged).toBe(1);
 });
 
-test('瓦礫の音の部品: 一つの命中で 3 つだけ（音のもとは起動時に書き出したものを使い回す）、リミッターへ届き世界の音（master）は通らない、上限を超えて増えない', () => {
+test('瓦礫の音の部品: 一つの命中で 4 つだけ（音のもと・こもり・大きさ・左右。音のもとは起動時に書き出したものを使い回す）、リミッターへ届き世界の音（master）は通らない、上限を超えて増えない', () => {
   const { ctx, audio, master, lim } = setup();
   const bufs = new Set();
   let n0 = ctx.nodes.length;
   audio.collapse([hit('b1', { pan: -0.8 })]);
   const one = ctx.nodes.slice(n0);
-  expect(one.length).toBe(3);
+  expect(one.length).toBe(4);
+  expect(one.find((n) => n.kind === 'filter').frequency.value).toBeCloseTo(collapseVoice(hit('b1', { pan: -0.8 })).lp, 6);
   const src = one.find((n) => n.kind === 'src');
   expect(reaches(ctx, src, lim)).toBe(true);
   expect(reaches(ctx, src, master)).toBe(false);
@@ -415,19 +430,35 @@ test('瓦礫の音の部品: 一つの命中で 3 つだけ（音のもとは起
   const made = ctx.nodes.slice(n0);
   const srcs = made.filter((n) => n.kind === 'src');
   expect(srcs.length).toBeLessThanOrEqual(COLLAPSE.perSec * 3 + 1);
-  expect(made.length).toBe(srcs.length * 3);
+  expect(made.length).toBe(srcs.length * 4);
   for (const s of srcs) bufs.add(s.buffer);
   expect(bufs.size).toBeLessThanOrEqual(COLLAPSE.variants);
+  // 落ちて止まった破片（'s…'）は短い音のもと（ビルの音のもとの後ろの番号）
+  n0 = ctx.nodes.length;
+  ctx.currentTime += 5;
+  audio.collapse([hit('s12_40', { kind: 'settle', size: 0.3 })]);
+  const sb = ctx.nodes.slice(n0).find((n) => n.kind === 'src').buffer;
+  expect(sb.length).toBe(Math.ceil(COLLAPSE.settleSec * Math.min(8000, COLLAPSE.sampleRate)));
 });
 
-test('瓦礫の音: 近い・大きいほど低く大きい、左右はカメラから見た向き、同じビルはいつも同じ音（リプレイでも同じ）', () => {
+test('瓦礫の音: 近い・大きいほど低く大きい、遠いほどこもる、読む速さは 0.74〜1.12 倍だけ（遠く小さい命中が高くならない）、左右はカメラから見た向き、同じビルはいつも同じ音（リプレイでも同じ）', () => {
   const small = collapseVoice(collapseHitInfo({ id: 'b1', w: 4, d: 4, h: 6 }, { camX: 0, camZ: -300, dist: 300 }));
   const big = collapseVoice(collapseHitInfo({ id: 'b1', w: 30, d: 30, h: 90 }, { camX: 0, camZ: -15, dist: 15 }));
   expect(big.rate).toBeLessThan(small.rate);
   expect(big.gain).toBeGreaterThan(small.gain * 3);
+  expect(small.lp).toBeLessThan(2500); // 遠い崩落は高い粒が抜ける（23:01 のチリチリの元）
+  expect(big.lp).toBeGreaterThan(10000);
+  for (const id of ['b1', 'b2', 'b77', 'p3', 's1_2']) {
+    for (const [w, dist] of [[1, 600], [4, 300], [30, 15]]) {
+      const v = collapseVoice(collapseHitInfo({ id, w, d: w, h: w * 2 }, { camX: 0, camZ: -dist, dist }));
+      expect(v.rate).toBeGreaterThanOrEqual(0.74);
+      expect(v.rate).toBeLessThanOrEqual(1.12);
+    }
+  }
   expect(collapseHitInfo({ id: 'b2' }, { camX: 30, camZ: -10, dist: 32 }).pan).toBeGreaterThan(0.5);
   expect(collapseHitInfo({ id: 'b2' }, { camX: -30, camZ: 10, dist: 32 }).pan).toBeLessThan(-0.5); // 後ろでも左右に散る
   expect(collapseHitInfo({ id: 'p2' }, { camX: 0, camZ: -10, dist: 10 }).size).toBeLessThan(0.1); // 小物は小さい
+  expect(collapseHitInfo({ id: 's3_4', w: 3, d: 2, h: 2 }, { camX: 0, camZ: -10, dist: 10 }).kind).toBe('settle');
   const h = collapseHitInfo({ id: 'b42', w: 10, d: 12, h: 40 }, { camX: 5, camZ: -40, dist: 41 });
   expect(collapseVoice(h)).toEqual(collapseVoice({ ...h }));
   expect(idHash('b42')).toBe(idHash('b42'));
@@ -437,17 +468,45 @@ test('瓦礫の音: 近い・大きいほど低く大きい、左右はカメラ
   expect(a).not.toEqual(c);
   expect(Math.max(...a.map(Math.abs))).toBeCloseTo(0.9, 5);
   expect(Math.abs(a[a.length - 1])).toBeLessThan(1e-3);
-  const head = energy(a.subarray(0, 0.2 * 8000).map((v) => v)), tail = energy(a.subarray(0.6 * 8000).map((v) => v));
+  const head = energy(a.subarray(0, 0.3 * 8000).map((v) => v)), tail = energy(a.subarray(1.1 * 8000).map((v) => v));
   expect(head).toBeGreaterThan(tail * 4);
 });
 
-test('瓦礫の音の道: 演出の無音（ガラスの一拍）では黙り、時間が戻ると開き、宇宙ではこもって弱まり、リプレイでは開いて少し控えめ', () => {
+// 持ち主 23:01（リプレイの後のチリチリした音を、しっかりした瓦礫の崩れる音に）: 音のもとの中身を帯域で測る
+test('瓦礫の音のもとは重い: スマホで聞こえる 150〜600 Hz の胴が、2 kHz より上（ガラス・金属の粒）より 6 dB 以上強い。上の粒はわずかに残る（-35 dB より上）。前の音のもと（高い粒が胴より強かった）と逆', () => {
+  const SR = 24000;
+  const bq = (x, type, fc) => {
+    const w0 = 2 * Math.PI * fc / SR, al = Math.sin(w0) / (2 * 0.707), c = Math.cos(w0), a0 = 1 + al;
+    const b = type === 'lp' ? [(1 - c) / 2, 1 - c, (1 - c) / 2] : [(1 + c) / 2, -(1 + c), (1 + c) / 2];
+    const y = new Float32Array(x.length);
+    let x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+    for (let i = 0; i < x.length; i++) { const v = (b[0] * x[i] + b[1] * x1 + b[2] * x2 + 2 * c * y1 - (1 - al) * y2) / a0; x2 = x1; x1 = x[i]; y2 = y1; y1 = v; y[i] = v; }
+    return y;
+  };
+  const E = (x) => x.reduce((a, v) => a + v * v, 0);
+  const bandDb = (x) => {
+    const tot = E(x);
+    const mid = E(bq(bq(bq(bq(x, 'hp', 150), 'hp', 150), 'lp', 600), 'lp', 600));
+    const hi = E(bq(bq(x, 'hp', 2000), 'hp', 2000));
+    return { mid: 10 * Math.log10(mid / tot), hi: 10 * Math.log10(hi / tot) };
+  };
+  for (let v = 0; v < COLLAPSE.variants + COLLAPSE.settleVariants; v++) {
+    const { mid, hi } = bandDb(renderCollapseVariant(SR, v));
+    expect(mid - hi, `variant ${v}`).toBeGreaterThanOrEqual(6);
+    expect(hi).toBeGreaterThan(-35);
+  }
+});
+
+test('瓦礫の音の道: 演出の無音（白の間）では黙り、爆発が始まると開き、宇宙ではこもって弱まり、リプレイでは開いて少し控えめ', () => {
   const { ctx, audio, lim } = setup();
   audio.collapse([hit('b1')]);
   const src = ctx.nodes.find((n) => n.kind === 'src' && n.playbackRate.value !== 1);
-  const pan = ctx.links.find(([a]) => a.kind === 'gain' && ctx.links.some(([x, to]) => x === src && to === a))[0];
-  // 瓦礫の道の gain と low-pass（pan → bus → lp → リミッター）
-  const panNode = ctx.links.find(([a]) => a === pan)[1];
+  // 一つの音: 音のもと → こもり（その命中の low-pass）→ 大きさ → 左右。瓦礫の道の gain と low-pass（左右 → bus → lp → リミッター）
+  const voiceLp = ctx.links.find(([a]) => a === src)[1];
+  expect(voiceLp.kind).toBe('filter');
+  const gainNode = ctx.links.find(([a]) => a === voiceLp)[1];
+  expect(gainNode.kind).toBe('gain');
+  const panNode = ctx.links.find(([a]) => a === gainNode)[1];
   const bus = ctx.links.find(([a]) => a === panNode)[1];
   const lp = ctx.links.find(([a]) => a === bus)[1];
   expect(lp.kind).toBe('filter');
@@ -521,8 +580,8 @@ test('main.js の命中の渡し方（hitFeed）: settle が一気に進めた�
   feed.gameHit({ hit: { id: 'b3' }, target });
   expect(feed.drain(project).map((h) => h.id)).toEqual(['b2', 'b3']);
   expect(feed.pending).toBe(0);
-  // ガラスの一拍（beat）や白の間は鳴らさない（ためない）。時間が戻った段からは鳴らす
-  for (const stage of ['hands', 'white', 'contact', 'beat', 'silence', 'rumble']) {
+  // 両手・白の間・横一線の光のあとは鳴らさない（ためない）。白が晴れて爆発が始まった段（swell）からは鳴らす
+  for (const stage of ['hands', 'white', 'silence', 'rumble', 'done']) {
     feed.gameHit({ hit: { id: 'b4' }, target });
     expect(feed.drain(project, { stage })).toEqual([]);
     expect(feed.pending).toBe(0);
@@ -534,4 +593,11 @@ test('main.js の命中の渡し方（hitFeed）: settle が一気に進めた�
   feed.replayHit({ hit: { id: 'b6' }, target });
   const [h] = feed.drain(project);
   expect(h).toEqual(collapseHitInfo({ id: 'b6', w: 12, d: 12, h: 40 }, project()));
+  // 持ち主 23:01: 落ちて止まった大きな破片も、その場所から鳴る（小さな破片は鳴らさない）。id は場所から（リプレイでも同じ）
+  expect(feed.settleHit({ pos: [3, 1, -7], dims: [2.5, 1.2, 1.8], size: 2.5 })).toBe(true);
+  expect(feed.settleHit({ pos: [5, 1, -7], dims: [0.6, 0.4, 0.5], size: 0.6 })).toBe(false);
+  const [sh] = feed.drain(project);
+  expect(sh.kind).toBe('settle');
+  expect(sh.id).toBe('s12_-28');
+  expect(feed.pending).toBe(0);
 });

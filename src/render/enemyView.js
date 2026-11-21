@@ -577,8 +577,8 @@ export function createEnemyView(scene, tier, { sunDir = new THREE.Vector3(0.8, 0
   const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _p = new THREE.Vector3(), _s = new THREE.Vector3(1, 1, 1), _e = new THREE.Euler();
   const closeups = new Map();
   let time = 0, heroYaw = 0, heroLift = 0;
-  // 演出の一人（最後の一発の肩越しのカット）: { id, pose }。その一人は本当の場所ではなく pose で描く（cinematic.js が決める）
-  let focus = null;
+  // 演出の一人（最後の一発の軍勢の後ろのカットのいちばん手前の乗り手）: { id, pose, group }。その一人（と group の乗り手）は本当の場所ではなく pose で描く（cinematic.js が決める）
+  let focus = null, focusIds = null;
   // その一人の専用の体（riderBody.js、距離の場の網。setRiderBody で渡す）。同じ材質で、インスタンス 1 つ
   let focusMesh = null, focusAnim = null, focusPose = null;
 
@@ -649,7 +649,7 @@ export function createEnemyView(scene, tier, { sunDir = new THREE.Vector3(0.8, 0
         for (const e of enemies) {
           if (n >= CAPACITY) break;
           if (!!e.patrol !== pass) continue;
-          if (focus && e.id === focus.id) continue; // 演出の一人は下で、演出の姿勢で描く
+          if (focus && (e.id === focus.id || focusIds?.has(e.id))) continue; // 演出の乗り手は下で、演出の姿勢で描く
           const b = bikePose(e, fronts, time);
           if (!b) continue; // 吹き飛んで消えた
           place(b, e.id, e.state === 'dead' ? 1 - (e.deadTime ?? 0) / BIKE.deadFling : 1);
@@ -657,6 +657,8 @@ export function createEnemyView(scene, tier, { sunDir = new THREE.Vector3(0.8, 0
         if (!pass) nHunt = n;
       }
       if (extra) for (const b of extra) if (n < CAPACITY) place({ anchor: 0, reach: 0, keep: 1, ...b }, b.id, 1);
+      // R0b: 演出の一人の前に並ぶ乗り手（focus.group）は instanced の体で、演出の姿勢で描く（名もない者は番号から決まった見た目）
+      if (focus?.group) focus.group.forEach((g, i) => { if (g.pose.keep > 0 && n < CAPACITY) place({ anchor: 0, ...g.pose }, g.id ?? 0.37 + i * 0.11, 1); });
       // 演出の一人: 専用の体（setRiderBody）があればその網で、なければ instanced の体で
       const fp = focus?.pose;
       if (focusMesh) focusMesh.visible = !!(fp && fp.keep > 0);
@@ -685,7 +687,8 @@ export function createEnemyView(scene, tier, { sunDir = new THREE.Vector3(0.8, 0
     },
     // 演出の一人: { id, pose: { x, y, z, yaw, pitch, roll, reach, thrust, keep, head } }（pose は毎フレーム読む）。null でやめる。
     // id が null（軍勢がいない）でも、名もない一人を描く
-    setFocus(f) { focus = f; },
+    // R0b: f.group（[{ id, pose }]）があれば、その乗り手たちも演出の姿勢で描く（本当の場所には描かない）
+    setFocus(f) { focus = f; focusIds = f?.group ? new Set(f.group.map((g) => g.id).filter((x) => x !== null && x !== undefined)) : null; },
     // 演出の一人の専用の体（riderBody の戻り値）。大きく映っても箱の寄せ集めに見えない
     setRiderBody(b) {
       if (focusMesh?.geometry === b.geometry) return;

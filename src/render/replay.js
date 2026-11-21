@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { CONFIG } from '../config.js';
 import { createReplayTimeline } from './replayTimeline.js';
 import { planReplay, aftermathView } from './replayPlan.js';
 import { createReplayLight } from './replayLight.js';
@@ -6,7 +7,8 @@ import { createReplayLight } from './replayLight.js';
 // 最後の一発のリプレイ（画面全体。仕様 12 章の絵コンテ 6〜7）。時間割は replayTimeline.js、撮る場所は replayPlan.js。
 // 放つ直前の街へ戻し（onRestore）、同じ一発を決まった刻み（REPLAY.tick）で起こし直す（onTick(爆発の秒, カメラ)）。
 // 刻みの並びはいつも同じなので、同じ写しと同じ種から同じリプレイになる（画面の速さによらない）。
-//   street → side → top → hero の4カット。黒い帯と、カットごとの時間の伸び縮み。画面をタップすると飛ばして結果へ。
+//   street → side → top → hero の4カット。黒い帯。時間の進みは「始まりはスローでじわじわふくらむ → 弾けて現実の速さ」の
+//   ひとつの流れ（持ち主 22:18、replayTimeline.js）。画面をタップすると飛ばして結果へ。
 // 知らせ: 'replayStart'（始まる。BGM のリプレイ版の合図）、'cut'（{ name }）、'skip'（飛ばした）、
 //   'aftermath'（撃退失敗: 生き残りの引きの絵へ切り替わった）、'replayEnd'（結果を出してよい。撃退失敗は引きの絵を見せてから）。
 // 終わったら最後の絵のまま待つ（finished。撃退失敗は引きの絵を見せて replayEnd を出してから）。もう一度 play すれば何度でも見せ直せる。
@@ -32,6 +34,13 @@ export const REPLAY_LENS = {
   top: { portrait: 62, landscape: 44 },
   hero: { portrait: 40, landscape: 27 },
 };
+
+// 真上のカット（top）の引き: 画面の短い辺の半分に収める半径 = max(半径 · ring, min(街の端, 半径 · cityMax)) / fill
+export const TOP_FRAME = { ring: 1.18, cityMax: 1.45, fill: 0.86 };
+export function topHeight(radius, tanShort, F = TOP_FRAME, cfg = CONFIG) {
+  const frame = Math.max(radius * F.ring, Math.min(cfg.cityRadius, radius * F.cityMax));
+  return frame / F.fill / tanShort;
+}
 
 export function replayBars(aspect) {
   const target = aspect < 1 ? REPLAY_BARS.portrait : REPLAY_BARS.landscape;
@@ -95,16 +104,21 @@ export function createReplay(views, { scene, lights = null, fog = null, blastLig
     _pos.set(s.pos[0] - s.dir[0] * 5 * easeInOut(u), s.pos[1], s.pos[2] - s.dir[1] * 5 * easeInOut(u));
     const sh = 0.004 * burst + 0.018 * prox * prox;
     _pos.x += sh * 9 * Math.sin(t * 31); _pos.y += sh * 6 * Math.sin(t * 23 + 1);
-    // 通りの先の上を見上げ、壁が来るほどさらに見上げる（壁の上の縁が頭の上を越えていく）
-    const ahead = 60, lift = 14 + 16 * smooth((u - 0.2) / 0.5) + 10 * prox;
-    _look.set(s.pos[0] + s.dir[0] * ahead, lift, s.pos[2] + s.dir[1] * ahead);
-    const fov = lens(REPLAY_LENS.street) + 7 * burst * Math.exp(-Math.max(0, u - 0.3) * 6) + 6 * prox;
-    aim(_pos, _look, fov, 0.055);
+    // R0b（持ち主 22:18）: スローでふくらむ間は、通りの突き当たり（爆心）の光の玉を少し長いレンズで見る。弾けて壁が迫るにつれて
+    // 通りの先の上を見上げ（壁の上の縁が頭の上を越えていく）、レンズは広がる
+    const up = smooth(burst * 0.6 + prox);
+    const endX = s.pos[0] + s.dir[0] * s.dist, endZ = s.pos[2] + s.dir[1] * s.dist;
+    const ahead = 60, lift = 14 + 16 * up + 10 * prox;
+    _look.set(endX, Math.max(2.5, 0.45 * F), endZ);
+    _look.lerp(_up.set(s.pos[0] + s.dir[0] * ahead, lift, s.pos[2] + s.dir[1] * ahead), up);
+    const fov = lens(REPLAY_LENS.street) * (0.62 + 0.38 * up) + 7 * burst * Math.exp(-Math.max(0, t - tl.burst) * 6) + 6 * prox;
+    aim(_pos, _look, fov, 0.055 * up);
     // 壁が近づくほど暗く・硬くして、光の壁の模様を白く飛ばさない
     setGrade({ sat: 1.1, warm: 0.45, contrast: 1.2 + 0.25 * prox, vig: 0.42 + 0.2 * prox, ca: 0.25 + 1.6 * prox * prox, grain: 0.04, exposure: 0.95 - 0.35 * prox, streak: 0, bloom: 1 - 0.4 * prox });
     setFog(0);
-    // 呑み込まれる: 白へ
-    screen.flash = smooth((u - 0.93) / 0.07);
+    // 弾けた瞬間の閃き。呑み込まれる: 壁がカメラの数 m 手前に来ると白へ（カットの終わりで白。時間は止めない）
+    const tb = tl.burst;
+    screen.flash = (t >= tb ? 0.3 * Math.exp(-(t - tb) / 0.1) : 0) + smooth((F - (s.dist - 14)) / 11);
     light.hide();
     dimLights(0);
   }
@@ -131,9 +145,11 @@ export function createReplay(views, { scene, lights = null, fog = null, blastLig
     const a = aspect();
     const fov = lens(REPLAY_LENS.top);
     const tanV = Math.tan(THREE.MathUtils.degToRad(fov) / 2);
-    const tanShort = a < 1 ? tanV * a : tanV;
-    // 半径が画面の短い辺の端に届く高さ（光の円が広がりきると画面からあふれ、衝撃波の輪は外へ抜けていく）
-    const H = (tl.radius * 1.02) / tanShort * (1.08 - 0.12 * easeInOut(u));
+    // 横長は黒い帯（シネマスコープ）が縦を削るので、見えている高さで測る
+    const tanShort = a < 1 ? tanV * a : tanV * (1 - 2 * replayBars(a));
+    // 持ち主 23:01（全体を撮るカメラはもう少し引く）: 光の円と穴、その外の街（街の端か、半径の TOP_FRAME.ring 倍まで）が画面の短い辺に
+    // 余白をもって収まる高さ（前は半径が画面の端に届く高さで、広がりきると画面からあふれていた）
+    const H = topHeight(tl.radius, tanShort) * (1.04 - 0.08 * easeInOut(u));
     setFog(H);
     const ang = plan.top.az + 0.3 * u;
     _pos.set(0, H, 0);
@@ -209,7 +225,7 @@ export function createReplay(views, { scene, lights = null, fog = null, blastLig
     phase = 'held'; heldT = 0;
     if (survivors) {
       // 撃退失敗: 引きの絵へ。明けきって hold 秒見せてから結果（advance の held）
-      after = aftermathView({ survivors, aspect: aspect(), az: plan.top.az }); outro = AFTER_FADE_IN;
+      after = aftermathView({ survivors, aspect: aspect(), az: plan.top.az, radius: tl.radius }); outro = AFTER_FADE_IN;
       emit('aftermath');
       return;
     }

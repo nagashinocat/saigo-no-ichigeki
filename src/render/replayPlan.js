@@ -75,12 +75,16 @@ export function planReplay({ radius, buildings, heroYaw = 0 }, P = REPLAY_PLAN) 
 // 乗るので、全員をその間の帯（画面の縦 fitBot〜fitTop、NDC）に収める（爆心は真ん中より下になる）。
 // 帯に収まる距離まで決まった刻みで引き、その距離で、カメラを縦に傾けて点の縦の広がりを帯の真ん中へ合わせる
 // （x 軸まわりの回転は、カメラから見た縦の角度をそのままずらすので、帯に合うかは角度の幅だけで決まる）。
-// survivors: [{ x, z }]、aspect: 画面の縦横比、az: 見る向き（爆心から見たカメラの方角）。戻り値 { pos, look, fov }
-export const AFTERMATH = { elev: 0.98, fov: { portrait: 58, landscape: 40 }, fitX: 0.84, fitTop: 0.26, fitBot: -0.52, minDist: 260, maxDist: 7600 };
+// survivors: [{ x, z }]、aspect: 画面の縦横比、az: 見る向き（爆心から見たカメラの方角）、radius: 一発の半径（省けば穴は見ない）。
+// 戻り値 { pos, look, fov }
+// 持ち主 23:01（全体を撮るカメラはもう少し引く）: 生き残りに加えて、爆発の穴の縁（半径 radius の輪を ring 倍）も帯に収め、
+// 横の余白を広げた（fitX 0.84 → 0.74）
+export const AFTERMATH = { elev: 0.98, fov: { portrait: 58, landscape: 40 }, fitX: 0.74, fitTop: 0.26, fitBot: -0.52, minDist: 320, maxDist: 7600, ring: 1.08, ringN: 12 };
 const _cam = new THREE.PerspectiveCamera(), _v = new THREE.Vector3(), _l = new THREE.Vector3(), _f = new THREE.Vector3();
-export function aftermathView({ survivors, aspect, az = 0 }, A = AFTERMATH) {
+export function aftermathView({ survivors, aspect, az = 0, radius = 0 }, A = AFTERMATH) {
+  const rim = radius > 0 ? Array.from({ length: A.ringN }, (_, k) => ({ x: Math.cos(k / A.ringN * 2 * Math.PI) * radius * A.ring, z: Math.sin(k / A.ringN * 2 * Math.PI) * radius * A.ring })) : [];
   let x0 = 0, x1 = 0, z0 = 0, z1 = 0;
-  for (const s of survivors) { x0 = Math.min(x0, s.x); x1 = Math.max(x1, s.x); z0 = Math.min(z0, s.z); z1 = Math.max(z1, s.z); }
+  for (const s of [...survivors, ...rim]) { x0 = Math.min(x0, s.x); x1 = Math.max(x1, s.x); z0 = Math.min(z0, s.z); z1 = Math.max(z1, s.z); }
   const c = [(x0 + x1) / 2, 0, (z0 + z1) / 2];
   const fov = aspect < 1 ? A.fov.portrait : A.fov.landscape;
   const dir = [Math.cos(A.elev) * Math.cos(az), Math.sin(A.elev), Math.cos(A.elev) * Math.sin(az)];
@@ -88,7 +92,7 @@ export function aftermathView({ survivors, aspect, az = 0 }, A = AFTERMATH) {
   const tanV = Math.tan(THREE.MathUtils.degToRad(fov) / 2);
   const aTop = Math.atan(A.fitTop * tanV), aBot = Math.atan(A.fitBot * tanV);
   _l.fromArray(c);
-  const pts = [{ x: 0, z: 0 }, ...survivors];
+  const pts = [{ x: 0, z: 0 }, ...survivors, ...rim];
   const fits = () => {
     for (const s of pts) {
       _v.set(s.x, 3, s.z).project(_cam);

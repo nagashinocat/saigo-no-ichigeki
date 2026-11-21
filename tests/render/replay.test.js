@@ -204,3 +204,17 @@ test('S9 fix1: 撃退失敗の引きの絵は、暗転から明けきって少�
   expect(c.log.events).not.toContain('aftermath');
   expect(c.log.events.at(-1)).toBe('replayEnd');
 });
+
+test('持ち主 23:01: 真上のカット（top）は引いている: 光の円と穴（半径の 1.18 倍）と、その外の街が、画面の短い辺に余白をもって収まる', async () => {
+  const { topHeight, TOP_FRAME } = await import('../../src/render/replay.js');
+  const { CONFIG } = await import('../../src/config.js');
+  for (const R of [120, 450, CONFIG.radius.max]) {
+    for (const [fov, aspect] of [[62, 390 / 844], [44, 16 / 9]]) {
+      const tanV = Math.tan(fov / 2 * Math.PI / 180), tanShort = aspect < 1 ? tanV * aspect : tanV;
+      const H = topHeight(R, tanShort) * 0.96; // カットの終わり（いちばん寄ったとき）
+      const half = H * tanShort; // 短い辺の半分が地面で届く距離
+      expect(half).toBeGreaterThan(R * TOP_FRAME.ring * 1.1);
+      expect(half).toBeGreaterThan(Math.min(CONFIG.cityRadius, R * TOP_FRAME.cityMax));
+    }
+  }
+});

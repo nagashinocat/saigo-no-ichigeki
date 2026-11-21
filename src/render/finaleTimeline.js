@@ -1,39 +1,34 @@
 import { CONFIG } from '../config.js';
 import { frontAt, timeAtFront, phaseTimes, blastDuration } from '../game/blast.js';
+import { createSwell } from './pacing.js';
 
 // 最後の一発の演出の時間割（絵コンテ 1〜5、仕様 12 章。14 章: 広がりをゆっくりにして見せ場を作る）。描画は知らない純粋な関数だけ。
 // t は放った瞬間からの演出の秒。
 //   0〜hands        2画面のまま、手の画面で両手が玉を鷲掴みに握り込む
-//   hands〜white    画面全体が真っ白（この間にゲームの時計を「前線がビルの手前に来たところ」まで進める）
-//   （絵コンテ 2 は持ち主の絵コンテ 2026-11-21 09:40 で置き換え: 軍勢の一人の肩越し）
-//   white〜contact  軍勢の一人（浮遊バイクの乗り手）の背後・肩越し。その向こうから光の壁が迫り、時間がだんだん止まっていく
-//   contact〜beatEnd 体感時間がほぼ止まる。光の壁は乗り手の riderGap m 前。瓦礫にまじって割れた窓ガラスがゆっくり回りながら
-//                   飛んでくる。手前を横切るひとつのガラス片に、一瞬（eye）その乗り手の目が映り、画面のこちらをまっすぐ見る。
-//                   音は心臓の鼓動だけ
-//   beatEnd〜snap   時間が戻る（resume = beatEnd、爆発の音が開く）。肩越しのまま、光の壁が加速しながら乗り手を飲み（engulf）、
-//                   乗り手はバイクごと吹き飛ぶ。続いてカメラも飲まれ（camHit）白へ
-//   snap〜chaseEnd  追ってくる爆発からカメラが引く。弾ける期の光の壁が通りを走り、見せる期（ゆっくり進む光の壁）に
-//                   ビルが飲まれていくのを通りの高さで見て、上へ引いて球の全体を見せる。前線が半径の spaceFront に来たら宇宙へ
-//   chaseEnd〜flatten 宇宙のカメラ: 夕暮れの地球の丸みの上で光の半球が、街の前線の残りと同じくゆっくりゆるみながら
-//                   ふくらみ（domeAt。前線が半径に届いて止まるまで、少なくとも domeMin 秒）、衝撃波の輪が雲の上を走る。
-//                   ふくらみきった半球を spaceHold 秒見せる
+//   hands〜white    画面全体が真っ白（この間にゲームの時計を freezeSec 進め、白が晴れる瞬間に爆発が始まる）
+//   （R0b、持ち主 22:15: ガラスの一拍はやめた。遠くの軍勢の後ろから、離れた所で起きた爆発が一気に広がり、軍勢を飲み込むのを撮る）
+//   white〜burst    swell: 遠くの軍勢（見回る者）の後ろのカメラ。地平の爆心で爆発が始まり、少しふくらむ間（じわじわ期）は
+//                   スロー（持ち主 22:18）。進みはだんだん速くなる（pacing.js の createSwell）
+//   burst〜snap     race: 弾けた瞬間に現実の速さ。光の壁が街を走ってこちらへ迫り、ビル・高速・電車を飲み、軍勢を後ろから
+//                   一気に飲む（engulf は撮る一人。そのあとカメラも飲まれ（camHit）白へ。snapLag 秒の白のあと追うカットへ）
+//   snap〜chaseEnd  追ってくる爆発からカメラが引く。見せる期（ゆっくり進む光の壁）にビルが飲まれていくのを見せ、
+//                   上へ・外へ引いて球の全体を見せる。前線が半径の spaceFront に来たら宇宙へ
+//   chaseEnd〜flatten 宇宙のカメラ: 光の半球が街の前線の残りと同じくゆっくりゆるみながらふくらみ（domeAt。少なくとも
+//                   domeMin 秒）、衝撃波の輪が雲の上を走る。ふくらみきった半球を spaceHold 秒見せる
 //   flatten〜lineEnd 半球が地平に沿って押しつぶされ、横一線の光になり、細くなって消える
 //   lineEnd〜rumble 無音
 //   rumble〜end     低い地鳴り。end で結果へ渡す
+// 見せ方の時間の進み（timeScale = 爆発の秒 / 演出の秒）は、爆発が始まってから弾けるまで減らずに増え、弾けたあとは 1 のまま
+// （持ち主 22:18「初めから速い → ちょっと止まる → 速い」をやめる。途中で止まったような間を作らない）。
 export const FINALE = {
   hands: 0.24,
   white: 0.44,
-  contact: 0.94,
-  beatEnd: 3.45,
-  snapSec: 0.55,       // 時間が戻ってから追うカットへ切り替わるまで（肩越しのまま乗り手とカメラが飲まれる）
-  riderGap: 4.5,       // 一拍の終わりに、光の壁が乗り手のこの距離（m）前にある
-  camBack: 3.6,        // 乗り手からカメラまで（爆心から離れる向き、m。plan が camDist を渡さないとき）
-  engulfAt: 0.22,      // 時間が戻ってから光の壁が乗り手に届くまで（秒）
-  camLagMin: 0.14,     // 乗り手が飲まれてからカメラが飲まれるまでの最短（秒。吹き飛ぶのが見える間）
   passBeyond: 6,       // 追うカットへ切り替わるとき、光の壁はカメラのこの距離（m）先
-  eye: [2.2, 2.85],    // ガラス片に乗り手の目が映る間（演出の秒）。目は画面のこちらをまっすぐ見る
+  snapLag: 0.08,       // カメラが飲まれてから追うカットへ切り替わるまでの最短（白の間）
+  riderFrac: 0.46,     // plan が乗り手の距離を渡さないときの、半径に対する割合
+  camBack: 14,         // plan がカメラの距離を渡さないときの、乗り手からカメラまで（m）
   chaseMin: 1.5,       // 追われて引く最短の秒
-  spaceFront: 0.8,    // 前線が半径のこの割合に来たら宇宙へ切り替わる（光の壁がまだ動いているうちに）
+  spaceFront: 0.8,     // 前線が半径のこの割合に来たら宇宙へ切り替わる（光の壁がまだ動いているうちに）
   domeMin: 2.2,        // 宇宙で半球がふくらむ最短の秒（前線が先に止まっていても、この秒をかけてゆっくりふくらむ）
   spaceHold: 0.5,      // 半球がふくらみきってから押しつぶされるまで
   spaceMin: 2.3,       // 宇宙のカットの最短の秒
@@ -41,113 +36,48 @@ export const FINALE = {
   thinSec: 0.5,
   silenceSec: 0.45,
   rumbleHold: 1.0,
-  slowRate: 0.012,     // ほぼ止まった時間の進み（体感時間に対する現実の時間の割合）
-  burstRate: 0.5,      // 時間が戻った直後の進み（弾けた光の壁が通りを走るのが見える速さ）。burstRamp 秒で現実の速さへ
-  burstRamp: 0.5,
-  approachFrac: 0.5,   // 白が晴れたとき、前線はビルの手前までの距離のこの割合
-  crawl: 1.0,          // 止まった一拍の間に前線が進む距離（m）。どの大きさの一発でも同じ見え方に
-  beats: [1.45, 2.3, 3.15], // 心臓の鼓動（演出の秒）。2 つ目は目が合う瞬間
 };
 
-const clamp01 = (x) => Math.min(1, Math.max(0, x));
-const smooth = (x) => { const t = clamp01(x); return t * t * (3 - 2 * t); };
-const easeOutCubic = (x) => 1 - (1 - clamp01(x)) ** 3;
-
-// 体感時間（小道具の時計）の進む速さ: 白が晴れたときは現実と同じ、contact へ向けてなめらかに slowRate まで落ち、
-// 一拍の間はそのまま、snap で現実に戻る
-export function timeScaleAt(t, F = FINALE) {
-  if (t < F.white) return 1;
-  if (t < F.contact) return 1 - (1 - F.slowRate) * smooth((t - F.white) / (F.contact - F.white));
-  if (t < F.beatEnd) return F.slowRate;
-  return 1;
-}
-
-// timeScaleAt の積分（白が晴れた瞬間を 0 とする体感の秒）
-export function perceivedTime(t, F = FINALE) {
-  if (t <= F.white) return t - F.white;
-  const L = F.contact - F.white, k = 1 - F.slowRate;
-  const u = Math.min(t, F.contact) - F.white, s = u / L;
-  // ∫(1 − k·smoothstep) = u − k·L·(s³ − s⁴/2)
-  let p = u - k * L * (s ** 3 - s ** 4 / 2);
-  if (t <= F.contact) return p;
-  p += F.slowRate * (Math.min(t, F.beatEnd) - F.contact);
-  if (t <= F.beatEnd) return p;
-  return p + (t - F.beatEnd);
-}
-
-// 一発ごとの時刻表。hitDist: 一拍のはじめ（contact）の前線の距離（m）、riderDist: 肩越しに撮る乗り手の爆心からの距離、
-// camDist: カメラの爆心からの距離（省けば hitDist + crawl + riderGap、それに camBack を足したもの）
-export function createTimeline({ radius, hitDist, riderDist = null, camDist = null }, F = FINALE, cfg = CONFIG) {
+// 一発ごとの時刻表。riderDist: 撮る一人（いちばん手前の乗り手）の爆心からの距離、firstDist: いちばん奥（爆心に近い）の乗り手、
+// camDist: カメラの爆心からの距離（m。省けば riderFrac・camBack から）
+export function createTimeline({ radius, riderDist = null, firstDist = null, camDist = null }, F = FINALE, cfg = CONFIG) {
   const freeze = cfg.cinematic.freezeSec;
   const { creep } = phaseTimes(radius, cfg);
   const total = blastDuration(radius, cfg);
-  const dHit = Math.min(Math.max(hitDist, 1), radius * 0.98);
-  const bHit = timeAtFront(dHit, radius, cfg);
-  const b0 = Math.min(bHit, timeAtFront(dHit * F.approachFrac, radius, cfg));
-  const dEnd = Math.min(radius, dHit + F.crawl);
-  const bEnd = timeAtFront(dEnd, radius, cfg);
-  // 時間が戻る（beatEnd〜snap）: 肩越しのまま光の壁が加速しながら乗り手（dR）を飲み、続いてカメラ（dC）を飲む。
-  // 前線の距離で決める: beatEnd から engulfAt 秒は dEnd + G·u^p（速くなり続ける）、そのあと一定の加速で dPass へ。
-  // p は乗り手に届くときの速さ vR が、カメラまでを camLagMin 秒以上かけて進む速さを超えないように選ぶ（1 以上）
+  const swell = createSwell(creep);
+  const f0 = frontAt(creep, radius, cfg);
   const cap = radius * 0.98;
-  const dR = Math.min(cap, Math.max(dEnd + 0.5, riderDist ?? dEnd + F.riderGap));
-  const dC = Math.min(cap, Math.max(dR + 0.5, camDist ?? dR + F.camBack));
-  const dPass = Math.min(cap, Math.max(dC + F.passBeyond, dC + 0.5));
-  const G = dR - dEnd, tR = F.engulfAt, tRest = F.snapSec - tR;
-  const p = Math.max(1, Math.min(1.25 * G / tR, (dC - dR) / F.camLagMin) * tR / G);
-  const vR = p * G / tR;
-  const acc = Math.max(0, 2 * (dPass - dR - vR * tRest) / (tRest * tRest));
-  const snapFront = (x) => {
-    if (x <= 0) return dEnd;
-    if (x < tR) return dEnd + G * (x / tR) ** p;
-    const y = Math.min(x, F.snapSec) - tR;
-    return Math.min(dPass, dR + vR * y + 0.5 * acc * y * y);
-  };
-  const solveRest = (d) => (acc > 1e-9 ? (-vR + Math.sqrt(vR * vR + 2 * acc * (d - dR))) / acc : (d - dR) / vR);
-  const engulf = F.beatEnd + tR;
-  const camHit = F.beatEnd + tR + solveRest(dC);
-  // 追うカットへ切り替わる瞬間、じわじわ期が残っていればそこまで一気に進める（白の中。切り替わった瞬間が弾ける瞬間）
-  const bPass = timeAtFront(snapFront(F.snapSec), radius, cfg);
-  const bSnap = Math.max(bPass, creep);
-  const snap = F.beatEnd + F.snapSec;
-  // 時間が戻った直後は burstRate から現実の速さへ上がる: 戻ってから x 秒で進む爆発の時間
-  const r0 = F.burstRate, L = F.burstRamp;
-  const after = (x) => {
-    if (x <= 0) return 0;
-    const u = Math.min(x, L) / L;
-    return r0 * x + (1 - r0) * (L * (u ** 3 - u ** 4 / 2) + Math.max(0, x - L));
-  };
-  // after の逆（after は単調に増える）: 戻ってから爆発の時間 b 進むまでの秒
-  const inv = (b) => {
-    if (b <= 0) return 0;
-    let lo = 0, hi = b / r0 + L;
-    for (let i = 0; i < 50; i++) { const m = (lo + hi) / 2; if (after(m) < b) lo = m; else hi = m; }
-    return hi;
-  };
+  // 乗り手はじわじわ期の光の外（弾けてから飲まれる）、カメラはその後ろ、光の壁はカメラの passBeyond 先まで
+  const dR = Math.min(cap - 1, Math.max(f0 + 1, riderDist ?? radius * F.riderFrac));
+  const dC = Math.min(cap - 0.5, Math.max(dR + 0.5, camDist ?? dR + F.camBack));
+  const dPass = Math.min(cap, dC + F.passBeyond);
+  const dFirst = Math.min(dR, Math.max(f0 + 0.5, firstDist ?? dR));
+  const burst = F.white + swell.sec;
+  const at = (d) => burst + timeAtFront(d, radius, cfg) - creep; // 弾けてから前線が d に届く演出の時刻（現実の速さ）
+  const engulf = at(dR), camHit = at(dC);
+  const snap = Math.max(camHit + F.snapLag, at(dPass));
+  const bSnap = creep + (snap - burst);
   // 前線が半径に届いて止まる（ゲームの一発が終わる）時刻
-  const frontDone = snap + inv(total - bSnap);
+  const frontDone = burst + (total - creep);
   // 宇宙へ切り替わる: 前線が半径の spaceFront に来たとき（追われて引く最短の秒より短くはしない）
-  const chaseEnd = snap + Math.max(F.chaseMin, inv(timeAtFront(F.spaceFront * radius, radius, cfg) - bSnap));
-  // 宇宙の半球がふくらみきる時刻: 前線が止まる時刻と、宇宙へ切り替わってから domeMin 秒の遅い方（半球はゆっくりふくらむ）
+  const chaseEnd = Math.max(snap + F.chaseMin, at(F.spaceFront * radius));
+  // 宇宙の半球がふくらみきる時刻: 前線が止まる時刻と、宇宙へ切り替わってから domeMin 秒の遅い方
   const domeEnd = Math.max(chaseEnd + F.domeMin, frontDone);
   const flatten = Math.max(chaseEnd + F.spaceMin, domeEnd + F.spaceHold);
   const lineEnd = flatten + F.flattenSec + F.thinSec;
   const rumble = lineEnd + F.silenceSec;
   const end = rumble + F.rumbleHold;
 
-  // 爆発の時計 b（爆発が始まってからのゲームの秒）
+  // 爆発の時計 b（爆発が始まってからのゲームの秒）。白の間に止まっていた freezeSec を進め、白が晴れた瞬間が 0
   function blastClock(t) {
-    if (t <= F.white) return t <= F.hands ? -freeze : -freeze + (freeze + b0) * (t - F.hands) / (F.white - F.hands);
-    if (t <= F.contact) return b0 + (bHit - b0) * easeOutCubic((t - F.white) / (F.contact - F.white));
-    // 一拍の間は前線が一定の速さで crawl m だけ這う（じわじわ期と弾ける期の境をまたいでも跳ばない）
-    if (t <= F.beatEnd) return timeAtFront(dHit + (dEnd - dHit) * (t - F.contact) / (F.beatEnd - F.contact), radius, cfg);
-    if (t < snap) return timeAtFront(snapFront(t - F.beatEnd), radius, cfg);
-    return bSnap + after(t - snap);
+    if (t <= F.white) return t <= F.hands ? -freeze : -freeze * (1 - (t - F.hands) / (F.white - F.hands));
+    return swell.clock(t - F.white);
   }
+  // 見せ方の時間の進み（爆発の秒 / 演出の秒）。白の間は 0
+  const timeScale = (t) => (t <= F.white ? 0 : swell.rate(t - F.white));
 
   // 宇宙の半球のふくらみ（0 → 1）: 街の前線の残り（宇宙へ切り替わったときの前線 fCut から半径まで）の進みと、
-  // chaseEnd〜domeEnd を見せる期と同じゆるみ方（1 − (1 − u)^showPow）で進む時計の、遅い方。
-  // 前線より先にふくらまず、前線が先に止まっていても domeMin 秒かけてゆっくりふくらむ
+  // chaseEnd〜domeEnd を見せる期と同じゆるみ方（1 − (1 − u)^showPow）で進む時計の、遅い方
   const fCut = frontAt(Math.max(0, blastClock(chaseEnd)), radius, cfg);
   const domePow = cfg.finalBlast.showPow;
   function domeAt(t) {
@@ -159,29 +89,29 @@ export function createTimeline({ radius, hitDist, riderDist = null, camDist = nu
     return Math.max(0, Math.min(pt, pf));
   }
 
-  const self = {
-    radius, hitDist: dHit, riderDist: dR, camDist: dC, bHit, b0, bEnd, bSnap, total,
-    hands: F.hands, white: F.white, contact: F.contact, beatEnd: F.beatEnd, resume: F.beatEnd, engulf, camHit, snap,
-    eye: F.eye, chaseEnd, frontDone, domeEnd, flatten, lineEnd, rumble, end,
-    beats: F.beats,
-    blastClock, domeAt, fCut,
+  return {
+    radius, riderDist: dR, firstDist: dFirst, camDist: dC, creepFront: f0, bSnap, total, swell,
+    hands: F.hands, white: F.white, erupt: F.white, burst, resume: burst, engulf, camHit, snap,
+    chaseEnd, frontDone, domeEnd, flatten, lineEnd, rumble, end,
+    blastClock, timeScale, domeAt, fCut,
     // 放ってからのゲームの時計（freezeSec の止まった間を含む）
     gameClock: (t) => freeze + blastClock(t),
     // 演出の t0 → t1 の間に、ゲームを進める秒
-    gameDt: (t0, t1) => Math.max(0, freeze + blastClock(t1) - (freeze + blastClock(t0))),
+    gameDt: (t0, t1) => Math.max(0, blastClock(t1) - blastClock(t0)),
     front: (t) => frontAt(Math.max(0, blastClock(t)), radius, cfg),
+    // 前線が d に届く演出の時刻（爆発が始まる前なら白の終わり）
+    timeAtFront: (d) => F.white + swell.inverse(timeAtFront(Math.max(0, d), radius, cfg)),
     // 世界（破片・粉・球の模様）の時間の進み: ゲームの時計と同じ割合（白の間は止める）
     worldRate(t, dt) {
       if (t < F.white || dt <= 0) return 0;
       return Math.max(0, (blastClock(t) - blastClock(Math.max(F.white, t - dt))) / dt);
     },
-    // いまの段: hands | white | contact | beat | snap | chase | space | flatten | silence | rumble | done
+    // いまの段: hands | white | swell | race | chase | space | flatten | silence | rumble | done
     stage(t) {
       if (t < F.hands) return 'hands';
       if (t < F.white) return 'white';
-      if (t < F.contact) return 'contact';
-      if (t < F.beatEnd) return 'beat';
-      if (t < snap) return 'snap';
+      if (t < burst) return 'swell';
+      if (t < snap) return 'race';
       if (t < chaseEnd) return 'chase';
       if (t < flatten) return 'space';
       if (t < lineEnd) return 'flatten';
@@ -190,5 +120,4 @@ export function createTimeline({ radius, hitDist, riderDist = null, camDist = nu
       return 'done';
     },
   };
-  return self;
 }

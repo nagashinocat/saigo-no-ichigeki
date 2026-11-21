@@ -478,7 +478,7 @@ export function createCityView(city, style, tier) {
     return true;
   };
   let time = 0, detail = 'coarse';
-  // 一時的に隠したビル（演出の肩越しのカットの間だけ）: id → 隠す前の行列。本当に隠した（gone）・つぶし始めた（crushed）ものは覚えておく
+  // 一時的に隠したビル（演出の軍勢の後ろのカットの間だけ、カメラのそばのビル）: id → 隠す前の行列。本当に隠した（gone）・つぶし始めた（crushed）ものは覚えておく
   const veiled = new Map(), gone = new Set(), crushed = new Set();
   const matOf = ({ mesh, index }) => mesh.instanceMatrix.array.slice(index * 16, index * 16 + 16);
   const setMat = ({ mesh, index }, arr) => { mesh.instanceMatrix.array.set(arr, index * 16); markRange(mesh.instanceMatrix, index * 16, 16); };

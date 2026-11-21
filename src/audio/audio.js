@@ -1,5 +1,5 @@
 // Web Audio で合成する音。素材ファイルは使わない。
-import { COLLAPSE, createCollapseGate, collapseVoice, renderCollapse } from './collapse.js';
+import { COLLAPSE, createCollapseGate, collapseVoice, renderCollapseVariant } from './collapse.js';
 // 世界の音は master を経由するので、silence で全部まとめて黙らせられる（演出の音は cine から鳴る）。
 // boom を鳴らすまでの待ち（秒）: 無音の間（silenceEnd まで）に弾けても、無音が明けてから鳴らす
 export function boomDelay(silenceEnd, now) {
@@ -85,26 +85,35 @@ export function boomRecipe(size, { hold = 0, open = 0, heavy = 0, rng = Math.ran
   return { size: s, heavy: hv, level: (0.85 + 0.15 * s) * (1 - 0.15 * hv), crack, punch, roar, air, sub, deep, body, swell, taps, debris: { grains } };
 }
 
-// 最後の一発の爆発の音の取り決め（演出の時刻表 tl から）: 時間が戻る瞬間（resume。ガラスの一拍の終わり、肩越しの乗り手が
-// 光の壁に飲まれる直前）から宇宙へ切り替わる（chaseEnd）までうなりと地響きが鳴り続け、burstRamp 秒でこもった音から開く
-// heavy: 最後の一発はいちばん重い音（boomRecipe）
-export function finaleBoomOpts(tl, burstRamp) {
-  return { hold: Math.max(0, tl.chaseEnd - (tl.resume ?? tl.snap)), open: Math.max(0, burstRamp), heavy: 1 };
+// 最後の一発の爆発の音の取り決め（演出の時刻表 tl から）。R0b（持ち主 22:15・22:18）: 爆発の音は弾けた瞬間（burst。
+// 時刻表の resume）に開く。遠くの爆発なので、うなりはこもった音から、光の壁が軍勢を飲む（engulf）までかけて開き
+// （open。0.15〜1.2 秒）、宇宙へ切り替わる（chaseEnd）まで鳴り続ける（hold）。heavy: 最後の一発はいちばん重い音（boomRecipe）
+export function finaleBoomOpts(tl) {
+  const at = tl.burst ?? tl.resume ?? tl.snap;
+  const open = Math.min(1.2, Math.max(0.15, (tl.engulf ?? at + 0.5) - at));
+  return { hold: Math.max(0, tl.chaseEnd - at), open, heavy: 1 };
 }
 
-// 最後の一発の地響き（持ち主の要望 09:59）: 時間が戻る（resume）と地の底から湧き、じわじわ期の残りの間にふくらみ、
-// 弾ける（snap）直後に最大、見せる期（追われる間）ずっとうなり、宇宙（chaseEnd）でこもって弱まり、横一線の光が消える
-// （lineEnd）ときに消える。そのあとの無音 → 地鳴り（deepRumble）へつなぐ。
+// 最後の一発の地響き（持ち主の要望 09:59）。R0b（持ち主 22:15・22:18、音は画面に従う 13:06）: 白が晴れて地平で爆発が始まる
+// （erupt）と遠い地鳴りが地の底から湧き、スローでふくらむ間にだんだん近づき（burst までに 0.3）、弾けて光の壁が迫り軍勢を飲む
+// （engulf）と轟きになり、カメラが飲まれて追うカットへ切り替わった（snap）直後に最大、見せる期（追われる間）ずっとうなり、
+// 宇宙（chaseEnd）でこもって弱まり、横一線の光が消える（lineEnd）ときに消える。そのあとの無音 → 地鳴り（deepRumble）へつなぐ。
 // 演出の秒ごとの大きさ g（0〜1）と、低域の通し幅 f（Hz。宇宙でこもる）の折れ線
 export const RUMBLE = { gain: 0.42, slow: { rate: 0.85, depth: 0.32 }, shake: { rate: 6.5, depth: 0.12 }, grit: 0.16 };
 // 瓦礫の崩れる音の道の大きさ（ふつう・リプレイ・宇宙でこもったとき）。重くした最後の一発と地響きの上でリミッターの余裕を残す
 export const DEBRIS_LEVEL = { open: 0.8, replay: 0.6, muffled: 0.35 };
 export function rumbleKeys(tl) {
-  const r0 = tl.resume ?? tl.beatEnd, snap = tl.snap, ce = Math.max(tl.chaseEnd, snap + 0.6);
+  const snap = tl.snap;
+  const r0 = Math.min(tl.erupt ?? tl.resume ?? tl.beatEnd, snap - 0.3);
+  const burst = Math.min(Math.max(tl.burst ?? tl.resume ?? r0, r0 + 0.1), snap - 0.2);
+  const engulf = Math.min(Math.max(tl.engulf ?? (burst + snap) / 2, burst + 0.05), snap - 0.05);
+  const ce = Math.max(tl.chaseEnd, snap + 0.6);
   const lineEnd = Math.max(tl.lineEnd, ce + 0.6), flat = Math.min(Math.max(tl.flatten, ce + 0.45), lineEnd - 0.1);
   return [
-    { t: r0, g: 0, f: 90 },
-    { t: snap, g: 0.45, f: 130 },
+    { t: r0, g: 0, f: 60 },
+    { t: burst, g: 0.3, f: 90 },
+    { t: engulf, g: 0.7, f: 140 },
+    { t: snap, g: 0.85, f: 150 },
     { t: snap + 0.3, g: 1, f: 170 },
     { t: (snap + 0.3 + ce) / 2, g: 0.92, f: 160 },
     { t: ce, g: 0.85, f: 150 },
@@ -280,17 +289,17 @@ export function createAudio({ nav = globalThis.navigator, makeMedia = (src) => n
     // 鳴らす時までにできていなければ、そのとき作る
     // 24 kHz で作る（崩れる音の上の方は 12 kHz までで足りる。書き出しの手間が半分。再生のときに出口の速さへ直される）。
     // ブラウザの手が空いたとき（requestIdleCallback。無ければ少し間をあけた setTimeout）に一つずつ
-    collapseBufs = new Array(COLLAPSE.variants).fill(null);
+    collapseBufs = new Array(COLLAPSE.variants + COLLAPSE.settleVariants).fill(null);
     let next = 0;
     const later = (f) => (typeof requestIdleCallback === 'function' ? requestIdleCallback(f, { timeout: 2000 })
       : typeof setTimeout === 'function' ? setTimeout(f, 50) : null);
-    const idle = () => { if (next < COLLAPSE.variants) { collapseBuf(next++); later(idle); } };
+    const idle = () => { if (next < collapseBufs.length) { collapseBuf(next++); later(idle); } };
     later(idle);
   }
   function collapseBuf(v) {
     if (!collapseBufs[v]) {
       const sr = Math.min(ctx.sampleRate, COLLAPSE.sampleRate);
-      const data = renderCollapse(sr, v + 1);
+      const data = renderCollapseVariant(sr, v);
       const b = ctx.createBuffer(1, data.length, sr);
       b.getChannelData(0).set(data);
       collapseBufs[v] = b;
@@ -437,7 +446,7 @@ export function createAudio({ nav = globalThis.navigator, makeMedia = (src) => n
       master.gain.linearRampToValueAtTime(0, t + sec);
       setDebris('muffled');
     },
-    // 最後の一発の地響き（rumbleKeys）。時間が戻る瞬間（演出の resume。cue 'snap'）に呼ぶと、時刻表どおりに最後まで予定する。
+    // 最後の一発の地響き（rumbleKeys）。白が晴れて爆発が始まる瞬間（演出の erupt。cue 'erupt'）に呼ぶと、時刻表どおりに最後まで予定する。
     // 演出の道（cine）から鳴る（世界の音が宇宙で消えても、こもって残る）。ブラウンノイズの超低域に、軽い歪みの倍音と
     // 低い帯域のざらつき（スマホでも聞こえる）、ゆっくりしたうねりと細かい揺れを持たせる
     finaleRumble(tl) {
@@ -485,9 +494,11 @@ export function createAudio({ nav = globalThis.navigator, makeMedia = (src) => n
       const t = now();
       const src = ctx.createBufferSource(); src.buffer = collapseBuf(v.variant);
       src.playbackRate.value = v.rate;
+      // 遠いほどこもる（遠くの崩落は高い粒が抜けて低い地鳴りに）
+      const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = v.lp; lp.Q.value = 0.6;
       const g = ctx.createGain(); g.gain.value = v.gain;
       const pan = ctx.createStereoPanner(); pan.pan.value = v.pan;
-      src.connect(g); g.connect(pan); pan.connect(debrisBus);
+      src.connect(lp); lp.connect(g); g.connect(pan); pan.connect(debrisBus);
       src.start(t); src.stop(t + v.dur + 0.02);
     },
     // S8: 電車の走行音・継ぎ目の音と、高速の風切り（transitSound.js の transitMix）。毎フレーム呼ぶ。null で消していく。

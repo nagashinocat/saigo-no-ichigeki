@@ -144,6 +144,26 @@ test('演出の一人（setFocus）: 本当の場所ではなく演出の決め�
   expect(view.mesh.count).toBe(2);
 });
 
+test('R0b 演出の乗り手の列（setFocus の group）: 列の者は本当の場所に描かず、演出の姿勢で一度ずつ描く。名もない者（id: null）も描き、keep 0 で消える', () => {
+  const view = createEnemyView(new THREE.Scene(), 'mid', { sunDir: new THREE.Vector3(0.3, 1, 0.2).normalize() });
+  const list = [{ id: 1, angle: 0.3, dist: 40, state: 'approach' }, { id: 2, angle: 2.0, dist: 30, state: 'approach' }, { id: 3, angle: 4.0, dist: 50, state: 'approach' }];
+  const pose = (x) => ({ x, y: 30, z: -200, yaw: 0, pitch: 0, roll: 0, reach: 0, thrust: 1, keep: 1, head: 0 });
+  const g1 = pose(100), g2 = pose(110);
+  view.setFocus({ id: 1, pose: pose(90), group: [{ id: 2, pose: g1 }, { id: null, pose: g2 }] });
+  view.sync(list, {});
+  // 本当の場所に描かれるのは 3 だけ。1（撮る一人）・2・名もない者は演出の姿勢で
+  expect(view.mesh.count).toBe(4);
+  const m = new THREE.Matrix4(), p = new THREE.Vector3();
+  const xs = [0, 1, 2, 3].map((i) => { view.mesh.getMatrixAt(i, m); return +p.setFromMatrixPosition(m).x.toFixed(3); });
+  for (const x of [90, 100, 110]) expect(xs.filter((v) => v === x)).toHaveLength(1);
+  g2.keep = 0;
+  view.sync(list, {});
+  expect(view.mesh.count).toBe(3);
+  view.setFocus(null);
+  view.sync(list, {});
+  expect(view.mesh.count).toBe(3);
+});
+
 test('演出の一人の体（setRiderBody）があれば、その一人は instanced の箱の体ではなく専用の網で、同じ材質・決めた姿勢・頭の向きで描く。keep 0 や focus なしでは出さない', async () => {
   const { buildRiderBody } = await import('../../src/render/riderBody.js');
   const view = createEnemyView(new THREE.Scene(), 'low', { sunDir: new THREE.Vector3(0.3, 1, 0.2).normalize() });

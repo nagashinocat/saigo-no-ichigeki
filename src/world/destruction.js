@@ -32,6 +32,7 @@ export function createDestruction({ cityView, getTier, seed = 1 }) {
   let pendingDust = [];
   let rubbleLimit = initial.rubbleMax; // 上限を下げたときに消えた瓦礫（次の update で返す）
   const settled = [];
+  const lastSettled = []; // 直前の update で瓦礫として止まった破片（落ちて止まる音。持ち主 23:01）
   let focus = null;
   let time = 0;
   let hole = 0; // えぐれた地面の半径（今の球を含む）。手前の物理の地面は平らなので、この内側の破片はプールへ
@@ -57,12 +58,14 @@ export function createDestruction({ cityView, getTier, seed = 1 }) {
 
   return {
     pool, near, rubble,
+    // 直前の update で落ちて止まり、瓦礫になった破片（{ pos, dims, size, … }。次の update で入れ替わる）
+    get lastSettled() { return lastSettled; },
     // 最後の一発の直前（まだ何も壊れていない）へ戻す: 破片・手前の物理・瓦礫・つぶれ待ちを消し、乱数を巻き戻す。
     // 戻したあと同じ命中と同じ進め方を与えると、同じ破片と瓦礫になる（リプレイ）
     reset() {
       rng.reseed();
       pool.clear(); near.clear(); rubble.clear();
-      crushing.length = 0; settled.length = 0; pendingDust = [];
+      crushing.length = 0; settled.length = 0; lastSettled.length = 0; pendingDust = [];
       hole = 0; time = 0;
     },
     setPhysicsFocus(pos) { focus = pos ? [pos[0], pos[1], pos[2]] : null; },
@@ -118,9 +121,11 @@ export function createDestruction({ cityView, getTier, seed = 1 }) {
       if (pendingDust.length) { dust.push(...pendingDust); pendingDust = []; }
       // 穴が広がって下の地面がなくなった瓦礫は消える。止まった破片を瓦礫として置く
       dust.push(...rubble.sweep(pool.crater));
+      lastSettled.length = 0;
       for (const p of settled) {
         p.color = p.color.map((v, i) => v * RUBBLE_TINT + RUBBLE_DUST[i]);
         rubble.add(p, dust);
+        lastSettled.push(p);
       }
       settled.length = 0;
       for (let i = crushing.length - 1; i >= 0; i--) {

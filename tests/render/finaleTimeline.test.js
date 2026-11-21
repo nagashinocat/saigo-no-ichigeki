@@ -1,84 +1,124 @@
 import { test, expect } from 'vitest';
-import { FINALE, createTimeline, perceivedTime, timeScaleAt } from '../../src/render/finaleTimeline.js';
+import { FINALE, createTimeline } from '../../src/render/finaleTimeline.js';
+import { createSwell, SWELL } from '../../src/render/pacing.js';
 import { CONFIG } from '../../src/config.js';
 import { radiusFor } from '../../src/game/charge.js';
 import { frontAt, phaseTimes, blastDuration } from '../../src/game/blast.js';
 
-const RADII = [radiusFor(CONFIG.power.minRelease), radiusFor(60), radiusFor(CONFIG.power.max)];
-const lines = () => RADII.map((radius) => createTimeline({ radius, hitDist: 18 }));
+const AMOUNTS = [CONFIG.power.minRelease, 60, CONFIG.power.max];
+const RADII = AMOUNTS.map((a) => radiusFor(a));
+// R0b（持ち主 22:15）: 遠くの軍勢の後ろから。乗り手は半径の 0.46 の所、カメラはその 14 m 後ろ
+const beatFor = (radius, k = 0.46) => createTimeline({ radius, riderDist: radius * k, firstDist: radius * k - 30, camDist: radius * k + 14 });
+const lines = () => RADII.map((r) => beatFor(r));
+// R0b の前（ガラスの一拍）の全体の長さ（乗り手 34 m、カメラ 37.7 m のときの end。秒）。新しい長さはこれ + 0.5 秒まで
+const PREV_END = { [CONFIG.power.minRelease]: 11.150, 60: 11.803, [CONFIG.power.max]: 12.475 };
 
-test('段の順番と長さ: 全体は 10〜12.8 秒（前の 12.8 秒より長くしない）、止まった一拍は 2.5 秒以上、宇宙のカットは 2.3 秒以上', () => {
-  for (const tl of lines()) {
-    const order = [tl.hands, tl.white, tl.contact, tl.beatEnd, tl.snap, tl.chaseEnd, tl.domeEnd, tl.flatten, tl.lineEnd, tl.rumble, tl.end];
-    for (let i = 1; i < order.length; i++) expect(order[i]).toBeGreaterThan(order[i - 1]);
-    expect(tl.end).toBeGreaterThanOrEqual(10);
-    expect(tl.end).toBeLessThanOrEqual(12.8);
-    expect(tl.beatEnd - tl.contact).toBeGreaterThanOrEqual(2.5);
-    expect(tl.flatten - tl.chaseEnd).toBeGreaterThanOrEqual(2.3 - 1e-9);
-    // 宇宙の半球は 1.4 秒以上かけてふくらみ、ふくらみきってから押しつぶされるまで spaceHold 秒見せる
-    expect(tl.domeEnd - tl.chaseEnd).toBeGreaterThanOrEqual(FINALE.domeMin - 1e-9);
-    expect(tl.flatten - tl.domeEnd).toBeGreaterThanOrEqual(FINALE.spaceHold - 1e-9);
-    expect(tl.stage(0.1)).toBe('hands');
-    expect(tl.stage(0.4)).toBe('white');
-    expect(tl.stage(2)).toBe('beat');
-    expect(tl.stage(tl.end + 0.1)).toBe('done');
-    for (const b of tl.beats) expect(tl.stage(b)).toBe('beat');
+test('pacing（持ち主 22:18）: スローの進みは始まりから弾けるまで減らずに増え、弾けた瞬間に 1 へ跳ね、そのあと 1 のまま。爆発の時計はつながっている', () => {
+  for (const radius of RADII) {
+    const { creep } = phaseTimes(radius);
+    const s = createSwell(creep);
+    expect(s.sec).toBeGreaterThanOrEqual(SWELL.slowMin - 1e-9);
+    expect(s.endRate).toBeLessThan(1);
+    expect(s.startRate).toBeLessThan(0.25); // 始まりははっきりスロー
+    expect(s.clock(s.sec)).toBeCloseTo(creep, 9);
+    let prevR = 0, prevB = 0;
+    for (let x = 0; x <= s.sec + 2; x += 1 / 240) {
+      const r = s.rate(x), b = s.clock(x);
+      expect(r).toBeGreaterThanOrEqual(prevR - 1e-12);
+      expect(b).toBeGreaterThanOrEqual(prevB - 1e-12);
+      if (x > 1 / 240 && Math.abs(x - s.sec) > 1 / 240) expect((b - prevB) * 240).toBeCloseTo((r + prevR) / 2, 2);
+      prevR = r; prevB = b;
+      expect(s.inverse(b)).toBeCloseTo(x, 6);
+    }
+    expect(s.rate(s.sec + 0.01)).toBe(1);
   }
 });
 
-test('ゲームの時計: 白の間に前線がビルの手前まで進み、contact で前線がビルに届き、一拍の間は crawl m しか進まない', () => {
+test('段の順番: 手 → 白 → スローでふくらむ（swell）→ 弾けて光の壁が乗り手とカメラを飲む（race）→ 追う → 宇宙 → 押しつぶれる → 無音 → 地鳴り', () => {
+  for (const tl of lines()) {
+    const order = [tl.hands, tl.white, tl.burst, tl.engulf, tl.camHit, tl.snap, tl.chaseEnd, tl.domeEnd, tl.flatten, tl.lineEnd, tl.rumble, tl.end];
+    for (let i = 1; i < order.length; i++) expect(order[i], `i=${i}`).toBeGreaterThan(order[i - 1]);
+    expect(tl.erupt).toBe(tl.white);
+    expect(tl.resume).toBe(tl.burst); // 爆発の音は弾けた瞬間に開く
+    expect(tl.stage(0.1)).toBe('hands');
+    expect(tl.stage(0.4)).toBe('white');
+    expect(tl.stage(tl.white + 0.01)).toBe('swell');
+    expect(tl.stage(tl.burst + 0.01)).toBe('race');
+    expect(tl.stage(tl.snap + 0.01)).toBe('chase');
+    expect(tl.stage(tl.end + 0.1)).toBe('done');
+    expect(tl.flatten - tl.chaseEnd).toBeGreaterThanOrEqual(FINALE.spaceMin - 1e-9);
+    expect(tl.domeEnd - tl.chaseEnd).toBeGreaterThanOrEqual(FINALE.domeMin - 1e-9);
+    expect(tl.flatten - tl.domeEnd).toBeGreaterThanOrEqual(FINALE.spaceHold - 1e-9);
+  }
+});
+
+test('全体の長さは前（ガラスの一拍）+ 0.5 秒まで。短くしすぎない（9 秒以上）', () => {
+  AMOUNTS.forEach((a, i) => {
+    for (const k of [0.36, 0.46, 0.56]) {
+      const tl = beatFor(RADII[i], k);
+      expect(tl.end, `amount ${a} k ${k}`).toBeLessThanOrEqual(PREV_END[a] + 0.5 + 1e-9);
+      expect(tl.end).toBeGreaterThanOrEqual(9);
+    }
+  });
+});
+
+test('スローの間（白が晴れてから弾けるまで）は、じわじわ期をちょうど見せる: 白が晴れた瞬間に爆発が始まり、弾ける瞬間にじわじわ期が終わる', () => {
+  for (const tl of lines()) {
+    const { creep } = phaseTimes(tl.radius);
+    expect(tl.blastClock(tl.white)).toBeCloseTo(0, 9);
+    expect(tl.blastClock(tl.burst)).toBeCloseTo(creep, 9);
+    expect(tl.burst - tl.white).toBeGreaterThanOrEqual(SWELL.slowMin - 1e-9);
+    // 弾けてからは現実の速さで、乗り手とカメラが飲まれる（乗り手はじわじわ期の光の外にいる）
+    expect(tl.front(tl.burst)).toBeLessThan(tl.firstDist);
+    expect(tl.front(tl.engulf)).toBeCloseTo(tl.riderDist, 3);
+    expect(tl.front(tl.camHit)).toBeCloseTo(tl.camDist, 3);
+    expect(tl.front(tl.snap)).toBeGreaterThan(tl.camDist);
+    expect(tl.snap - tl.camHit).toBeGreaterThanOrEqual(FINALE.snapLag - 1e-9);
+    // 弾けてから飲まれるまで、光の壁が街を走るのが見える（0.25 秒以上）。一気に（2 秒以内）
+    expect(tl.engulf - tl.burst).toBeGreaterThan(0.25);
+    expect(tl.snap - tl.burst).toBeLessThan(2);
+  }
+});
+
+test('見せ方の時間の進み（持ち主 22:18）: 爆発が始まってから弾けるまで減らずに増え、弾けたあと（追う・見せる期まで）1 のまま下がらない。止まったような間がない', () => {
+  for (const tl of lines()) {
+    const dt = 1 / 240;
+    let prev = 0, minAfter = Infinity;
+    for (let t = tl.white + dt; t < tl.frontDone - dt; t += dt) {
+      const r = tl.timeScale(t);
+      expect(r, `t=${t.toFixed(3)}`).toBeGreaterThanOrEqual(prev - 1e-9);
+      // 数値の微分と一致する
+      if (Math.abs(t - tl.burst) > dt) expect((tl.blastClock(t + dt) - tl.blastClock(t)) / dt).toBeCloseTo((r + tl.timeScale(t + dt)) / 2, 2);
+      if (t > tl.burst) minAfter = Math.min(minAfter, r);
+      prev = r;
+    }
+    expect(minAfter).toBe(1);
+    expect(tl.timeScale(tl.white + 0.01)).toBeLessThan(0.25);
+    // 古い「ほとんど止まった一拍」（0.012）のような間はない: スローの間も 0.1 より遅くならない
+    expect(tl.timeScale(tl.white + 1e-6)).toBeGreaterThan(0.1);
+  }
+});
+
+test('見せ場: 最大の一発は、弾けたあと光の壁がゆっくり（150 m/s 以下で）街を飲み進むのが追う間に 1.2 秒以上見え、宇宙へ切り替わってもまだ進んでいる', () => {
+  const tl = beatFor(radiusFor(CONFIG.power.max));
+  const dt = 1 / 120, speed = (t) => (tl.front(t + dt) - tl.front(t)) / dt;
+  let slowChase = 0, peak = 0;
+  for (let t = tl.burst; t < tl.chaseEnd; t += dt) {
+    const v = speed(t);
+    peak = Math.max(peak, v);
+    if (t > tl.snap && v > 20 && v < 150) slowChase += dt;
+  }
+  expect(slowChase).toBeGreaterThanOrEqual(1.2);
+  expect(peak).toBeGreaterThan(800); // 弾けた瞬間は一気に
+  expect(tl.frontDone - tl.chaseEnd).toBeGreaterThanOrEqual(0.5);
+  expect(speed(tl.chaseEnd)).toBeGreaterThan(20);
+});
+
+test('ゲームの時計: 白の間に freezeSec を進め、戻らず、gameDt を足し合わせると gameClock。前線は宇宙の半球がふくらみきる時刻までに半径に届く', () => {
   for (const tl of lines()) {
     expect(tl.gameClock(0)).toBeCloseTo(0, 9);
     expect(tl.gameClock(tl.hands)).toBeCloseTo(0, 9);
-    expect(tl.blastClock(tl.white)).toBeCloseTo(tl.b0, 9);
-    expect(tl.front(tl.white)).toBeCloseTo(18 * FINALE.approachFrac, 3);
-    expect(tl.front(tl.contact)).toBeCloseTo(18, 3);
-    expect(tl.front(tl.beatEnd) - tl.front(tl.contact)).toBeCloseTo(FINALE.crawl, 1);
-    // 時間が戻った瞬間には、じわじわ期を過ぎている（弾ける）
-    expect(tl.blastClock(tl.snap)).toBeGreaterThanOrEqual(phaseTimes(tl.radius).creep - 1e-9);
-    // 宇宙へ切り替わるのは、前線が半径の spaceFront に来たとき（小さな一発は追われる最短の秒のあと）
-    if (tl.chaseEnd - tl.snap > FINALE.chaseMin + 1e-6) expect(tl.front(tl.chaseEnd) / tl.radius).toBeCloseTo(FINALE.spaceFront, 3);
-    else expect(tl.front(tl.chaseEnd) / tl.radius).toBeGreaterThanOrEqual(FINALE.spaceFront);
-    // 前線は宇宙の半球がふくらみきる時刻（domeEnd）までに半径に届いて止まる（ゲームの一発は押しつぶされる前に終わる）
-    expect(tl.blastClock(tl.frontDone)).toBeCloseTo(blastDuration(tl.radius), 6);
-    expect(frontAt(tl.blastClock(tl.frontDone - 0.05), tl.radius)).toBeLessThan(tl.radius);
-    expect(tl.domeEnd).toBeGreaterThanOrEqual(tl.frontDone - 1e-9);
-    expect(tl.blastClock(tl.flatten)).toBeGreaterThanOrEqual(blastDuration(tl.radius));
-  }
-});
-
-test('時間が戻った直後は burstRate の速さから、burstRamp 秒で現実の速さになる', () => {
-  for (const tl of lines()) {
-    const h = 1e-3;
-    const rate = (t) => (tl.blastClock(t + h) - tl.blastClock(t)) / h;
-    expect(rate(tl.snap + 0.002)).toBeCloseTo(FINALE.burstRate, 1);
-    expect(rate(tl.snap + FINALE.burstRamp + 0.05)).toBeCloseTo(1, 5);
-    expect(tl.chaseEnd - tl.snap).toBeLessThan(3.2);
-  }
-});
-
-test('見せ場: 最大の一発は、弾けたあと光の壁がゆっくり（150 m/s 以下で）街を飲み進むのが、追う間に 1.2 秒以上・宇宙の半球で 1 秒以上見え、前より長く広がる', () => {
-  const tl = createTimeline({ radius: radiusFor(CONFIG.power.max), hitDist: 30 });
-  const dt = 1 / 120, speed = (t) => (tl.front(t + dt) - tl.front(t)) / dt;
-  let slowChase = 0, peak = 0;
-  for (let t = tl.snap; t < tl.chaseEnd; t += dt) {
-    const v = speed(t);
-    peak = Math.max(peak, v);
-    if (v > 20 && v < 150) slowChase += dt;
-  }
-  expect(slowChase).toBeGreaterThanOrEqual(1.2);
-  // 弾けた直後はそれより一気に速い（弾ける期のはじめが最速）
-  expect(peak).toBeGreaterThan(250);
-  expect(speed(tl.snap + 0.01)).toBeGreaterThan(speed(tl.snap + 1.0) * 1.6);
-  // 宇宙へ切り替わっても前線はまだ進んでいて、半球がふくらみきる時刻に止まる
-  expect(tl.frontDone - tl.chaseEnd).toBeGreaterThanOrEqual(1);
-  expect(speed(tl.chaseEnd)).toBeGreaterThan(20);
-  // 弾けてから止まるまで: 前（1.75 秒）の 1.8 倍以上
-  expect(tl.frontDone - tl.snap).toBeGreaterThanOrEqual(1.75 * 1.8);
-});
-
-test('ゲームの時計は戻らず、gameDt を足し合わせると gameClock になる', () => {
-  for (const tl of lines()) {
+    expect(tl.gameClock(tl.white)).toBeCloseTo(CONFIG.cinematic.freezeSec, 9);
     let sum = 0, prev = 0;
     for (let t = 1 / 60; t <= tl.end; t += 1 / 60) {
       const d = tl.gameDt(t - 1 / 60, t);
@@ -89,93 +129,39 @@ test('ゲームの時計は戻らず、gameDt を足し合わせると gameClock
       prev = g;
     }
     expect(sum).toBeCloseTo(tl.gameClock(Math.floor(tl.end * 60) / 60), 6);
+    expect(tl.blastClock(tl.frontDone)).toBeCloseTo(blastDuration(tl.radius), 6);
+    expect(frontAt(tl.blastClock(tl.frontDone - 0.05), tl.radius)).toBeLessThan(tl.radius);
+    expect(tl.domeEnd).toBeGreaterThanOrEqual(tl.frontDone - 1e-9);
+    if (tl.chaseEnd - tl.snap > FINALE.chaseMin + 1e-6) expect(tl.front(tl.chaseEnd) / tl.radius).toBeCloseTo(FINALE.spaceFront, 3);
+    else expect(tl.front(tl.chaseEnd) / tl.radius).toBeGreaterThanOrEqual(FINALE.spaceFront - 1e-9);
   }
 });
 
-test('体感時間: 白が晴れると現実と同じ、contact でほぼ止まり、snap で戻る（連続で、戻らない）', () => {
-  expect(timeScaleAt(FINALE.white)).toBe(1);
-  expect(timeScaleAt(FINALE.contact + 0.01)).toBe(FINALE.slowRate);
-  expect(timeScaleAt(FINALE.beatEnd + 0.01)).toBe(1);
-  expect(FINALE.slowRate).toBeLessThan(0.02);
-  let prev = -Infinity;
-  const dt = 1 / 600;
-  for (let t = 0; t < 6; t += dt) {
-    const p = perceivedTime(t);
-    expect(p).toBeGreaterThanOrEqual(prev - 1e-12);
-    // 積分の形が数値の積分と合う
-    if (t > FINALE.white + dt) expect(p - prev).toBeCloseTo(timeScaleAt(t) * dt, 4);
-    prev = p;
-  }
-  expect(perceivedTime(FINALE.white)).toBe(0);
-  // 一拍のあいだ（2.7 秒）に、体感では 0.05 秒も進まない
-  expect(perceivedTime(FINALE.beatEnd) - perceivedTime(FINALE.contact)).toBeLessThan(0.05);
-});
-
-test('ビルが遠くても近くても（爆発の半径より先でも）時刻表は壊れない', () => {
-  for (const hitDist of [0, 3, 40, 2000]) {
-    const tl = createTimeline({ radius: RADII[0], hitDist });
-    expect(Number.isFinite(tl.end)).toBe(true);
-    expect(tl.bEnd).toBeGreaterThanOrEqual(tl.bHit);
-    expect(tl.bHit).toBeGreaterThanOrEqual(tl.b0);
+test('乗り手やカメラの距離がおかしくても（近すぎる・半径の外）時刻表は壊れない', () => {
+  for (const radius of RADII) {
+    for (const [rd, cd] of [[0, 0], [3, 2], [radius * 2, radius * 3], [null, null]]) {
+      const tl = createTimeline({ radius, riderDist: rd, camDist: cd });
+      expect(Number.isFinite(tl.end)).toBe(true);
+      expect(tl.engulf).toBeGreaterThan(tl.burst);
+      expect(tl.camHit).toBeGreaterThan(tl.engulf);
+      expect(tl.snap).toBeGreaterThan(tl.camHit);
+    }
   }
 });
 
-test('宇宙の半球はゆっくりふくらむ: domeAt は chaseEnd で 0・domeEnd で 1、戻らず、街の前線の残りより先に進まず、ふくらむ速さは 1 秒あたり 0.8 以下で、9 割まで 1.4 秒以上かかる', () => {
+test('宇宙の半球はゆっくりふくらむ: domeAt は chaseEnd で 0・domeEnd で 1、戻らず、街の前線の残りより先に進まず、ふくらむ速さは 1 秒あたり 0.8 以下', () => {
   for (const tl of lines()) {
     expect(tl.domeAt(tl.chaseEnd)).toBe(0);
     expect(tl.domeAt(tl.domeEnd)).toBe(1);
-    expect(tl.domeEnd - tl.chaseEnd).toBeGreaterThanOrEqual(2.2 - 1e-9);
     const dt = 1 / 120;
-    let prev = 0, maxRate = 0, t90 = null;
+    let prev = 0, maxRate = 0;
     for (let t = tl.chaseEnd + dt; t <= tl.domeEnd + 1e-9; t += dt) {
       const p = tl.domeAt(t);
       expect(p).toBeGreaterThanOrEqual(prev - 1e-12);
       maxRate = Math.max(maxRate, (p - prev) / dt);
-      if (t90 === null && p >= 0.9) t90 = t - tl.chaseEnd;
       if (tl.radius - tl.fCut > 1e-6) expect(p).toBeLessThanOrEqual((tl.front(t) - tl.fCut) / (tl.radius - tl.fCut) + 1e-9);
       prev = p;
     }
     expect(maxRate).toBeLessThanOrEqual(0.8);
-    expect(t90).toBeGreaterThanOrEqual(1.4);
   }
-});
-
-// 絵コンテ 2（持ち主 2026-11-21 09:40）: 軍勢の一人の肩越し。時間が戻ると、その乗り手、続いてカメラが光の壁に飲まれる
-const shoulder = (radius, riderDist = 34) => createTimeline({ radius, hitDist: riderDist - FINALE.riderGap - FINALE.crawl, riderDist, camDist: riderDist + 3.7 });
-
-test('ガラスの一拍: 一拍の間、光の壁は乗り手の riderGap m 前にあり、時間が戻る（resume = beatEnd）と加速しながら乗り手を、続いてカメラを飲む', () => {
-  for (const radius of RADII) {
-    const tl = shoulder(radius);
-    expect(tl.resume).toBe(tl.beatEnd);
-    expect(tl.riderDist - tl.front(tl.beatEnd)).toBeCloseTo(FINALE.riderGap, 3);
-    expect(tl.stage(tl.resume + 0.01)).toBe('snap');
-    // 乗り手が飲まれるのは時間が戻ってから 0.12〜0.3 秒、カメラはそのあと 0.12 秒以上（飲まれて吹き飛ぶのが見える）
-    expect(tl.engulf - tl.resume).toBeGreaterThan(0.12);
-    expect(tl.engulf - tl.resume).toBeLessThan(0.3);
-    expect(tl.front(tl.engulf)).toBeCloseTo(tl.riderDist, 3);
-    expect(tl.camHit - tl.engulf).toBeGreaterThanOrEqual(0.12);
-    expect(tl.camHit).toBeLessThan(tl.snap);
-    expect(tl.front(tl.camHit)).toBeCloseTo(tl.camDist, 3);
-    // 光の壁は戻らず、乗り手までの間は速くなり続ける（時間が一気に戻る）
-    const dt = 1 / 240, v = (t) => (tl.front(t + dt) - tl.front(t)) / dt;
-    let prev = -Infinity;
-    for (let t = tl.resume; t < tl.engulf; t += dt) { const s = v(t); expect(s).toBeGreaterThanOrEqual(prev - 1e-6); prev = s; }
-    expect(v(tl.engulf)).toBeGreaterThan(10);
-    // 追うカットへ切り替わる（snap）ときには光の壁はカメラより先
-    expect(tl.front(tl.snap)).toBeGreaterThan(tl.camDist);
-  }
-});
-
-test('目が合う一瞬は一拍の中で 0.4〜0.7 秒。心臓の鼓動のひとつが目が合う瞬間に重なり、最後の鼓動のあと時間が戻る', () => {
-  const [a, b] = FINALE.eye;
-  expect(b - a).toBeGreaterThanOrEqual(0.4);
-  expect(b - a).toBeLessThanOrEqual(0.7);
-  expect(a).toBeGreaterThan(FINALE.contact + 0.8); // ガラスが飛んでくるのを見せてから
-  expect(b).toBeLessThan(FINALE.beatEnd - 0.3);
-  expect(FINALE.beats.some((x) => x >= a && x <= a + 0.15)).toBe(true);
-  expect(Math.max(...FINALE.beats)).toBeLessThan(FINALE.beatEnd);
-});
-
-test('全体の長さは前（約 11.9 秒）から 1 秒以上は伸ばさない', () => {
-  for (const radius of RADII) expect(shoulder(radius).end).toBeLessThanOrEqual(11.88 + 1);
 });
