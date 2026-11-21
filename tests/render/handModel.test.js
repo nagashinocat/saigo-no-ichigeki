@@ -1,7 +1,7 @@
 import { test, expect } from 'vitest';
 import * as THREE from 'three';
 import { buildHandModel } from '../../src/render/handModel.js';
-import { HAND_JOINTS, poseFor, CLASP_POSE } from '../../src/render/handPose.js';
+import { HAND_JOINTS, poseFor, JOIN_POSE } from '../../src/render/handPose.js';
 
 const models = { high: buildHandModel({ detail: 'high' }), low: buildHandModel({ detail: 'low' }) };
 
@@ -120,8 +120,9 @@ test('スキンの重みは各頂点で合計1、参照するボーンの番号�
         sum += w;
       }
       expect(Math.abs(sum - 1)).toBeLessThan(1e-4);
-      // 使うのは最も近い2本まで
-      expect(skinWeight.getComponent(i, 2) + skinWeight.getComponent(i, 3)).toBe(0);
+      // 使うのは最も近い2本まで。手首の近くだけ、3本目の枠に手首の骨（手首を反らしても手のひらの付け根が折れない）
+      expect(skinWeight.getComponent(i, 3)).toBe(0);
+      if (skinWeight.getComponent(i, 2) > 0) expect(m.mesh.skeleton.bones[skinIndex.getComponent(i, 2)].name).toBe('wrist');
     }
   }
 });
@@ -152,10 +153,10 @@ test('手首に切れ目がない: 指をどう曲げても、手首の近くの
     return u.cross(v).normalize();
   };
   for (const detail of ['high', 'low']) {
-    for (const [name, pose] of [['0', poseFor(0, 0)], ['0.9', poseFor(0.9, 0.3)], ['1', poseFor(1, 0.7)], ['clasp', CLASP_POSE]]) {
+    for (const [name, pose] of [['0', poseFor(0, 0)], ['0.9', poseFor(0.9, 0.3)], ['1', poseFor(1, 0.7)], ['join', JOIN_POSE]]) {
       const m = buildHandModel({ detail });
-      const e = new THREE.Euler(0, 0, 0, 'YXZ'), q = new THREE.Quaternion();
-      for (const n of HAND_JOINTS) { const r = pose[n]; e.set(-r[0], r[1], r[2]); m.bones[n].quaternion.multiply(q.setFromEuler(e)); }
+      // 手首の曲げは外して、指だけを曲げる（手首を反らしたときは下の別のテストで確かめる）
+      m.setPose({ ...pose, wrist: [0, 0, 0] });
       m.root.updateMatrixWorld(true);
       m.mesh.skeleton.update();
       const P = m.mesh.geometry.attributes.position, I = m.mesh.geometry.index.array;
@@ -175,6 +176,65 @@ test('手首に切れ目がない: 指をどう曲げても、手首の近くの
         if (nrm(P.array, I[t], I[t + 1], I[t + 2]).dot(nrm(sk, I[t], I[t + 1], I[t + 2])) < 0.5) flipped++;
       }
       expect(flipped, `${detail} ${name}: 手首まわりで大きく向きの変わる三角形`).toBe(0);
+    }
+  }
+});
+
+test('手首を反らしても切れ目・折れ目が出ない: 前腕の肌は動かず、手首まわりの隣り合う三角形の角度が急に折れない', () => {
+  const unit = (A, a, b, c) => {
+    const u = new THREE.Vector3(A[b * 3] - A[a * 3], A[b * 3 + 1] - A[a * 3 + 1], A[b * 3 + 2] - A[a * 3 + 2]);
+    const v = new THREE.Vector3(A[c * 3] - A[a * 3], A[c * 3 + 1] - A[a * 3 + 1], A[c * 3 + 2] - A[a * 3 + 2]);
+    return u.cross(v).normalize();
+  };
+  for (const detail of ['high', 'low']) {
+    for (const side of ['right', 'left']) {
+      for (const [name, pose] of [['0', poseFor(0, 0)], ['1', poseFor(1, 0.7)], ['join', JOIN_POSE]]) {
+        const label = `${detail} ${side} ${name}`;
+        const m = buildHandModel({ detail, side });
+        m.setPose(pose);
+        m.root.updateMatrixWorld(true);
+        m.mesh.skeleton.update();
+        const P = m.mesh.geometry.attributes.position, I = m.mesh.geometry.index.array;
+        const nSkin = m.mesh.geometry.groups[0].count;
+        const sk = new Float32Array(P.count * 3), v = new THREE.Vector3();
+        let armMoved = 0;
+        for (let i = 0; i < P.count; i++) {
+          v.fromBufferAttribute(P, i);
+          m.mesh.applyBoneTransform(i, v);
+          sk.set([v.x, v.y, v.z], i * 3);
+          if (P.getZ(i) > 0.01) armMoved = Math.max(armMoved, v.distanceTo(new THREE.Vector3().fromBufferAttribute(P, i)));
+        }
+        // 手首より腕側（前腕）は手首の曲げで動かない
+        expect(armMoved, `${label}: 前腕の肌の動き`).toBeLessThan(0.0015);
+        // 手は確かに反っている（中指の中手骨の向きが、休みの向きから手首の曲げのぶん回る）
+        const bone = (mm, n) => mm.bones[n].getWorldPosition(new THREE.Vector3());
+        const rest = buildHandModel({ detail, side });
+        rest.root.updateMatrixWorld(true);
+        const dir = (mm) => bone(mm, 'middle-finger-phalanx-proximal').sub(bone(mm, 'middle-finger-metacarpal')).normalize();
+        expect(dir(m).angleTo(dir(rest)), label).toBeGreaterThan(-pose.wrist[0] * 0.9);
+        expect(dir(m).y, label).toBeGreaterThan(dir(rest).y); // 甲の側（+Y）へ
+        // 手首まわり（z が -0.06〜0.02）の隣り合う三角形: 曲げたあとの角度が、休みの角度より 40° 以上急に折れない。
+        // 指・親指の節（phalanx）の肌は除く（指の関節はわざとくっきり曲がる）
+        const SI = m.mesh.geometry.attributes.skinIndex, SW = m.mesh.geometry.attributes.skinWeight, bn = m.mesh.skeleton.bones.map((b) => b.name);
+        const onPhalanx = (k) => /phalanx/.test(bn[SW.getX(k) >= SW.getY(k) ? SI.getX(k) : SI.getY(k)]) && SW.getZ(k) < 0.5;
+        const edges = new Map(), bad = [];
+        for (let t = 0; t < nSkin; t += 3) {
+          const tri = [I[t], I[t + 1], I[t + 2]];
+          const z = Math.max(...tri.map((k) => P.getZ(k))), z0 = Math.min(...tri.map((k) => P.getZ(k)));
+          if (z0 < -0.06 || z > 0.02 || tri.some(onPhalanx)) continue;
+          for (let k = 0; k < 3; k++) {
+            const a = tri[k], b = tri[(k + 1) % 3], key = a < b ? `${a},${b}` : `${b},${a}`;
+            const other = edges.get(key);
+            if (other === undefined) { edges.set(key, t); continue; }
+            const t2 = other;
+            const r1 = unit(P.array, I[t], I[t + 1], I[t + 2]), r2 = unit(P.array, I[t2], I[t2 + 1], I[t2 + 2]);
+            const s1 = unit(sk, I[t], I[t + 1], I[t + 2]), s2 = unit(sk, I[t2], I[t2 + 1], I[t2 + 2]);
+            const restAng = Math.acos(Math.min(1, Math.max(-1, r1.dot(r2)))), posedAng = Math.acos(Math.min(1, Math.max(-1, s1.dot(s2))));
+            if (posedAng - restAng > 40 * Math.PI / 180) bad.push(key);
+          }
+        }
+        expect(bad.length, `${label}: 手首まわりで急に折れる辺`).toBe(0);
+      }
     }
   }
 });

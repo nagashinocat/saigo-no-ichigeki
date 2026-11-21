@@ -2,32 +2,49 @@ import * as THREE from 'three';
 import { CONFIG } from '../config.js';
 import { NOISE_GLSL } from './glslNoise.js';
 import { TOON_RAMP, TOON_LIGHTS } from './style.js';
-import { poseFor, HAND_JOINTS, CLASP_POSE, TREMOR_FROM } from './handPose.js';
+import { poseFor, HAND_JOINTS, JOIN_POSE, PUSH_POSE, TREMOR_FROM } from './handPose.js';
 
 // 手の画面: 主人公自身の目から見た両手（handModel.js で組み立てた右手と、それを鏡に映した左手）と、その間に浮かぶ力の球。
-// 両手は向かい合わせで、手のひらを球に向ける。貯めるほど指を開いてこわばらせ、両手の間も少し広がる。
-// 放つと両手が中央へ寄って手のひらを合わせ、指を互い違いに組む。組み合わさった瞬間に光が弾ける。
+// 両手は球を左右から包む（持ち主のスケッチ）: 前腕は左右の下・外から低く入り、手首を反らして手を立て、
+// 指は球の上へ丸くかぶさり、親指は球の下で内へ伸びる。両手で球を囲む輪になる。貯めるほど指がこわばり、両手の間も少し広がる。
+// 最後の一発を放つと、両手が球へかぶさって鷲掴みにする（指が球の上で交差し、指先を食い込ませて締めつける）。
+// 締めつける間に手が震え、締めきった瞬間に光が弾ける。払う（小爆発）は、両手の手のひらを街のほうへ鋭く突き出して弾く。
 // 光は球が主役（球の色の点光源）で、夕暮れの淡い縁の光と、手の形を見せる光を足す。肌には街と同じ暗い紫の輪郭線。
 // 背景は暗いグラデーション。
 // 球は爆発（explosionView.js）と同じ力: 白い芯 → 淡い金 → 琥珀、縁だけ冷たい青紫〜水色。
 
 const HAND_SCALE = 10;           // 手のモデル（メートル。手首から中指の先まで約 20cm）を、この場面の単位で約 2 にする
 const ORB_R = [0.13, 0.4];       // level 0 と 1 の球の半径
-const PALM_D = [1.0, 1.5];     // 球の中心から各手のひらの中心まで（貯めるほど両手の間が広がる）
+const PALM_D = [1.0, 1.35];     // 球の中心から各手のひらの中心まで（貯めるほど両手の間が広がる）
 const ORB_C = new THREE.Vector3(0, 0, 0);
-// 構え（右手で書く。左手は x を鏡に映す）: 手のひらから球への向きと、指先の向き。
-// 手のひらはほぼ垂直に立て、左右から真横に球へ向ける（親指が上、小指が下）。わずかに下・奥へ傾けて、
-// 見下ろす目から手の甲の側が少しだけ見え、指の側面がはっきり見えるようにする。指先は前（少し上）で、前腕は画面の下から入る
-const STANCE_N = new THREE.Vector3(-1, -0.3, -0.3);
-const STANCE_F = new THREE.Vector3(-0.2, 0.15, -1);
-// 組み合わさった形: 手のひらをまっすぐ向かい合わせ、指先は前へ（少し上）。右手の手のひらの中心の位置（少し手前へ引き寄せる）。
-// 指を互い違いに組むため、両手を親指〜小指の向きへ指の間隔の半分だけずらす（右手は小指の側へ、左手も自分の小指の側へ）
-const JOIN_N = new THREE.Vector3(-1, 0, 0);
-const JOIN_F = new THREE.Vector3(0, 0.25, -1);
-const JOIN_AT = new THREE.Vector3(0.06, -0.3, 0.45);
+// 構え（右手で書く。左手は x を鏡に映す）: 手のひらから球への向き（STANCE_N）と、手のひらの指先の向き（STANCE_F）。
+// 手のひらは球へ向け、少し下へ傾ける。指先は上（少し奥）で、球の側へ 20° ほど倒す。親指の側は目の側（画面の下）に来る。
+// 前腕の向きは手首の反らし（handPose の wrist）で決まり、球の左右の下・外から低く入る。
+// 手のひらの中心は球の中心から STANCE_N の逆へ D、さらに STANCE_LIFT だけずらす（指が球の上、親指が球の下に来る高さ）
+const STANCE_N = new THREE.Vector3(-1, -0.3, 0);
+const STANCE_F = new THREE.Vector3(-0.25, 1, -0.3);
+const STANCE_LIFT = new THREE.Vector3(0, -0.3, 0);
+// 鷲掴み: 両手が球へ上からかぶさり、指先を横（内）へ向けて球の上で交差する（右手の指が奥、左手の指が手前を通る）。
+// 握りは構えに近い横に広く低い挟みの形で、上は交差した指の平らな帯になる（尖った頂を作らない。ハートに見せない）。
+// 手のひらの中心は球の中心から JOIN_D（構えより押し込む）。JOIN_CROSS で左右を奥行きにずらし、交差する指どうしがぶつからない
+const JOIN_N = new THREE.Vector3(-0.8, -0.75, -0.3);
+const JOIN_F = new THREE.Vector3(-1, 0.35, 0.05);
+const JOIN_D = 0.6;
+const JOIN_CROSS = new THREE.Vector3(0, 0.06, -0.13);
+const JOIN_LIFT = new THREE.Vector3(0, -0.3, 0); // 指先が球の上にかぶさる高さ
+// 払う: 手のひらを街のほう（前・少し上）へ向け、両手を前へ・少し外へ突き出す。右手で書く
+const PUSH_N = new THREE.Vector3(-0.35, 0.25, -1);
+const PUSH_F = new THREE.Vector3(-0.1, 1, 0.25);
+const PUSH_MOVE = new THREE.Vector3(0.35, -0.2, -0.5);
+const PUSH_SEC = 0.08;           // 払う: 突き出しきるまで
+const PUSH_HOLD_SEC = 0.05;
+const PUSH_BACK_SEC = 0.3;       // 払う: 構えへ戻るまで（突き出しと合わせて約 0.4 秒）
+const GRIP_SHAKE = 0.03;         // 鷲掴みで締めつける間の震え（弾ける直前が最大）
+const GRIP_HOLD_SHAKE = 0.008;   // 鷲掴みのまま保つ間も続く、力をこめた細かい震え
+const EMBER_R = 0.11;
+const EMBER_HALO = 1.1;           // 芯の光の板を広げる量（握った両手のまわりへ暖かい光がこぼれる）            // 鷲掴みのまま保つ間、手の中に残る押し縮められた球の芯の半径
 const HALO_BACK = 1.0;           // 組み合わさったとき、光の板を手の向こうへ下げる距離
 const LIGHT_OUT = new THREE.Vector3(0, 0.5, 0.6); // 組み合わさったときの光源の逃がし先
-const JOIN_STAGGER = 0.0053 * HAND_SCALE; // 手の空間の X（小指の側）へ。指の間隔（約 2.1cm）の 1/4 ずつ、合わせて半分
 // 目の位置と見る所。手のひらを真横に向けても手の甲の側が目へ向くよう、目は少し高く・後ろに置く
 const EYE = new THREE.Vector3(0, 3.0, 3.9);
 const LOOK = new THREE.Vector3(0, 0.2, 0);
@@ -36,11 +53,13 @@ const LOOK = new THREE.Vector3(0, 0.2, 0);
 const FOV = 32, FOV_MAX = 72, FOV_H_MIN = 48;
 const KEY_LIGHT = 2.0;
 const JOIN_SEC = 0.25;           // 放ってから両手が合わさりきるまで
-const SMALL_HOLD_SEC = 0.05;     // 小さな一発: 合わさったまま止まる時間
-const SMALL_BACK_SEC = 0.35;     // 小さな一発: 合わさった手が構えへ戻るまで（止まる時間と合わせて約 0.4 秒）
 const BIG_BACK_SEC = 0.55;       // 大きな一発: 演出が明けてから構えへ戻るまで
 const REFORM_SEC = 0.5;          // 球がまた生まれるまで
 const FLASH_SEC = 0.14;
+// 鷲掴みの寄り方: 先に大きく進む（指が早く交差して光を埋め、途中で光る内側を手が囲む形を作らない）
+const JOIN_EASE_P = 3;
+const joinEase = (k) => 1 - Math.pow(1 - k, JOIN_EASE_P);
+const joinEaseInv = (j) => 1 - Math.pow(1 - Math.min(1, Math.max(0, j)), 1 / JOIN_EASE_P);
 
 const srgb = (r, g, b, k = 1) => new THREE.Color().setRGB(r, g, b, THREE.SRGBColorSpace).multiplyScalar(k);
 const PAL = {
@@ -83,7 +102,7 @@ void main() {
 }`;
 
 const ORB_FRAG = /* glsl */`
-uniform float uTime, uLevel, uPower, uFade;
+uniform float uTime, uLevel, uPower, uFade, uEmber;
 uniform vec3 uCore, uDeep, uInner, uBand, uRimA, uRimB;
 varying vec3 vN, vV, vObj;
 ${NOISE_GLSL}
@@ -113,7 +132,11 @@ void main() {
   // 縁: 冷たい青紫〜水色の帯
   float fringe = 1.0 - smoothstep(0.0, 0.42, mu);
   vec3 rim = mix(uRimA, uRimB, smoothstep(0.35, 0.65, n2));
-  col = mix(col, rim * (1.4 + 1.2 * uLevel), fringe * 0.9);
+  col = mix(col, rim * (1.4 + 1.2 * uLevel), fringe * 0.9 * (1.0 - uEmber));
+  // 燃え残る芯: 冷たい縁をやめ、縁の橙から中心の白へ、強く光る（石や影に見せない）
+  vec3 hot = mix(uInner * 2.2, uBand * 2.6, smoothstep(0.0, 0.5, mu));
+  hot = mix(hot, uCore * 3.2, smoothstep(0.45, 0.95, mu) * (0.7 + 0.3 * plasma));
+  col = mix(col, hot, uEmber);
   col *= uPower;
   gl_FragColor = vec4(col * uFade, uFade);
   #include <tonemapping_fragment>
@@ -133,7 +156,7 @@ void main() {
 }`;
 
 const HALO_FRAG = /* glsl */`
-uniform float uTime, uLevel, uPower, uOrbFrac, uFlash;
+uniform float uTime, uLevel, uPower, uOrbFrac, uFlash, uEmber;
 uniform vec3 uWarm, uRimA, uRimB, uCore;
 varying vec2 vUv;
 ${NOISE_GLSL}
@@ -141,8 +164,9 @@ void main() {
   float r = length(vUv);
   if (r > 1.0) discard;
   float x = max(0.0, r - uOrbFrac) / max(1e-3, 1.0 - uOrbFrac); // 球の縁から外へ 0〜1
-  float glow = exp(-x * 5.0) * smoothstep(1.0, 0.6, r);
-  vec3 col = mix(uWarm, mix(uRimA, uRimB, 0.5), smoothstep(0.0, 0.2, x)) * glow * 0.45;
+  // 燃え残る芯の光は広く・強く・暖かく広がり、握った手の指の間や拳のまわりへこぼれる
+  float glow = exp(-x * (5.0 - 2.6 * uEmber)) * smoothstep(1.0, 0.6 - 0.25 * uEmber, r);
+  vec3 col = mix(uWarm, mix(uRimA, uRimB, 0.5), smoothstep(0.0, 0.2, x) * (1.0 - uEmber)) * glow * (0.45 + 1.1 * uEmber);
   #ifndef LOW
   // 外へ伸びる、ちぎれた光の筋（こもるほど長く、多く）
   float a = atan(vUv.y, vUv.x);
@@ -152,8 +176,8 @@ void main() {
   col += mix(uRimA, uCore, 0.35) * streak * (0.15 + 0.7 * uLevel);
   #endif
   col *= uPower;
-  // 放つ瞬間の閃光: 板全体が白く飛ぶ
-  col += uCore * uFlash * smoothstep(1.0, 0.0, r) * 2.0;
+  // 放つ瞬間の閃光: 板全体が白く飛ぶ。立ち上がりは金色で（弱いうちに白を足すと灰色のぼやけた円盤に見える）、強まるほど白へ
+  col += mix(uWarm * 1.6, uCore, clamp(uFlash, 0.0, 1.0)) * uFlash * smoothstep(1.0, 0.0, r) * 2.0;
   gl_FragColor = vec4(col, 1.0);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
@@ -278,10 +302,12 @@ export function createHandView(models, tierName) {
     }
     rig.position.copy(palmLocal).multiplyScalar(-HAND_SCALE); // 手のひらの中心を holder の原点へ
     return {
-      side, mirror, model, holder,
+      side, mirror, model, holder, rig, palmLocal,
       n: STANCE_N.clone().setX(STANCE_N.x * mirror).normalize(),
+      lift: STANCE_LIFT.clone().setX(STANCE_LIFT.x * mirror),
       qStance: handQuat(STANCE_N, STANCE_F, mirror), qJoin: handQuat(JOIN_N, JOIN_F, mirror),
-      joinAt: JOIN_AT.clone().setX(JOIN_AT.x * mirror).add(new THREE.Vector3(JOIN_STAGGER, 0, 0).applyQuaternion(handQuat(JOIN_N, JOIN_F, mirror))),
+      joinAt: ORB_C.clone().addScaledVector(JOIN_N.clone().setX(JOIN_N.x * mirror).normalize(), -JOIN_D).add(JOIN_LIFT).addScaledVector(JOIN_CROSS, mirror),
+      qPush: handQuat(PUSH_N, PUSH_F, mirror), pushMove: PUSH_MOVE.clone().setX(PUSH_MOVE.x * mirror),
       phase: mirror > 0 ? 0 : 2.3, // 震えを左右でそろえない
       trem: new THREE.Vector3(), pose: {},
     };
@@ -289,7 +315,7 @@ export function createHandView(models, tierName) {
 
   // 球
   const orbU = {
-    uTime: { value: 0 }, uLevel: { value: 0 }, uPower: { value: 1 }, uFade: { value: 1 },
+    uTime: { value: 0 }, uLevel: { value: 0 }, uPower: { value: 1 }, uFade: { value: 1 }, uEmber: { value: 0 },
     uCore: { value: PAL.core }, uDeep: { value: PAL.deep }, uInner: { value: PAL.inner }, uBand: { value: PAL.band },
     uRimA: { value: PAL.rimA }, uRimB: { value: PAL.rimB },
   };
@@ -299,7 +325,7 @@ export function createHandView(models, tierName) {
   );
   orb.renderOrder = 1;
   const haloU = {
-    uTime: orbU.uTime, uLevel: orbU.uLevel, uPower: { value: 1 }, uOrbFrac: { value: 0.3 }, uFlash: { value: 0 },
+    uTime: orbU.uTime, uLevel: orbU.uLevel, uPower: { value: 1 }, uOrbFrac: { value: 0.3 }, uFlash: { value: 0 }, uEmber: orbU.uEmber,
     uWarm: { value: PAL.band.clone().lerp(PAL.inner, 0.3) }, uRimA: { value: PAL.rimA }, uRimB: { value: PAL.rimB }, uCore: { value: PAL.core },
   };
   const halo = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.ShaderMaterial({
@@ -341,19 +367,22 @@ export function createHandView(models, tierName) {
   };
 
   let clock = 0, lvl = 0;
-  let rel = null; // { t, hold, back, strength }
+  // 放ったあとの動き: grip（最後の一発の鷲掴み）と push（払う）。どちらも { t, hold, back, strength, lvl }
+  let grip = null, push = null;
   let fizzT = Infinity; // 足りずに離してからの秒（びくっと震えて光がしぼむ）
   const FIZZ_SEC = 0.55;
-  let joined = 0, flashK = 0;
+  let joined = 0, pushed = 0, flashK = 0;
   // 時間切れの結末: 球が内側へつぶれ、両手が引き込まれる（0〜1。blackhole.js が毎フレーム決める）
   let collapse = 0;
   const hash = (x) => { const s = Math.sin(x * 127.1) * 43758.5453; return s - Math.floor(s); };
-  const _c = new THREE.Vector3(), _q = new THREE.Quaternion(), _e = new THREE.Euler(), _mid = new THREE.Vector3();
+  const _c = new THREE.Vector3(), _q = new THREE.Quaternion(), _e = new THREE.Euler(), _mid = new THREE.Vector3(), _away = new THREE.Vector3();
 
   return {
     scene, camera,
-    // 両手がどれだけ組み合わさっているか（0: 構え, 1: 組み合わさった）
+    // 両手がどれだけ球を鷲掴みにしているか（0: 構え, 1: 締めきった）
     get joined() { return joined; },
+    // 払う手がどれだけ突き出しているか（0: 構え, 1: 突き出しきった）
+    get pushed() { return pushed; },
     // 光が弾ける閃光の強さ（0〜）
     get flash() { return flashK; },
     // 球の中心と半径（場面の空間）
@@ -373,31 +402,55 @@ export function createHandView(models, tierName) {
       // 掴まれている: 光は弱く不安定、手も少し震える
       const weak = 1 - THREE.MathUtils.smoothstep(steady, 0.08, 0.3);
 
-      // 放ったあと: 両手が中央へ寄って手のひらを強く合わせ（だんだん速く）、合わさった瞬間に光が弾ける
-      let squeeze = 0, orbBack = 1, recoil = 0;
+      // 放ったあと: 寄っていき（だんだん速く）、寄りきった瞬間に光が弾ける。球は弾けるまで手の中で押し縮められて燃え、
+      // 弾けると消えて、手が構えに戻ってからまた小さく生まれる
+      let orbScale = 1, orbFade = 1, recoil = 0, gripShake = 0, ember = 0, tension = 0;
+      const orbAway = _away.set(0, 0, 0);
       flashK = 0;
-      if (rel) {
-        rel.t += dt;
-        const t = rel.t, k = Math.min(1, t / JOIN_SEC);
-        const into = k * k;
-        const back = THREE.MathUtils.smoothstep(t, JOIN_SEC + rel.hold, JOIN_SEC + rel.hold + rel.back);
-        joined = into * (1 - back);
-        squeeze = into;
-        flashK = (t < JOIN_SEC ? Math.pow(k, 6) : Math.exp(-(t - JOIN_SEC) / FLASH_SEC)) * (0.5 + 0.7 * rel.strength);
-        recoil = t < JOIN_SEC ? 0 : Math.exp(-(t - JOIN_SEC) / 0.07) * (0.03 + 0.06 * rel.strength);
-        // 球は合わさった手の間でつぶれて消え、手が構えに戻ってからまた小さく生まれる
-        const reformAt = JOIN_SEC + rel.hold + rel.back * 0.5;
-        orbBack = THREE.MathUtils.smoothstep(t, reformAt, reformAt + REFORM_SEC);
-        if (t > reformAt + REFORM_SEC) rel = null;
-      } else joined = 0;
-      const orbScale = rel ? Math.max(1 - squeeze, orbBack) : 1;
+      const env = (r, inSec, ease) => {
+        r.t += dt;
+        const t = r.t, k = Math.min(1, t / inSec), after = t - inSec;
+        const back = THREE.MathUtils.smoothstep(t, inSec + r.hold, inSec + r.hold + r.back);
+        const act = ease(k) * (1 - back);
+        flashK = Math.max(flashK, (after < 0 ? Math.pow(k, 6) : Math.exp(-after / FLASH_SEC)) * (0.5 + 0.7 * r.strength));
+        recoil += after < 0 ? 0 : Math.exp(-after / 0.07) * (0.03 + 0.06 * r.strength);
+        const reformAt = inSec + r.hold + r.back * 0.5;
+        const orbBack = THREE.MathUtils.smoothstep(t, reformAt, reformAt + REFORM_SEC);
+        const gone = after < 0 ? 0 : 1 - Math.exp(-after / 0.05);
+        return { act, k, after, orbBack, gone, held: 1 - back, done: t > reformAt + REFORM_SEC };
+      };
+      joined = 0; pushed = 0;
+      if (grip) {
+        const e = env(grip, JOIN_SEC, joinEase);
+        joined = e.act;
+        // 締めつける間は押し縮められ（半分ほど）、弾けると外側の殻は消えて、手の中に小さな芯（ember）が燃え残る
+        orbScale = Math.min(orbScale, Math.max((1 - 0.55 * e.k * e.k) * (1 - e.gone), e.orbBack));
+        orbFade = Math.min(orbFade, Math.max(1 - e.gone, e.orbBack));
+        ember = e.after < 0 ? 0 : THREE.MathUtils.smoothstep(e.after, 0, 0.1) * e.held;
+        // 震え: 弾ける直前が最大。保つ間も細かい震えが続く（力をこめて握り続ける）
+        gripShake = e.after < 0 ? GRIP_SHAKE * e.k * e.k : Math.max(GRIP_SHAKE * Math.exp(-e.after / 0.05), GRIP_HOLD_SHAKE * e.held);
+        // 指のこわばりは放った瞬間の力のまま、戻り始めるまで緩めない
+        tension = Math.max(tension, grip.lvl * e.held);
+        if (e.done) grip = null;
+      }
+      if (push) {
+        const e = env(push, PUSH_SEC, (k) => 1 - Math.pow(1 - k, 3));
+        pushed = e.act;
+        orbScale = Math.min(orbScale, Math.max(1 - e.gone, e.orbBack));
+        orbFade = Math.min(orbFade, Math.max(1 - e.gone, e.orbBack));
+        orbAway.set(0, PUSH_MOVE.y, PUSH_MOVE.z).multiplyScalar(pushed * (1 - e.orbBack)); // 球は手と一緒に前へ押し出される
+        tension = Math.max(tension, push.lvl * e.held);
+        if (e.done) push = null;
+      }
+      // 球の大きさと明るさは、鷲掴みで締めつける間も放った瞬間の力のまま（手の中で押し縮められて燃える）。燃え残る芯も明るく
+      const sO = Math.max(1 - Math.pow(1 - Math.max(lvl, grip && grip.t < JOIN_SEC ? grip.lvl : 0), 1.6), 0.85 * ember);
 
       // 両手の位置・向き・形
       const D = PALM_D[0] + (PALM_D[1] - PALM_D[0]) * s;
       fizzT += dt;
       const fizzK = fizzT < FIZZ_SEC ? Math.exp(-fizzT / 0.12) * (1 - fizzT / FIZZ_SEC) : 0;
       const pull = collapse * collapse;
-      const trem = amp * 0.018 + weak * 0.006 + fizzK * 0.03 + collapse * 0.022;
+      const trem = amp * 0.018 + weak * 0.006 + fizzK * 0.03 + collapse * 0.022 + gripShake;
       const bob = Math.sin(clock * 1.3) * 0.012;
       _mid.set(0, 0, 0);
       for (const h of hands) {
@@ -408,55 +461,63 @@ export function createHandView(models, tierName) {
           trem * 0.6 * Math.sin(k * 1.3 + 2.1),
         );
         // 構えの位置（球の中心から手のひらの向きの逆へ D）と、合わせた位置の間
-        _c.copy(ORB_C).addScaledVector(h.n, -D).lerp(h.joinAt, joined).add(h.trem);
+        _c.copy(ORB_C).addScaledVector(h.n, -D).add(h.lift).lerp(h.joinAt, joined).addScaledVector(h.pushMove, pushed).add(h.trem);
         _c.x += h.mirror * recoil; // 合わさった反動で、わずかに弾かれる
         // 引き込まれる: 球（黒い球）のほうへ寄りながら、渦の向きへねじれる
         if (collapse > 0) _c.lerp(ORB_C, 0.5 * pull);
         h.holder.position.copy(_c);
         _mid.addScaledVector(h.trem, 0.5);
-        h.holder.quaternion.slerpQuaternions(h.qStance, h.qJoin, joined)
+        // 手のひらの向き（構え → 鷲掴み、そして払う手の向き）
+        h.holder.quaternion.slerpQuaternions(h.qStance, h.qJoin, joined).slerp(h.qPush, pushed)
           .multiply(_q.setFromEuler(_e.set(trem * 0.5 * Math.sin(k * 0.9 + 0.3), pull * 0.5 * h.mirror, trem * 0.5 * Math.sin(k * 1.1 + 1.3) + pull * 0.35)));
         if (h.model) {
           // 寄っていく間は、放った瞬間のこわばった指のまま組む形へ移る（いったん力の抜けた手に戻らない）
           // 引き込まれる間は、指をこわばらせて開いたまま（あらがう手）
-          const base = poseFor(Math.max(collapse, rel ? Math.max(lvl, rel.lvl * (1 - squeeze)) : lvl), clock + h.phase);
-          h.model.setPose(joined > 0 ? blendPose(base, CLASP_POSE, joined, h.pose) : base);
+          const base = poseFor(Math.max(collapse, lvl, tension), clock + h.phase);
+          let pose = joined > 0 ? blendPose(base, JOIN_POSE, joined, h.pose) : base;
+          if (pushed > 0) pose = blendPose(pose, PUSH_POSE, pushed, h.pose);
+          h.model.setPose(pose);
+          // 手首の曲げ: 手のひらは上の向きのまま、前腕（模型の全体）を曲げの逆へ回す。手のひらの中心は holder の原点のまま
+          const bend = h.model.wristBend;
+          h.holder.quaternion.multiply(_q.copy(bend).invert());
+          h.model.bendPoint(h.palmLocal, h.rig.position).multiplyScalar(-HAND_SCALE);
         }
       }
 
       // 球: 両手の間の中央。組み合わさるときは、寄ってくる手のひらの間へ
-      const rBase = ORB_R[0] + (ORB_R[1] - ORB_R[0]) * s;
+      const rBase = ORB_R[0] + (ORB_R[1] - ORB_R[0]) * sO;
       // 時間切れ: 球は内側へつぶれて消え（黒い球と光の輪は画面効果が描く）、つぶれるほど明るく燃える
       const implode = 1 - THREE.MathUtils.smoothstep(collapse, 0.05, 0.75);
-      const r = rBase * orbScale * implode;
-      orb.position.copy(ORB_C).add(_mid);
-      if (joined > 0) orb.position.lerp(_c.copy(hands[0].holder.position).add(hands[1].holder.position).multiplyScalar(0.5), joined);
+      const emberPulse = 1 + 0.2 * Math.sin(clock * 13) + 0.08 * Math.sin(clock * 31);
+      const r = Math.max(rBase * orbScale, EMBER_R * emberPulse * ember) * implode;
+      orbFade = Math.max(orbFade, ember);
+      orb.position.copy(ORB_C).add(_mid).add(orbAway);
       orb.scale.setScalar(Math.max(r, 1e-3));
 
       // 明るさ: 貯めるほど強く。0.8 を超えるとちらつき、掴まれていると弱く不安定に瞬く
       const pulse = 1 + (active ? 0.06 + 0.08 * lvl : 0.04) * Math.sin(clock * (active ? 9 + 10 * lvl : 2.2));
       const stutter = weak * (0.25 + 0.45 * (hash(Math.floor(clock * 14)) > 0.55 ? 1 : 0));
       const crackle = amp * 0.18 * (hash(Math.floor(clock * 24) + 7.0) - 0.5);
-      const orbFade = rel ? Math.max(1 - squeeze * squeeze, orbBack) : 1;
-      const power = (0.65 + 0.35 * s) * (1 - 0.5 * weak) * (pulse - stutter + crackle) * orbFade * (1 - 0.6 * fizzK) * (1 + 1.8 * collapse);
+      const power = (0.65 + 0.35 * sO) * (1 - 0.5 * weak) * (pulse - stutter + crackle) * orbFade * (1 - 0.6 * fizzK) * (1 + 1.8 * collapse);
       orbU.uTime.value = clock;
-      orbU.uLevel.value = lvl;
+      orbU.uLevel.value = Math.max(lvl, ember);
       orbU.uPower.value = Math.max(0.05, power);
       orbU.uFade.value = orbFade;
+      orbU.uEmber.value = ember;
       orb.visible = orbFade > 0.01 && r > 2e-3;
 
-      const haloR = Math.max(r * (2.2 + 1.3 * s), 1e-3) + flashK * 2.5;
+      const haloR = Math.max(r * (2.2 + 1.3 * sO), 1e-3) + flashK * 2.5 + ember * EMBER_HALO; // 芯の光が交差した指の間・拳のまわりから漏れる
       // 組み合わさるときは光の板を手の向こうへ下げる: 光は合わせた手の間から奥へ弾け、手はその光を背にした影になる
       halo.position.copy(orb.position).addScaledVector(_c.copy(orb.position).sub(camera.position).normalize(), HALO_BACK * joined);
       halo.scale.setScalar(haloR);
       haloU.uOrbFrac.value = Math.min(0.9, r / haloR);
-      haloU.uPower.value = Math.max(0, power) * (0.5 + 0.5 * s);
+      haloU.uPower.value = Math.max(0, power) * (0.5 + 0.5 * sO);
       haloU.uFlash.value = flashK;
 
       // 組み合わさった手の中に光源が入ると近すぎて肌が白く飛ぶので、手の外（目の側の上）へ出す
       orbLight.position.copy(orb.position).addScaledVector(LIGHT_OUT, joined);
-      orbLight.intensity = (Math.max(0, power) * (0.35 + 1.1 * s) * orbFade + flashK * 1.2) * implode;
-      bgU.uGlow.value.copy(PAL.inner).multiplyScalar((0.05 * Math.max(0, power) * s + 0.06 * flashK) * implode);
+      orbLight.intensity = (Math.max(0, power) * (0.35 + 1.1 * sO) * orbFade + flashK * 1.2) * implode;
+      bgU.uGlow.value.copy(PAL.inner).multiplyScalar((0.05 * Math.max(0, power) * sO + 0.06 * flashK) * implode);
 
       flash.visible = flashK > 0.01;
       flashMat.opacity = Math.min(0.4, flashK * 0.25);
@@ -466,10 +527,11 @@ export function createHandView(models, tierName) {
       const view = camera.matrixWorldInverse;
       skinU.uOrbPosV.value.copy(orb.position).applyMatrix4(view);
       skinU.uOrbR.value = Math.max(r, 0.02);
-      skinU.uOrbPower.value = (Math.max(0, power) * (0.35 + 0.6 * s) * orbFade + flashK * 0.12) * implode;
+      skinU.uOrbPower.value = (Math.max(0, power) * (0.35 + 0.6 * sO + 0.5 * ember) * orbFade + flashK * 0.12) * implode; // 芯を握る間は指の間・関節の縁が暖かく透ける
       skinU.uRimDirV.value.copy(rimLight.position).normalize().transformDirection(view);
     },
-    // 放つ瞬間: 両手が中央へ寄って組み合わさる（約 0.25 秒）。大きな一発は演出の間そのまま、小さな一発は約 0.4 秒で構えへ戻る
+    // 放つ瞬間: 最後の一発（isBig）は両手が球を鷲掴みにし（約 0.25 秒）、演出の間そのまま。
+    // 払う（小爆発）は手のひらを街のほうへ突き出して弾き（約 0.08 秒）、約 0.4 秒で構えへ戻る
     // 足りずに離した: 放たず、両手がびくっと震えて球の光が一瞬しぼむ
     fizzle() { fizzT = 0; },
     // 時間切れの結末のつぶれ具合（0〜1）
@@ -477,11 +539,12 @@ export function createHandView(models, tierName) {
     get collapse() { return collapse; },
     release(shot) {
       const strength = Math.min(1, (shot?.amount ?? 0) / CONFIG.power.max);
-      // 組み合わさる途中・戻る途中にまた放ったら、今の合わさり具合から続けて寄る（手が跳ばない）
-      const t = rel ? JOIN_SEC * Math.sqrt(joined) : 0;
-      rel = shot?.isBig
-        ? { t, hold: CONFIG.cinematic.freezeSec, back: BIG_BACK_SEC, strength, lvl }
-        : { t, hold: SMALL_HOLD_SEC, back: SMALL_BACK_SEC, strength, lvl };
+      // 寄る途中・戻る途中にまた放ったら、今の具合から続けて寄る（手が跳ばない）
+      if (shot?.isBig) {
+        grip = { t: grip ? JOIN_SEC * joinEaseInv(joined) : 0, hold: CONFIG.cinematic.freezeSec, back: BIG_BACK_SEC, strength, lvl };
+      } else {
+        push = { t: push ? PUSH_SEC * (1 - Math.cbrt(1 - Math.min(1, pushed))) : 0, hold: PUSH_HOLD_SEC, back: PUSH_BACK_SEC, strength, lvl };
+      }
     },
   };
 }
