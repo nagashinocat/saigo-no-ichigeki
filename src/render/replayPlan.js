@@ -71,32 +71,52 @@ export function planReplay({ radius, buildings, heroYaw = 0 }, P = REPLAY_PLAN) 
 }
 
 // S9（撃退失敗のとき、生き残った軍勢の光が爆発のあとの街に残って見える）: 生き残りを見せる引きの絵。
-// 爆心と生き残り全員（たいてい街の外側の見回る者）を、黒い帯の内に収めて斜め上から見下ろす。
+// 爆心と生き残り全員（たいてい街の外側の見回る者）を斜め上から見下ろす。fix1: 結果画面では見出しが上に、ボタンが下に
+// 乗るので、全員をその間の帯（画面の縦 fitBot〜fitTop、NDC）に収める（爆心は真ん中より下になる）。
+// 帯に収まる距離まで決まった刻みで引き、その距離で、カメラを縦に傾けて点の縦の広がりを帯の真ん中へ合わせる
+// （x 軸まわりの回転は、カメラから見た縦の角度をそのままずらすので、帯に合うかは角度の幅だけで決まる）。
 // survivors: [{ x, z }]、aspect: 画面の縦横比、az: 見る向き（爆心から見たカメラの方角）。戻り値 { pos, look, fov }
-export const AFTERMATH = { elev: 0.98, fov: { portrait: 58, landscape: 40 }, fitX: 0.84, fitY: 0.62, minDist: 260, maxDist: 7600 };
-const _cam = new THREE.PerspectiveCamera(), _v = new THREE.Vector3(), _l = new THREE.Vector3();
+export const AFTERMATH = { elev: 0.98, fov: { portrait: 58, landscape: 40 }, fitX: 0.84, fitTop: 0.26, fitBot: -0.52, minDist: 260, maxDist: 7600 };
+const _cam = new THREE.PerspectiveCamera(), _v = new THREE.Vector3(), _l = new THREE.Vector3(), _f = new THREE.Vector3();
 export function aftermathView({ survivors, aspect, az = 0 }, A = AFTERMATH) {
   let x0 = 0, x1 = 0, z0 = 0, z1 = 0;
   for (const s of survivors) { x0 = Math.min(x0, s.x); x1 = Math.max(x1, s.x); z0 = Math.min(z0, s.z); z1 = Math.max(z1, s.z); }
-  const look = [(x0 + x1) / 2, 0, (z0 + z1) / 2];
+  const c = [(x0 + x1) / 2, 0, (z0 + z1) / 2];
   const fov = aspect < 1 ? A.fov.portrait : A.fov.landscape;
   const dir = [Math.cos(A.elev) * Math.cos(az), Math.sin(A.elev), Math.cos(A.elev) * Math.sin(az)];
   _cam.fov = fov; _cam.aspect = aspect; _cam.near = 1; _cam.far = 9000; _cam.updateProjectionMatrix();
-  _l.fromArray(look);
+  const tanV = Math.tan(THREE.MathUtils.degToRad(fov) / 2);
+  const aTop = Math.atan(A.fitTop * tanV), aBot = Math.atan(A.fitBot * tanV);
+  _l.fromArray(c);
   const pts = [{ x: 0, z: 0 }, ...survivors];
-  let D = A.minDist;
-  // 全員が収まるまで少しずつ引く（決まった刻みなので同じ生き残りなら同じ絵）
-  for (; D < A.maxDist; D *= 1.04) {
-    _cam.position.set(look[0] + dir[0] * D, look[1] + dir[1] * D, look[2] + dir[2] * D);
-    _cam.lookAt(_l);
-    _cam.updateMatrixWorld();
-    let ok = true;
+  const fits = () => {
     for (const s of pts) {
       _v.set(s.x, 3, s.z).project(_cam);
-      if (Math.abs(_v.x) > A.fitX || Math.abs(_v.y) > A.fitY) { ok = false; break; }
+      if (Math.abs(_v.x) > A.fitX || _v.y > A.fitTop + 1e-3 || _v.y < A.fitBot - 1e-3) return false;
     }
-    if (ok) break;
+    return true;
+  };
+  let D = A.minDist;
+  for (; ; D *= 1.04) {
+    const last = D * 1.04 >= A.maxDist;
+    if (last) D = A.maxDist;
+    _cam.position.set(c[0] + dir[0] * D, c[1] + dir[1] * D, c[2] + dir[2] * D);
+    _cam.up.set(0, 1, 0);
+    _cam.lookAt(_l);
+    _cam.updateMatrixWorld();
+    let lo = Infinity, hi = -Infinity;
+    for (const s of pts) {
+      _v.set(s.x, 3, s.z).applyMatrix4(_cam.matrixWorldInverse);
+      const a = Math.atan2(_v.y, -_v.z);
+      lo = Math.min(lo, a); hi = Math.max(hi, a);
+    }
+    if (hi - lo <= aTop - aBot || last) {
+      _cam.rotateX((hi + lo) / 2 - (aTop + aBot) / 2); // 縦の広がりの真ん中を帯の真ん中へ
+      _cam.updateMatrixWorld();
+      if (fits() || last) break;
+    }
   }
-  D = Math.min(D, A.maxDist);
-  return { pos: [look[0] + dir[0] * D, look[1] + dir[1] * D, look[2] + dir[2] * D], look, fov };
+  _cam.getWorldDirection(_f);
+  const p = _cam.position;
+  return { pos: [p.x, p.y, p.z], look: [p.x + _f.x * D, p.y + _f.y * D, p.z + _f.z * D], fov };
 }

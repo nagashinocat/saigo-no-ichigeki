@@ -1,6 +1,6 @@
 import { test, expect } from 'vitest';
 import * as THREE from 'three';
-import { planReplay, REPLAY_PLAN, aftermathView } from '../../src/render/replayPlan.js';
+import { planReplay, REPLAY_PLAN, aftermathView, AFTERMATH } from '../../src/render/replayPlan.js';
 import { generateCity, GRID } from '../../src/world/cityGen.js';
 import { radiusFor } from '../../src/game/charge.js';
 import { CONFIG } from '../../src/config.js';
@@ -55,7 +55,7 @@ test('S9: 撃退失敗の引きの絵は、爆心と生き残り全員を画面�
   ];
   for (const aspect of [390 / 844, 16 / 9]) {
     for (const survivors of cases) {
-      const v = aftermathView({ survivors, radius: 400, aspect, az: 0.7 });
+      const v = aftermathView({ survivors, aspect, az: 0.7 });
       const cam = new THREE.PerspectiveCamera(v.fov, aspect, 1, 9000);
       cam.position.fromArray(v.pos);
       cam.lookAt(new THREE.Vector3().fromArray(v.look));
@@ -63,9 +63,15 @@ test('S9: 撃退失敗の引きの絵は、爆心と生き残り全員を画面�
       for (const s of [...survivors, { x: 0, z: 0 }]) {
         const p = new THREE.Vector3(s.x, 3, s.z).project(cam);
         expect(Math.abs(p.x), `${aspect} ${s.x},${s.z}`).toBeLessThan(0.92);
-        expect(Math.abs(p.y)).toBeLessThan(0.75); // 黒い帯の内
+        // fix1: 結果の文字（上）とボタン（下）の間の帯に収める（黒い帯の内）
+        expect(p.y).toBeLessThan(AFTERMATH.fitTop + 0.02);
+        expect(p.y).toBeGreaterThan(AFTERMATH.fitBot - 0.02);
         expect(p.z).toBeLessThan(1);
       }
+      // 爆心と生き残りの縦の広がりは、帯の真ん中（画面の真ん中より下。上には撃退失敗の見出しが乗る）
+      const ys = [...survivors, { x: 0, z: 0 }].map((q) => new THREE.Vector3(q.x, 3, q.z).project(cam).y);
+      expect((Math.min(...ys) + Math.max(...ys)) / 2).toBeCloseTo((AFTERMATH.fitTop + AFTERMATH.fitBot) / 2, 2);
+      expect((AFTERMATH.fitTop + AFTERMATH.fitBot) / 2).toBeLessThan(-0.1);
       // 見下ろす（真上ではなく斜め）
       const dy = v.pos[1] - v.look[1], dh = Math.hypot(v.pos[0] - v.look[0], v.pos[2] - v.look[2]);
       expect(Math.atan2(dy, dh)).toBeGreaterThan(0.6);

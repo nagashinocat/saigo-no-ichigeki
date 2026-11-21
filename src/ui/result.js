@@ -2,6 +2,8 @@ import { formatYen } from './format.js';
 
 // ゲームのタイトル（持ち主 2026-11-21 15:57。仮題「街破壊」から変更）
 export const GAME_TITLE = '最後の一撃';
+// 金額の見出し（持ち主 16:48「被害額だけでおまけは書かなくていいよ」）。勝ち負けの見出しより小さく出す
+export const AMOUNT_LABEL = '被害額';
 
 const pageUrl = () => (typeof location === 'undefined' ? '' : location.origin + location.pathname);
 
@@ -14,10 +16,10 @@ export function headlineText(reason, outcome) {
 
 export function shareText(total, outcome, url = pageUrl()) {
   const head = outcome?.clear ? '撃退成功！' : `撃退失敗…残り ${outcome?.survivors.length ?? 0} 体。`;
-  return `「${GAME_TITLE}」${head} 破壊額 ${formatYen(total)} #最後の一撃 ${url}`.trim();
+  return `「${GAME_TITLE}」${head} ${AMOUNT_LABEL} ${formatYen(total)} #最後の一撃 ${url}`.trim();
 }
 
-// 結果画面に出すもの。見出しが主、破壊額はおまけの点数（見出しより小さく）。ブラックホールは破壊額をつけない
+// 結果画面に出すもの。見出しが主、被害額は見出しより小さく。ブラックホールは被害額をつけない
 export function resultContent(total, reason, outcome) {
   const released = reason !== 'blackhole' && !!outcome;
   return {
@@ -42,7 +44,7 @@ export function createResult(root, { onRetry, onReplay = null }) {
   const title = el('div', 'result-title', GAME_TITLE);
   const headline = el('div', 'result-headline');
   const amount = el('div', 'result-amount');
-  const label = el('div', 'result-label', 'おまけ　破壊額');
+  const label = el('div', 'result-label', AMOUNT_LABEL);
   const retry = el('button', 'result-btn primary', 'もう一度');
   const share = el('button', 'result-btn', '共有');
   const replay = el('button', 'result-btn ghost', 'リプレイ');

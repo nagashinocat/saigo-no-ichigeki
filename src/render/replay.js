@@ -7,8 +7,9 @@ import { createReplayLight } from './replayLight.js';
 // 放つ直前の街へ戻し（onRestore）、同じ一発を決まった刻み（REPLAY.tick）で起こし直す（onTick(爆発の秒, カメラ)）。
 // 刻みの並びはいつも同じなので、同じ写しと同じ種から同じリプレイになる（画面の速さによらない）。
 //   street → side → top → hero の4カット。黒い帯と、カットごとの時間の伸び縮み。画面をタップすると飛ばして結果へ。
-// 知らせ: 'replayStart'（始まる。BGM のリプレイ版の合図）、'cut'（{ name }）、'skip'（飛ばした）、'replayEnd'（結果を出してよい）。
-// 終わったら最後の絵のまま待つ（finished）。もう一度 play すれば何度でも見せ直せる。
+// 知らせ: 'replayStart'（始まる。BGM のリプレイ版の合図）、'cut'（{ name }）、'skip'（飛ばした）、
+//   'aftermath'（撃退失敗: 生き残りの引きの絵へ切り替わった）、'replayEnd'（結果を出してよい。撃退失敗は引きの絵を見せてから）。
+// 終わったら最後の絵のまま待つ（finished。撃退失敗は引きの絵を見せて replayEnd を出してから）。もう一度 play すれば何度でも見せ直せる。
 
 const MAX_TICKS = 4;          // 1フレームに進める刻みの上限（遅い機械ではリプレイがゆっくりになるが、中身は同じ）
 const SKIP_FADE = 0.22;       // 飛ばす: この秒で暗くし、暗いうちに最後まで早送りする
@@ -18,7 +19,9 @@ const OUTRO_FADE = 0.5;       // 飛ばしたあと、最後の絵へ明ける�
 const END_FADE = 0.38;        // 結果の後ろの最後の絵の暗さ
 const HELD_RATE = 0.25;       // 待つ間の世界の進み（粉や熾火がゆっくり動く）
 // S9: 撃退失敗のとき、最後の絵は生き残りを見せる引きの絵（暗転を挟んで切り替える）。結果の後ろでも光が読めるよう暗くしすぎない
-const AFTER_FADE_IN = 0.9;    // 暗転から引きの絵へ明けるまで
+// fadeIn: 暗転から引きの絵へ明けるまで。hold: 明けきってから結果を出すまで（生き残りだけの絵を、文字なしで見せる間）
+export const AFTERMATH_TIMING = { fadeIn: 0.9, hold: 1.3 };
+const AFTER_FADE_IN = AFTERMATH_TIMING.fadeIn;
 const AFTER_END_FADE = 0.16;  // 引きの絵の結果の後ろの暗さ
 // 黒い帯: 縦長はこの縦横比、横長はシネマスコープ
 export const REPLAY_BARS = { portrait: 0.6, landscape: 2.39 };
@@ -56,7 +59,7 @@ export function createReplay(views, { scene, lights = null, fog = null, blastLig
   // 今の値へ掛け直すと重ねて弱まってしまう。元の値から作り直す
   let blastBase = 0, blastWritten = NaN;
   let phase = 'off', t = 0, acc = 0, b = 0, tl = null, plan = null, cutName = '', skipK = 0, outro = 0, heldT = 0;
-  let survivors = null, after = null; // S9: 撃退失敗の生き残り（[{ x, z }]）と、その引きの絵（最後まで見せたら）
+  let survivors = null, after = null, ended = false; // S9: 撃退失敗の生き残り（[{ x, z }]）と、その引きの絵（最後まで見せたら）
   const screen = { flash: 0, time: 0, heat: null, grade: { bars: 0, ca: 0, vig: 0, sat: 1, grain: 0, streak: 0, exposure: 1, fade: 1, warm: 0, contrast: 1, bloom: 1 } };
   const baseLight = lights ? { sun: lights.sun?.intensity ?? 0, fill: lights.fill?.intensity ?? 0 } : null;
   function dimLights(k) {
@@ -204,7 +207,17 @@ export function createReplay(views, { scene, lights = null, fog = null, blastLig
 
   function finish() {
     phase = 'held'; heldT = 0;
-    if (survivors) { after = aftermathView({ survivors, aspect: aspect(), az: plan.top.az }); outro = AFTER_FADE_IN; }
+    if (survivors) {
+      // 撃退失敗: 引きの絵へ。明けきって hold 秒見せてから結果（advance の held）
+      after = aftermathView({ survivors, aspect: aspect(), az: plan.top.az }); outro = AFTER_FADE_IN;
+      emit('aftermath');
+      return;
+    }
+    end();
+  }
+  function end() {
+    if (ended) return;
+    ended = true;
     emit('replayEnd');
   }
 
@@ -241,6 +254,7 @@ export function createReplay(views, { scene, lights = null, fog = null, blastLig
     }
     // held: 最後の絵のまま。世界はゆっくり進む（粉・熾火・主人公のまわりのゆらぎ）
     heldT += dt;
+    if (!ended && heldT >= AFTER_FADE_IN + AFTERMATH_TIMING.hold - 1e-9) end();
     if (after) shotAfter(); else shot(tl.end);
     onTick(dt * HELD_RATE, cam);
     if (outro > 0) outro = Math.max(0, outro - dt);
@@ -251,7 +265,7 @@ export function createReplay(views, { scene, lights = null, fog = null, blastLig
   const self = {
     get active() { return phase !== 'off'; },
     // 最後まで見せ終わった（飛ばした場合も）。最後の絵のまま待つ
-    get finished() { return phase === 'held'; },
+    get finished() { return phase === 'held' && ended; },
     get fullscreen() { return phase !== 'off'; },
     get camera() { return cam; },
     get screen() { return phase === 'off' ? null : screen; },
@@ -287,7 +301,7 @@ export function createReplay(views, { scene, lights = null, fog = null, blastLig
       survivors = sv && sv.length ? sv : null; after = null;
       plan = planReplay({ radius: s.radius, buildings, heroYaw });
       tl = createReplayTimeline({ radius: s.radius, streetDist: plan.street.dist });
-      phase = 'play'; t = 0; acc = 0; cutName = 'intro'; skipK = 0; outro = 0;
+      phase = 'play'; t = 0; acc = 0; cutName = 'intro'; skipK = 0; outro = 0; ended = false;
       onRestore();
       // 暗転の間に、爆発の時計を street の始まりまで決まった刻みで進めておく
       b = 0;
@@ -302,6 +316,7 @@ export function createReplay(views, { scene, lights = null, fog = null, blastLig
     // 画面をタップ: 暗くして最後まで早送りし、結果へ
     skip() {
       if (phase === 'play') { phase = 'skip'; skipK = 0; emit('skip'); }
+      else if (phase === 'held') end(); // 撃退失敗の引きの絵の間: すぐ結果へ
     },
     update(dt) {
       if (phase === 'off') return;

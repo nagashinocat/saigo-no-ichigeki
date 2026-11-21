@@ -1,6 +1,6 @@
 import { test, expect } from 'vitest';
 import * as THREE from 'three';
-import { createReplay, replayBars } from '../../src/render/replay.js';
+import { createReplay, replayBars, AFTERMATH_TIMING } from '../../src/render/replay.js';
 import { generateCity } from '../../src/world/cityGen.js';
 import { radiusFor } from '../../src/game/charge.js';
 import { CONFIG } from '../../src/config.js';
@@ -20,7 +20,7 @@ function make({ w = 390, h = 844 } = {}) {
     onRestore() { log.restores++; log.ticks = []; },
     onTick(dt, cam) { log.ticks.push(dt); log.cams.push(cam.position.toArray()); blastLight.intensity = 100; },
   });
-  for (const e of ['replayStart', 'cut', 'replayEnd']) r.on(e, (a) => log.events.push(e + (a?.name ? ':' + a.name : '')));
+  for (const e of ['replayStart', 'cut', 'aftermath', 'replayEnd']) r.on(e, (a) => log.events.push(e + (a?.name ? ':' + a.name : '')));
   return { r, log, sun, fill, fog, blastLight };
 }
 const play = (r) => r.play({ shot, buildings: city.buildings, heroYaw: 0.5 });
@@ -168,4 +168,39 @@ test('S9: 撃退失敗なら、最後まで見せたあと（飛ばしても）�
   expect(r.aftermath).toBe(null);
   r.update(1 / 60);
   expect(r.cut).toBe('hero');
+});
+
+test('S9 fix1: 撃退失敗の引きの絵は、暗転から明けきって少し保ってから replayEnd（結果より先に生き残りだけの絵を見せる）。タップでその先へ飛ばせる', () => {
+  const survivors = [{ x: 620, z: 30 }, { x: -40, z: -650 }];
+  const { r, log } = make();
+  r.play({ shot, buildings: city.buildings, heroYaw: 0.5, survivors });
+  let i = 0;
+  while (!log.events.includes('aftermath') && i++ < 60 * 16) r.update(1 / 60);
+  expect(log.events).toContain('aftermath');
+  expect(log.events).not.toContain('replayEnd');
+  expect(r.finished).toBe(false);
+  let held = 0;
+  while (!log.events.includes('replayEnd') && held < 10) { r.update(1 / 60); held += 1 / 60; }
+  expect(held).toBeGreaterThanOrEqual(AFTERMATH_TIMING.fadeIn + AFTERMATH_TIMING.hold - 1 / 30);
+  expect(held).toBeLessThan(AFTERMATH_TIMING.fadeIn + AFTERMATH_TIMING.hold + 0.1);
+  expect(AFTERMATH_TIMING.hold).toBeGreaterThanOrEqual(1.2);
+  expect(AFTERMATH_TIMING.hold).toBeLessThanOrEqual(1.5);
+  expect(r.screen.grade.fade).toBeLessThan(0.2); // 明けきっている
+  expect(r.finished).toBe(true);
+  expect(log.events.filter((e) => e === 'replayEnd')).toHaveLength(1);
+  // 引きの絵の間のタップ: すぐ結果へ
+  const b = make();
+  b.r.play({ shot, buildings: city.buildings, heroYaw: 0.5, survivors });
+  i = 0;
+  while (!b.log.events.includes('aftermath') && i++ < 60 * 16) b.r.update(1 / 60);
+  b.r.update(1 / 60);
+  b.r.skip();
+  expect(b.log.events.filter((e) => e === 'replayEnd')).toHaveLength(1);
+  expect(b.r.finished).toBe(true);
+  // 撃退成功は前のまま、最後まで見せた瞬間に replayEnd（aftermath は来ない）
+  const c = make();
+  c.r.play({ shot, buildings: city.buildings, heroYaw: 0.5 });
+  while (!c.r.finished) c.r.update(1 / 60);
+  expect(c.log.events).not.toContain('aftermath');
+  expect(c.log.events.at(-1)).toBe('replayEnd');
 });

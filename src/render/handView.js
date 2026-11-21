@@ -43,8 +43,8 @@ const GRIP_SHAKE = 0.03;         // 鷲掴みで締めつける間の震え（�
 const GRIP_HOLD_SHAKE = 0.008;   // 鷲掴みのまま保つ間も続く、力をこめた細かい震え
 const EMBER_R = 0.11;
 const EMBER_HALO = 1.1;           // 芯の光の板を広げる量（握った両手のまわりへ暖かい光がこぼれる）            // 鷲掴みのまま保つ間、手の中に残る押し縮められた球の芯の半径
-const HALO_BACK = 1.0;           // 組み合わさったとき、光の板を手の向こうへ下げる距離
-const LIGHT_OUT = new THREE.Vector3(0, 0.5, 0.6); // 組み合わさったときの光源の逃がし先
+const HALO_BACK = 1.0;           // 両手が玉を鷲掴みに握り込んだとき、光の板を手の向こうへ下げる距離
+const LIGHT_OUT = new THREE.Vector3(0, 0.5, 0.6); // 握り込んだときの光源の逃がし先
 // 目の位置と見る所。手のひらを真横に向けても手の甲の側が目へ向くよう、目は少し高く・後ろに置く
 const EYE = new THREE.Vector3(0, 3.0, 3.9);
 const LOOK = new THREE.Vector3(0, 0.2, 0);
@@ -484,7 +484,7 @@ export function createHandView(models, tierName) {
         }
       }
 
-      // 球: 両手の間の中央。組み合わさるときは、寄ってくる手のひらの間へ
+      // 球: 両手の間の中央。握り込むときは、玉へ掛かる鷲掴みの手のひらの間へ
       const rBase = ORB_R[0] + (ORB_R[1] - ORB_R[0]) * sO;
       // 時間切れ: 球は内側へつぶれて消え（黒い球と光の輪は画面効果が描く）、つぶれるほど明るく燃える
       const implode = 1 - THREE.MathUtils.smoothstep(collapse, 0.05, 0.75);
@@ -507,14 +507,14 @@ export function createHandView(models, tierName) {
       orb.visible = orbFade > 0.01 && r > 2e-3;
 
       const haloR = Math.max(r * (2.2 + 1.3 * sO), 1e-3) + flashK * 2.5 + ember * EMBER_HALO; // 芯の光が交差した指の間・拳のまわりから漏れる
-      // 組み合わさるときは光の板を手の向こうへ下げる: 光は合わせた手の間から奥へ弾け、手はその光を背にした影になる
+      // 握り込むときは光の板を手の向こうへ下げる: 光は鷲掴みの指の間から奥へ弾け、手はその光を背にした影になる
       halo.position.copy(orb.position).addScaledVector(_c.copy(orb.position).sub(camera.position).normalize(), HALO_BACK * joined);
       halo.scale.setScalar(haloR);
       haloU.uOrbFrac.value = Math.min(0.9, r / haloR);
       haloU.uPower.value = Math.max(0, power) * (0.5 + 0.5 * sO);
       haloU.uFlash.value = flashK;
 
-      // 組み合わさった手の中に光源が入ると近すぎて肌が白く飛ぶので、手の外（目の側の上）へ出す
+      // 握り込んだ手の中に光源が入ると近すぎて肌が白く飛ぶので、手の外（目の側の上）へ出す
       orbLight.position.copy(orb.position).addScaledVector(LIGHT_OUT, joined);
       orbLight.intensity = (Math.max(0, power) * (0.35 + 1.1 * sO) * orbFade + flashK * 1.2) * implode;
       bgU.uGlow.value.copy(PAL.inner).multiplyScalar((0.05 * Math.max(0, power) * sO + 0.06 * flashK) * implode);

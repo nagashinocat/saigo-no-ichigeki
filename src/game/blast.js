@@ -42,6 +42,9 @@ function shape(radius, cfg, small) {
 // t: 爆発開始からの秒
 export function frontAt(t, radius, cfg = CONFIG, small = false) {
   if (t <= 0) return 0;
+  // 終わったら半径ちょうど（f1 + (radius − f1) の浮動小数の足し算は radius にわずかに届かないことがあり、
+  // 半径ちょうどの者が生き残ってしまう。S9 fix1）
+  if (t >= blastDuration(radius, cfg, small)) return radius;
   const s = shape(radius, cfg, small);
   if (t < s.creep) { const u = t / s.creep; return s.f0 * u * u; }
   if (small) {

@@ -358,12 +358,14 @@ const replay = createReplay(views, {
 replay.warmup(renderer, views.cityCamera);
 // 音: リプレイの間は世界の音を鳴らさない（BGM は 'replayStart' で静かな変奏になり、結果画面でもそのまま続く）
 replay.on('replayStart', () => { replayTag.hidden = false; bgm.quiet(); audio.debrisMode('replay'); });
-replay.on('replayEnd', () => {
-  replayTag.hidden = true; finaleDone = true;
-  // S9: 撃退失敗: 最後の絵（生き残りの引きの絵）と結果の後ろで、生き残りの光が赤と緑に脈打つ
+// S9: 撃退失敗: リプレイの最後は生き残りの引きの絵。その絵と結果の後ろで、生き残りの光が赤と緑に脈打つ。
+// 結果（replayEnd）は、その絵が明けきって少し見せてから（replay.js の AFTERMATH_TIMING。タップで先へ飛ばせる）
+replay.on('aftermath', () => {
+  replayTag.hidden = true;
   const o = game.outcome;
   if (o && !o.clear) patrolGlow.setSurvivors(survivorIds(o));
 });
+replay.on('replayEnd', () => { replayTag.hidden = true; finaleDone = true; });
 replay.on('skip', () => { replayTag.hidden = true; });
 function startReplay() {
   if (!replaySnap) return;

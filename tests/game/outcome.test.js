@@ -106,3 +106,22 @@ test('遊んでいる間の「街の軍勢」の数は、生きている者の�
   for (let t = 0; t < 12; t += DT) g.update(DT);
   expect(g.aliveCount).toBe(g.enemies.list.filter((e) => e.state !== 'dead').length);
 });
+
+test('fix1: 一発の半径ちょうど（dist === radius）にいる者も倒れる（生き残りに入らない）', () => {
+  // 20.93 / 20.945: 浮動小数の足し算で、最後の前線が半径にわずかに届かなかった量（fix1 で前線を半径ちょうどで止める）
+  for (const amount of [20.93, 20.945, 37.3, 61.7, 88.8, CONFIG.power.max]) {
+    const R = radiusFor(amount);
+    const g = createGame({ seed: 6, cfg: { ...CONFIG, enemy: { ...CONFIG.enemy, patrol: { ...CONFIG.enemy.patrol, count: 0 } } } });
+    g.pressStart();
+    for (let t = 0; t < 2; t += DT) g.update(DT);
+    for (const e of g.enemies.list) { e.state = 'dead'; e.deadTime = 0; }
+    const edge = { id: 424242, x: R, z: 0, dist: R, angle: 0, state: 'search' };
+    g.enemies.list.push(edge);
+    g.power.take(); g.power.add(amount);
+    g.pressEnd();
+    g.settle();
+    expect(edge.dist).toBe(R);
+    expect(edge.state, `amount ${amount}`).toBe('dead');
+    expect(g.outcome).toMatchObject({ clear: true, total: 1, survivors: [] });
+  }
+});
