@@ -243,6 +243,64 @@ test('鷲掴みで締めつける間、弾ける直前に手が震える', () =>
   expect(late).toBeGreaterThan(0.004);
 });
 
+test('鷲掴みのまま保つ間: 手の中に押し縮められた球の芯が脈打って燃え残り、指は芯の上へ鉤をかけ、前腕は手首へ向かって上がり、手は細かく震え続ける', () => {
+  const wp = (m, s, n) => m[s].bones[n].getWorldPosition(new THREE.Vector3());
+  const m = hands('low');
+  const v = createHandView(m, 'low');
+  v.resize(390 / 295);
+  run(v, 1, 0.9, true, 1);
+  v.release({ amount: CONFIG.power.max, isBig: true });
+  run(v, 0.5, 0, false, 1);
+  const radii = [], ps = [];
+  for (let t = 0; t < 0.6; t += DT) {
+    v.update(DT, 0, false, 1);
+    radii.push(v.orbSphere.radius);
+    ps.push(v.palms.right);
+    expect(v.joined).toBeCloseTo(1, 5);
+  }
+  // 芯は小さいが消えない（構えの球より小さく、見える大きさ）。大きさが脈打つ
+  expect(Math.min(...radii)).toBeGreaterThan(0.05);
+  expect(Math.max(...radii)).toBeLessThan(0.2);
+  expect(Math.max(...radii) - Math.min(...radii)).toBeGreaterThan(0.02);
+  // 芯は握った手の中: 指先の高さの平均より下、親指の先より上
+  const { center } = v.orbSphere;
+  for (const side of ['right', 'left']) {
+    const ys = FINGER_TIPS.map((n) => wp(m, side, n).y);
+    expect(ys.reduce((a, b) => a + b, 0) / 4, side).toBeGreaterThan(center.y);
+    expect(wp(m, side, 'thumb-tip').y, side).toBeLessThan(center.y);
+    // 前腕は手首へ向かって上がる（画面で、前腕の先より手首のほうが上）。手の甲を寝かせない
+    const w = wp(m, side, 'wrist').project(v.camera), a = new THREE.Vector3(0, 0, 0.12).applyMatrix4(m[side].bones.wrist.matrixWorld).project(v.camera);
+    expect(w.y, side).toBeGreaterThan(a.y);
+  }
+  // 保つ間も細かく震え続ける
+  let jit = 0;
+  for (let i = 2; i < ps.length; i++) jit += ps[i].clone().sub(ps[i - 1]).sub(ps[i - 1].clone().sub(ps[i - 2])).length();
+  expect(jit / (ps.length - 2)).toBeGreaterThan(0.001);
+});
+
+test('放ってから保つまで、指先の鉤（第一関節の曲げ）は緩まない', () => {
+  for (const level of [0.6, 0.9]) {
+    const m = hands('low');
+    const dips = [];
+    const sp = m.right.setPose;
+    m.right.setPose = (pose) => { dips.push(pose['index-finger-phalanx-distal'][0]); sp(pose); };
+    const v = createHandView(m, 'low');
+    run(v, 1, level, true, 1);
+    dips.length = 0;
+    v.release({ amount: CONFIG.power.max, isBig: true });
+    run(v, 1.0, 0, false, 1); // 寄って締めつけ、そのまま保つ
+    expect(v.joined).toBeCloseTo(1, 5);
+    if (level < 0.75) {
+      // 震えのない力では、1 フレームも緩まない
+      for (let i = 1; i < dips.length; i++) expect(dips[i], `${level} frame ${i}`).toBeGreaterThanOrEqual(dips[i - 1] - 1e-9);
+    } else {
+      // 震える力でも、放った瞬間より震えの幅（5°）以上は緩まない
+      for (let i = 1; i < dips.length; i++) expect(dips[i], `${level} frame ${i}`).toBeGreaterThan(dips[0] - 5 * Math.PI / 180);
+    }
+    expect(dips[dips.length - 1]).toBeGreaterThan(dips[0]);
+  }
+});
+
 test('払う（小爆発）: 手のひらを街のほうへ鋭く突き出して弾き、約0.4秒で構えに戻る。両手は合わさらない', () => {
   const m = hands('low');
   const v = createHandView(m, 'low');
