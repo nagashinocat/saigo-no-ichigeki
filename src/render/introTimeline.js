@@ -247,8 +247,9 @@ export function introHands(local) {
 // 持ち主 18:02: 文字の拍（カード・「最後の一撃」の各文字）は効果音なし（BGM だけ）。画面の出来事の音だけを合図にする
 export function introCues(tl) {
   const cues = [];
-  if (tl.beat('light')) cues.push({ t: tl.beat('light').start + INTRO.light.flinchAt, name: 'flinch' });
-  for (const t of introRunFeet(tl)) cues.push({ t, name: 'step' });
+  // スポットライトの拍（すくむ・逃げ出す足音・街のざわめきも）は効果音なし、BGM だけ（持ち主 19:05）。足音はすき間へ駆け込む所だけ
+  const light = tl.beat('light');
+  for (const t of introRunFeet(tl)) if (!light || t >= light.end) cues.push({ t, name: 'step' });
   // 握り込みの音は、組んだ手が初めて映るコマ（音楽を止める所と同じ）
   if (tl.beat('hands')) cues.push({ t: tl.beat('hands').start + INTRO.hands.releaseAt + INTRO.hands.clampFrame, name: 'grip' });
   if (tl.beat('white')) cues.push({ t: tl.beat('white').start, name: 'white' });

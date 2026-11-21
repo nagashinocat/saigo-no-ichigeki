@@ -568,7 +568,7 @@ void main() {
       const fwd = new THREE.Vector3(Math.sin(s.yaw + yawB + 0.7), -0.25, Math.cos(s.yaw + yawB + 0.7)).normalize();
       const dir = fwd.lerp(chest.clone().sub(lampPos).normalize(), p.lock).normalize();
       const on = smooth((local - (b.lockAt - 0.4)) / 0.15);
-      setLamp(lamps[i], lampPos, dir, lampPos.distanceTo(chest) + 1.5, 0.13, (0.05 + 0.07 * p.lock) * on, 0.3 * on, 4);
+      setLamp(lamps[i], lampPos, dir, lampPos.distanceTo(chest) + 1.5, 0.13, (0.05 + 0.07 * p.lock) * on, 0.55 * on, 4);
       poolU.uLamp.value[i].copy(lampPos);
       poolU.uDir.value[i].copy(dir);
       poolU.uK.value[i] = (0.2 + 0.8 * p.lock) * on * 0.32;
@@ -673,6 +673,8 @@ void main() {
     // 手の空いた時間に、主人公の導入の体を区切りごとに組み立てる（できたら true）
     prepareStep() { return heroBuilder.step(); },
     get prepared() { return heroBuilder.done; },
+    // TAP の直後（導入の 0 秒を決める前）に残りを一度に組み立てる（ライトの拍の最初のフレームで止まらない）
+    finishPrepare() { heroBuilder.finish(); },
     // 時刻 t（導入の秒）の絵を決める。beat: introTimeline の beatAt の戻り値
     update(t, b) {
       const dt = Math.min(0.1, Math.max(0, t - lastT));

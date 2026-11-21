@@ -153,15 +153,15 @@ test('合図: すくむ・足音・握り込む（組んだ手が初めて映る
   }
   // スポットライトには音をつけない（持ち主 19:05）。白と題字も無音
   expect(at('lock')).toEqual([]);
-  expect(at('flinch').length).toBe(1);
-  expect(at('flinch')[0]).toBeGreaterThan(tl.beat('light').start);
-  expect(at('flinch')[0]).toBeLessThan(tl.beat('light').end);
-  expect(at('step').length).toBeGreaterThanOrEqual(4);
-  for (const t of at('step')) expect(t).toBeGreaterThanOrEqual(tl.beat('light').start);
+  // スポットライトの拍は効果音なし（持ち主 19:05）: すくむ音も足音も、その拍の中には何もない
+  expect(at('flinch')).toEqual([]);
+  for (const c of cues) { const L = tl.beat('light'); expect(c.t >= L.start && c.t < L.end, `${c.name} ${c.t}`).toBe(false); }
+  expect(at('step').length).toBeGreaterThanOrEqual(3);
+  for (const t of at('step')) expect(t).toBeGreaterThanOrEqual(tl.beat('hide').start);
   expect(at('grip')).toEqual([tl.beat('hands').start + INTRO.hands.releaseAt + INTRO.hands.clampFrame]);
   expect(at('white')).toEqual([tl.beat('white').start]);
-  // 足音は走る脚の接地と同じ時刻
-  const feet = introRunFeet(tl);
+  // 足音は走る脚の接地と同じ時刻（すき間へ駆け込む分）
+  const feet = introRunFeet(tl).filter((t) => t >= tl.beat('light').end);
   expect(at('step')).toEqual(feet);
 });
 

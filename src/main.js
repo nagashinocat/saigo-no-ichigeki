@@ -263,6 +263,7 @@ const introFlow = createIntroFlow({
     const out = audio.introOutput;
     // 楽器の音がまだ全部できていなければ、ここで作り終えてから導入の 0 秒を決める（最初の拍を過去の時刻に予約しない）
     while (!prepareIntroMusic()) { /* 残りの楽器を作る */ }
+    intro.finishPrepare(); // 主人公の導入の体も（ライトの拍で組み立てて止まらない）
     if (out) { introT0 = out.ctx.currentTime + INTRO_AUDIO_LEAD; introSfx = scheduleIntroSfx(out.ctx, out.dest, introT0, introFlow.timeline); }
     else introClock = 'dt'; // 音を鳴らせない（Web Audio がない）: 絵はフレームの dt で
   },

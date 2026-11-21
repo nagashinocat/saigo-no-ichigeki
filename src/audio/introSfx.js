@@ -120,7 +120,7 @@ export function scheduleIntroSfx(ctx, dest, t0, tl, { from = 0 } = {}) {
   }
 
   // ---- 3D の拍の街の低いざわめき（カード・手の拍では止める）----
-  for (const n of ['bikes', 'light', 'hide']) {
+  for (const n of ['bikes', 'hide']) { // スポットライトの拍は街のざわめきもなし（BGM だけ）
     const B = tl.beat(n);
     if (!B || past(B.start)) continue;
     const s = noise(brown, at(B.start), B.end - B.start, B.start * 0.17);
