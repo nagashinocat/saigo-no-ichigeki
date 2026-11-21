@@ -62,10 +62,12 @@ test('どの level でも関節の角度は自然な範囲（曲げ 0〜100°）
   for (const l of [-1, 2, NaN]) for (const name of HAND_JOINTS) expect(poseFor(l, 0)[name].every(Number.isFinite)).toBe(true);
 });
 
-test('鷲掴み（JOIN_POSE）は構えより指先を深く食い込ませ、親指は鉤に巻き上げずに内へ寄せる。払う（PUSH_POSE）は指をまっすぐ伸ばす。角度は自然な範囲', () => {
+test('握り合わせ（JOIN_POSE）は付け根から深く指を組み、親指は鉤に巻き上げずに内へ寄せる。払う（PUSH_POSE）は指をまっすぐ伸ばす。角度は自然な範囲', () => {
   const tense = poseFor(1, 0);
+  void tense;
   for (const f of ['index', 'middle', 'ring', 'pinky']) {
-    expect(flex(JOIN_POSE, `${f}-finger-phalanx-distal`), f).toBeGreaterThan(flex(tense, `${f}-finger-phalanx-distal`) + 10 * DEG);
+    // 握り合わせ（持ち主 19:09）: 指は付け根から深く曲げて相手の手の甲へ巻きつける（構えより付け根を大きく曲げる）
+    expect(flex(JOIN_POSE, `${f}-finger-phalanx-proximal`), f).toBeGreaterThan(Math.max(70 * DEG, flex(tense, `${f}-finger-phalanx-proximal`) + 30 * DEG));
     for (const part of ['proximal', 'intermediate', 'distal']) expect(flex(PUSH_POSE, `${f}-finger-phalanx-${part}`), f).toBeLessThan(10 * DEG);
   }
   // 親指は球の下で内へ寄せるが、先を上へ巻き上げない（巻き上げると球を下から囲むハートの下の弧になる）

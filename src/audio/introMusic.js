@@ -10,17 +10,21 @@ import { cachedVoice, VOICES } from './bgmVoices.js';
 // bars 小節目の頭（次の 1 拍目）になるように決める（止まる所が拍の頭に落ちる）。止めたあと（白と題字）は無音。
 // TAP START でゲームの BGM がいつもどおり始めから鳴る（きれいに始め直す）。
 // 同じ並びをライブ（AudioContext）と録画（OfflineAudioContext）で組む（乱数を使わない譜面なので、毎回同じ）
-export const INTRO_MUSIC = { clampFrame: 1 / 30, bars: 5, gain: 1.4, cutTail: 0.008, cond: { elapsed: 55, power: 1, holding: true } };
+// tempo: ゲームの最高潮と同じ速さ（tempoFor(1) = 116）。止める所が小節の頭に落ちるよう、曲は小節の途中から入る
+export const INTRO_MUSIC = { tempo: 116, gain: 1.4, cutTail: 0.008, cond: { elapsed: 55, power: 1, holding: true } };
 
 export function introMusicPlan(tl) {
   const hands = tl.beat('hands');
   if (!hands) return null;
-  // 力を放つ瞬間（握り込む）。止めるのは、組んだ指が初めて映るコマ（放ってから 30 fps の 1 コマ後）の頭
-  const cut = hands.start + INTRO.hands.releaseAt + INTRO_MUSIC.clampFrame;
-  const tempo = (INTRO_MUSIC.bars * 4 * 60) / cut; // 付点四分の拍 / 分
-  const seq = createSequencer({ start: 0, tempo });
-  const events = seq.advance(cut, () => INTRO_MUSIC.cond).filter((e) => e.t < cut - 1e-6);
-  return { tempo, cut, events, barSec: (4 * 60) / tempo };
+  // 力を放つ瞬間（握り込む）。止めるのは、組んだ手が初めて映るコマ（放ってから 30 fps の 1 コマ後）の頭
+  const cut = hands.start + INTRO.hands.releaseAt + INTRO.hands.clampFrame;
+  const tempo = INTRO_MUSIC.tempo, barSec = (4 * 60) / tempo;
+  // 曲の頭（0 秒より前）: そこから数えて cut がちょうど小節の頭になる。0 秒より前の音は鳴らさない（小節の途中から入る）
+  const bars = Math.ceil(cut / barSec - 1e-9);
+  const start = cut - bars * barSec;
+  const seq = createSequencer({ start, tempo });
+  const events = seq.advance(cut, () => INTRO_MUSIC.cond).filter((e) => e.t >= -1e-9 && e.t < cut - 1e-6);
+  return { tempo, cut, events, barSec, start, bars };
 }
 
 // 手の空いた時間に楽器の音を 1 つ作る（全部できたら true）

@@ -24,16 +24,16 @@ const ORB_C = new THREE.Vector3(0, 0, 0);
 const STANCE_N = new THREE.Vector3(-1, -0.3, 0);
 const STANCE_F = new THREE.Vector3(-0.25, 1, -0.3);
 const STANCE_LIFT = new THREE.Vector3(0, -0.3, 0);
-// 鷲掴み: 両手が球へ上からかぶさり、指先を横（内）へ向けて球の上で交差する（右手の指が奥、左手の指が手前を通る）。
-// 握りは構えに近い横に広く低い挟みの形で、上は交差した指の平らな帯になる（尖った頂を作らない。ハートに見せない）。
-// 手のひらの中心は球の中心から JOIN_D（構えより押し込む）。JOIN_CROSS で左右を奥行きにずらし、交差する指どうしがぶつからない
-const JOIN_N = new THREE.Vector3(-0.8, -0.75, -0.3);
-const JOIN_F = new THREE.Vector3(-1, 0.35, 0.05);
-const JOIN_D = 0.6;
-// 持ち主 18:27「溜めてる状態からそのまま指を組む」: 左右の指を同じ面に置き、指の並びの向きに半本ずらして交互に組む
-// （S10 の重ねる交差 (0, 0.06, -0.13) から、指の面の高さをそろえる (0, -0.06, 0.08) へ。tests/render/handView.test.js の組み方の測り方）
-const JOIN_CROSS = new THREE.Vector3(0, -0.06, 0.08);
-const JOIN_LIFT = new THREE.Vector3(0, -0.3, 0); // 指先が球の上にかぶさる高さ
+// 握り合わせ（持ち主 18:27 / 19:09）: 放つと 1〜2 フレームで、両手の手のひらを縦に合わせて押しつけ、指を付け根まで深く交互に組み
+// （それぞれの指が相手の手の甲へ巻きつき、上に指の背と付け根の並びが見える）、親指は下で横に並べて交差させる（下の縁が平ら）。
+// 球は手のひらの間で押しつぶされ、芯の光が指の継ぎ目から細く漏れるだけ（ハートにも、V の光る窓にも見せない）。
+// 手のひらは内（相手の手）を向き（JOIN_N）、指は前・少し上へ（JOIN_F）。手のひらの中心は球の中心から JOIN_D
+const JOIN_N = new THREE.Vector3(-1, 0, 0.05);
+const JOIN_F = new THREE.Vector3(0, 0.15, -1);
+const JOIN_D = 0.12;
+// 指を組むずらし: 左右の手を指の並びの向き（握り合わせた手ではほぼ上下）に半本ずらし、指が交互に入る
+const JOIN_CROSS = new THREE.Vector3(0, 0.08, 0);
+const JOIN_LIFT = new THREE.Vector3(0, -0.05, 0); // 指先が球の上にかぶさる高さ
 // 払う: 手のひらを街のほう（前・少し上）へ向け、両手を前へ・少し外へ突き出す。右手で書く
 const PUSH_N = new THREE.Vector3(-0.35, 0.25, -1);
 const PUSH_F = new THREE.Vector3(-0.1, 1, 0.25);
@@ -430,14 +430,16 @@ export function createHandView(models, tierName) {
       let joinLat = 0;
       if (grip) {
         const e = env(grip, JOIN_SEC, joinEase);
-        joined = e.act;
+        // 持ち主 19:09: 放ったら 1〜2 フレームで組んだ手（握り合わせ）へ。向き・指の形・位置のどれも、左右へ寄る速さで
+        joined = Math.max(e.act, latEase(e.k) * e.held);
         // S6 fix1（持ち主 15:24 ハートに見せない）: 左右へ寄る動きだけは放った最初のフレームでほぼ済ませる（叩きつけるように挟む）。
         // 指先は最初のフレームからもう交差して重なり、寄る途中で指先どうしが頂で点で触れ合う瞬間を作らない。
         // 下がる・ひねる・指を曲げる動きは今までどおり約 0.25 秒（joinEase）
         joinLat = latEase(e.k) * e.held;
         // 締めつける間は押し縮められ（半分ほど）、弾けると外側の殻は消えて、手の中に小さな芯（ember）が燃え残る
-        orbScale = Math.min(orbScale, Math.max((1 - 0.55 * e.k * e.k) * (1 - e.gone), e.orbBack));
-        orbFade = Math.min(orbFade, Math.max(1 - e.gone, e.orbBack));
+        // S6 fix2: 指を組む最初のフレームから球を縮めて暗くする（組んだ手の間の光る窓を小さく。芯の光は保つ間も漏れる）
+        orbScale = Math.min(orbScale, Math.max((1 - 0.55 * e.k * e.k) * (1 - e.gone) * (1 - 0.85 * joinLat), e.orbBack));
+        orbFade = Math.min(orbFade, Math.max((1 - e.gone) * (1 - 0.45 * joinLat), e.orbBack));
         ember = e.after < 0 ? 0 : THREE.MathUtils.smoothstep(e.after, 0, 0.1) * e.held;
         // 震え: 弾ける直前が最大。保つ間も細かい震えが続く（力をこめて握り続ける）
         gripShake = e.after < 0 ? GRIP_SHAKE * e.k * e.k : Math.max(GRIP_SHAKE * Math.exp(-e.after / 0.05), GRIP_HOLD_SHAKE * e.held);

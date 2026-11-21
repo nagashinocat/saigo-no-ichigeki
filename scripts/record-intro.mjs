@@ -4,7 +4,7 @@
 //   [--size 432x768] [--scale 2.5]（→ 1080×1920）[--fps 30] [--seed 7] [--tier high] [--hold 1.5]（TAP START を見せる秒）
 //   [--frames dir]（コマの置き場所。省けば出力の隣の intro-frames）[--keep]（コマを消さない）[--from s --to s]（一部だけ）
 import { chromium } from 'playwright';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdirSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
@@ -54,8 +54,18 @@ try {
     if ((i - n0) % 30 === 0) console.log(`frame ${i - n0}/${n1 - n0} t=${t.toFixed(2)} ${((Date.now() - t0) / 1000).toFixed(0)}s`);
   }
   const vsec = (n1 - n0) / fps;
+  // 宣伝用の書き出しだけ、音の大きさを -14 LUFS・真のピーク -1 dBTP 以下へそろえる（ffmpeg loudnorm の 2 回通し。ゲームの音は変えない）
+  const wav = join(framesDir, 'intro.wav'), wavN = join(framesDir, 'intro-norm.wav');
+  const LN = 'I=-14:TP=-1.5:LRA=11';
+  const r1 = spawnSync('ffmpeg', ['-hide_banner', '-i', wav, '-af', `loudnorm=${LN}:print_format=json`, '-f', 'null', '-'], { encoding: 'utf8' });
+  const js = JSON.parse(r1.stderr.slice(r1.stderr.lastIndexOf('{'), r1.stderr.lastIndexOf('}') + 1));
+  execFileSync('ffmpeg', ['-y', '-loglevel', 'error', '-i', wav, '-af',
+    `loudnorm=${LN}:measured_I=${js.input_i}:measured_TP=${js.input_tp}:measured_LRA=${js.input_lra}:measured_thresh=${js.input_thresh}:offset=${js.target_offset}:linear=true,aresample=48000`, wavN]);
+  const r2 = spawnSync('ffmpeg', ['-hide_banner', '-i', wavN, '-af', `loudnorm=${LN}:print_format=json`, '-f', 'null', '-'], { encoding: 'utf8' });
+  const js2 = JSON.parse(r2.stderr.slice(r2.stderr.lastIndexOf('{'), r2.stderr.lastIndexOf('}') + 1));
+  console.log('loudness', JSON.stringify({ before: { I: js.input_i, TP: js.input_tp }, after: { I: js2.input_i, TP: js2.input_tp } }));
   execFileSync('ffmpeg', ['-y', '-loglevel', 'error', '-framerate', String(fps), '-i', join(framesDir, 'f%05d.png'),
-    '-ss', String(from), '-t', String(vsec), '-i', join(framesDir, 'intro.wav'),
+    '-ss', String(from), '-t', String(vsec), '-i', wavN,
     '-map', '0:v', '-map', '1:a', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '17', '-pix_fmt', 'yuv420p',
     '-vf', `scale=${Math.round(vw * scale / 2) * 2}:${Math.round(vh * scale / 2) * 2}:flags=lanczos`,
     '-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart', '-t', String(vsec), opt.out], { stdio: 'inherit' });

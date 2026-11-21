@@ -197,11 +197,7 @@ export function createIntroOverlay(root = document.body, { dprMax = 2, glow = 'f
       ls.setTransform(q, 0, 0, q, -(cx - R) * q, -(cy - R) * q);
       ls.fillStyle = '#fff';
       ls.fillRect(cx - R, cy - R, 2 * R, 2 * R);
-      paintGrain(ls, cx - R, cy - R, 2 * R, 2 * R, 0.16, alive);
-      // となりの文字（後・一）も薄く曲がる（曲げられた像が墨の渦のように回り込む。うるさくしない）
-      ls.textAlign = 'center'; ls.textBaseline = 'middle';
-      for (const i of [NO - 1, NO + 1]) { const k = state.chars[i].k; if (k <= 0) continue; ls.globalAlpha = 0.3 * k; ls.fillStyle = '#000'; ls.font = font(L[i].S); ls.fillText(state.chars[i].ch, L[i].x, L[i].y); }
-      ls.globalAlpha = 1;
+      paintGrain(ls, cx - R, cy - R, 2 * R, 2 * R, 0.07, alive); // 外の紙と同じ粒（円盤に見せない）
       const src = ls.getImageData(0, 0, n, n).data;
       lensImg ??= ld.createImageData(n, n);
       const out = lensImg.data, h = n / 2, te = thE * q, rcq = rc * q, Rq = R * q;
@@ -217,10 +213,10 @@ export function createIntroOverlay(root = document.body, { dprMax = 2, glow = 'f
           sx = Math.min(n - 1, Math.max(0, sx | 0)); sy = Math.min(n - 1, Math.max(0, sy | 0));
           const so = (sy * n + sx) * 4;
           // 芯へ近いほど暗く（光が戻ってこない）、芯は真っ黒
-          const dark = r < rcq ? 1 : Math.exp(-(((r - rcq) / (te * 0.55)) ** 2)) * 0.85;
+          const dark = r < rcq ? 1 : Math.exp(-(((r - rcq) / (te * 0.45)) ** 2)) * 0.8;
           const k = 1 - dark;
           out[o] = src[so] * k; out[o + 1] = src[so + 1] * k; out[o + 2] = src[so + 2] * k;
-          out[o + 3] = 255 * (1 - smoothstepJs(Rq * 0.92, Rq, r));
+          out[o + 3] = 255 * (1 - smoothstepJs(Rq * 0.55, Rq, r)); // 縁は紙へなじませる
         }
       }
       ld.putImageData(lensImg, 0, 0);
@@ -300,14 +296,10 @@ export function createIntroOverlay(root = document.body, { dprMax = 2, glow = 'f
       g.globalAlpha = c.k;
       g.font = font(S);
       if (i === NO) {
-        // 吸い込まれていく「の」: 渦の向きへ少しずれた薄い影を重ね、芯の黒の上でも読めるよう白い縁どり
-        const sw = 0.06 * Math.sin(alive * 0.35 * 2);
-        g.save(); g.rotate(sw + 0.12); g.scale(0.9, 0.9); g.globalAlpha = 0.18 * c.k; g.fillStyle = '#000'; g.fillText(c.ch, 0, 0); g.restore();
-        g.lineJoin = 'round';
-        g.strokeStyle = 'rgba(255,255,255,0.95)';
-        g.lineWidth = S * 0.075;
-        g.rotate(sw * 0.4);
-        g.strokeText(c.ch, 0, 0);
+        // 吸い込まれていく「の」: 渦の向きへごくわずかに傾く。仕上げはほかの文字と同じ黒。芯の黒の上でも読めるよう、
+        // 白い縁どりではなく、紙の色のやわらかい光で芯から浮かせる
+        g.rotate(0.025 * Math.sin(alive * 0.7));
+        g.save(); g.shadowColor = 'rgba(255,255,255,0.95)'; g.shadowBlur = S * 0.12; g.fillStyle = '#0a080c'; g.fillText(c.ch, 0, 0); g.fillText(c.ch, 0, 0); g.restore();
       }
       if (blurK > 0) { g.shadowColor = `rgba(0,0,0,${0.45 * (1 - c.k)})`; g.shadowBlur = 30 * (1 - c.k) * blurK; }
       g.fillStyle = '#0a080c';
@@ -328,6 +320,27 @@ export function createIntroOverlay(root = document.body, { dprMax = 2, glow = 'f
         star(x + Math.cos(sp.a) * r, y + Math.sin(sp.a) * r, S * sp.size, u, 1, 0);
       }
     });
+  }
+
+  // 隠れる → 手のアップのつなぎ（持ち主 19:04「真っ暗な中に力の球がぼうっと浮き上がる」）: 真っ黒の中に、手の拍の球と同じ所に
+  // かすかな力の球が、ゆらぎながらゆっくり浮かび上がる（u: 0〜1）
+  function orbRise(u, t) {
+    g.fillStyle = '#000';
+    g.fillRect(0, 0, W, H);
+    const k = easeOut(u) * (0.85 + 0.15 * Math.sin(t * 7.3) * Math.sin(t * 3.1 + 1));
+    const cx = W / 2, cy = H * 0.5, R = Math.min(W, H) * (0.05 + 0.05 * easeOut(u));
+    const halo = g.createRadialGradient(cx, cy, 0, cx, cy, R * 5);
+    halo.addColorStop(0, `rgba(255,170,90,${0.22 * k})`);
+    halo.addColorStop(0.4, `rgba(160,60,30,${0.08 * k})`);
+    halo.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = halo;
+    g.fillRect(0, 0, W, H);
+    const core = g.createRadialGradient(cx, cy, 0, cx, cy, R);
+    core.addColorStop(0, `rgba(255,236,200,${0.85 * k})`);
+    core.addColorStop(0.45, `rgba(255,170,90,${0.55 * k})`);
+    core.addColorStop(1, 'rgba(120,40,20,0)');
+    g.fillStyle = core;
+    g.beginPath(); g.arc(cx, cy, R, 0, Math.PI * 2); g.fill();
   }
 
   // 1: 速さの線（消失点から外へ。速いほど濃い）
@@ -365,11 +378,16 @@ export function createIntroOverlay(root = document.body, { dprMax = 2, glow = 'f
       if (!visible) return;
       const n = b.name;
       // 何も描かない拍（ライト・隠れる・手）は、空にしたら次からは触らない
-      const empty = !(n === 'cardA' || n === 'cardB' || n === 'white' || n === 'title' || (n === 'bikes' && view3d));
+      const empty = !(n === 'cardA' || n === 'cardB' || n === 'white' || n === 'title' || n === 'orb' || (n === 'bikes' && view3d));
       if (empty && lastEmpty) return;
       lastEmpty = empty;
       g.clearRect(0, 0, W, H);
-      if (n === 'cardA' || n === 'cardB') card(b.beat.text, b.local, n === 'cardA' ? 0 : 2.1);
+      // カード: 真っ黒を INTRO.card.black 秒見せてから、文字が叩きつけられる（持ち主 19:04）
+      if (n === 'cardA' || n === 'cardB') {
+        const d = b.local - INTRO.card.black;
+        if (d < 0) { g.fillStyle = '#000'; g.fillRect(0, 0, W, H); } else card(b.beat.text, d, n === 'cardA' ? 0 : 2.1);
+      }
+      else if (n === 'orb') orbRise(b.local / b.beat.dur, t);
       else if (n === 'white') { g.fillStyle = '#fff'; g.fillRect(0, 0, W, H); }
       else if (n === 'title') title(tl.titleState(t), alive ?? t);
       else if (n === 'bikes' && view3d) speedLines(t, view3d.speed, view3d.vanish[0], view3d.vanish[1]);
@@ -380,7 +398,7 @@ export function createIntroOverlay(root = document.body, { dprMax = 2, glow = 'f
       button.classList.toggle('pulse', bt >= 1);
     },
     // 画面全体を覆っているか（下の WebGL を描かなくてよい）
-    covers(b) { return b.name === 'cardA' || b.name === 'cardB' || b.name === 'white' || b.name === 'title'; },
+    covers(b) { return b.name === 'cardA' || b.name === 'cardB' || b.name === 'white' || b.name === 'title' || b.name === 'orb'; },
     // ゲームへ: 少しかけて消える
     fadeOut(sec = 0.5) {
       canvas.style.transition = `opacity ${sec}s ease-out`;

@@ -316,6 +316,27 @@ export function createIntro({ views, scene, cityView, enemyView, heroAura, patro
   };
   const clearPool = () => poolU.uK.value.fill(0);
   const pool = new THREE.Mesh(new THREE.PlaneGeometry(240, 240).rotateX(-Math.PI / 2), new THREE.ShaderMaterial({ uniforms: poolU, vertexShader: POOL_VERT, fragmentShader: POOL_FRAG, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -8 }));
+  // 3（持ち主 19:04）: 追い詰められた主人公の後ろの壁と、壁に映る丸いライトの溜まり（地面と同じ式を縦の板で）と、
+  // ライトごとに壁へ映る主人公の黒い影（主人公の網をライトの位置から壁の面へ押しつぶして描く。安い投影の影）
+  const lightSet = new THREE.Group();
+  lightSet.visible = false;
+  const wallMesh = new THREE.Mesh(new THREE.BoxGeometry(34, 16, 0.6), new THREE.MeshLambertMaterial({ color: 0x2c2832 }));
+  const wallPool = new THREE.Mesh(new THREE.PlaneGeometry(34, 16), new THREE.ShaderMaterial({ uniforms: poolU, vertexShader: POOL_VERT, fragmentShader: POOL_FRAG, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+  wallPool.renderOrder = 5;
+  wallPool.frustumCulled = false;
+  lightSet.add(wallMesh, wallPool);
+  group.add(lightSet);
+  const SHADOW_VERT = /* glsl */`
+uniform mat4 uHero; uniform vec3 uLamp, uP0, uN;
+void main() {
+  vec3 w = (uHero * vec4(position, 1.0)).xyz;
+  vec3 d = w - uLamp;
+  float t = dot(uP0 - uLamp, uN) / dot(d, uN);
+  vec3 p = uLamp + d * max(t, 0.0) + uN * 0.03;
+  gl_Position = projectionMatrix * viewMatrix * vec4(p, 1.0);
+}`;
+  const shadows = [];
+  const _wallN = new THREE.Vector3(), _wallP = new THREE.Vector3();
   pool.renderOrder = 3;
   pool.frustumCulled = false;
   group.add(pool);
@@ -342,8 +363,8 @@ export function createIntro({ views, scene, cityView, enemyView, heroAura, patro
   gapSet.name = 'intro-gap';
   gapSet.visible = false;
   {
-    const wallMat = new THREE.MeshLambertMaterial({ color: 0x4a4250 });
-    const dark = new THREE.MeshLambertMaterial({ color: 0x2b2830 });
+    const wallMat = new THREE.MeshLambertMaterial({ color: 0x1c1a21 }); // 持ち主 19:04: 真っ暗なすき間
+    const dark = new THREE.MeshLambertMaterial({ color: 0x141217 });
     const len = GAP.z0 - HIDE.open;
     for (const side of [-1, 1]) {
       const w = new THREE.Mesh(new THREE.BoxGeometry(0.8, GAP.h, len), wallMat);
@@ -373,7 +394,7 @@ export function createIntro({ views, scene, cityView, enemyView, heroAura, patro
   const heroDetail = tier === 'low' ? 'low' : 'mid';
   const heroBuilder = createHeroBodyBuilder({ detail: heroDetail, pose: STAND });
   let heroMesh = null, heroBody = null, heroPos = null;
-  const heroU = { uSil: { value: 0 }, uWindK: { value: 0.5 }, uRim: { value: HEAD_GREEN.clone().multiplyScalar(2.2) } };
+  const heroU = { uSil: { value: 0 }, uWindK: { value: 0.5 }, uRim: { value: HEAD_GREEN.clone().multiplyScalar(2.2) }, uGlow: { value: 0 } };
   function ensureHero() {
     if (heroMesh) return heroMesh;
     heroBody = heroBuilder.finish();
@@ -475,8 +496,24 @@ export function createIntro({ views, scene, cityView, enemyView, heroAura, patro
     fx.flash = 0;
   }
 
-  // 3: ライトに捉えられる（持ち主 18:04）: バイクのライトがスポットライトのように一つ、また一つと主人公を捉え、
-  // 後ろ・上の扇から交差する光の十字砲火に縫い止められる。足元からライトの数だけ影が扇に伸びる。すくんで、右へ走って逃げる
+  // 3: ライトに捉えられる（持ち主 18:04 / 19:04）: 壁際に追い詰められた主人公を、正面に浮かぶバイクのライトが一つ、また一つと
+  // とらえる。後ろの壁にライトの丸い溜まりが重なり、その中に主人公の黒い影がライトの数だけ扇に映る。すくんで、横へ光を避けて逃げる
+  // （壁の丸い光は遅れて主人公を追う）
+  function ensureShadows() {
+    if (shadows.length) return;
+    for (let i = 0; i < LIGHT_BIKES.length; i++) {
+      const m = new THREE.Mesh(heroMesh.geometry, new THREE.ShaderMaterial({
+        uniforms: { uHero: { value: new THREE.Matrix4() }, uLamp: { value: new THREE.Vector3() }, uP0: { value: new THREE.Vector3() }, uN: { value: new THREE.Vector3() }, uK: { value: 0 } },
+        vertexShader: SHADOW_VERT, fragmentShader: 'uniform float uK; void main() { gl_FragColor = vec4(0.0, 0.0, 0.0, uK); }',
+        transparent: true, depthWrite: false,
+      }));
+      m.frustumCulled = false;
+      m.renderOrder = 6;
+      lightSet.add(m);
+      shadows.push(m);
+    }
+  }
+  let aimX = null;
   function lightBeat(t, local, dt) {
     const s = site.light, L = INTRO.light;
     const fl = L.flinchAt, runFrom = fl + INTRO.run.afterFlinch - 0.13;
@@ -484,63 +521,72 @@ export function createIntro({ views, scene, cityView, enemyView, heroAura, patro
     const hit = local >= fl ? Math.exp(-(local - fl) / 0.12) : 0;
     const snap = LIGHT_BIKES.reduce((m, b) => Math.max(m, local >= b.lockAt ? Math.exp(-(local - b.lockAt) / 0.06) : 0), 0);
     const c = LIGHT.cam;
-    // カメラ: 低い位置から見上げ、光が増えるほどじわじわ寄る。捉えられるたびに小さく揺れ、すくむ瞬間に寄る
-    const push = 1.6 * smooth(local / fl);
-    setCam(s, [c.pos[0] + 0.1 * local, c.pos[1], c.pos[2] - push], c.look, c.fov - 8 * smooth((local - fl) / 0.3), 0.003 + 0.012 * snap + 0.03 * hit, 0.035, t);
+    // カメラ: バイクの後ろ・間から主人公を見る。光が増えるほどじわじわ寄り、すくむ瞬間に小さく寄る
+    const push = 1.2 * smooth(local / fl);
+    setCam(s, [c.pos[0], c.pos[1], c.pos[2] - push], c.look, c.fov - 6 * smooth((local - fl) / 0.3), 0.003 + 0.01 * snap + 0.025 * hit, 0.02, t);
     const hp = heroPath('light', local);
     const hx = hp.x, hz = hp.z;
     let yaw = 0, rot;
     if (local < fl) {
-      rot = addRot(runRot(local * Math.PI / 0.7, 0.25 * (1 - smooth(locks / 3))), flinchRot(0.12 * locks / 5)); // 歩きながら、光が増えるほど身を固くする
+      rot = addRot(runRot(0, 0), flinchRot(0.15 + 0.12 * locks / 5)); // 壁を背に身を固くする
     } else if (local < runFrom) {
-      const k = easeOut((local - fl) / 0.12);
-      rot = addRot(flinchRot(0.12 + 0.88 * k), {});
+      rot = flinchRot(0.27 + 0.73 * easeOut((local - fl) / 0.12));
     } else {
       const u = local - runFrom;
       const k = smooth(u / 0.25);
       const ph = Math.PI / 2 + Math.PI * (u - 0.13) / INTRO.run.stride;
       rot = addRot(flinchRot(1 - k), runRot(ph, k));
-      yaw = -1.2 * k; // 右（ローカル +x）へ向きを変えて走る
+      yaw = 1.45 * k; // 横（ローカル +x）へ向きを変えて、壁に沿って逃げる
     }
     placeHero(s, hx, hz, yaw, rot);
-    poolU.uFoot.value.copy(_a);
-    // 狙う所: 腰（光の溜まりが足元のまわりに丸く落ち、主人公の体を照らす）
-    toWorld(s, hx, 0.75, hz, _b);
+    ensureShadows();
+    // 壁（主人公のすぐ後ろ）
+    lightSet.visible = true;
+    toWorld(s, 0, 8, LIGHT.wall - 0.3, wallMesh.position);
+    wallMesh.rotation.set(0, s.yaw, 0);
+    toWorld(s, 0, 8, LIGHT.wall + 0.02, wallPool.position);
+    wallPool.rotation.set(0, s.yaw, 0);
+    _wallN.set(Math.sin(s.yaw), 0, Math.cos(s.yaw)); // 壁の面の向き（ローカル +z）
+    toWorld(s, 0, 0, LIGHT.wall, _wallP);
+    heroMesh.getMatrixAt(0, _m);
+    // ライトの狙い: 主人公の胸。逃げ出すと、遅れて追う（壁の丸い光が主人公を探す）
+    aimX = aimX === null || local < 0.05 ? hx : aimX + (hx - aimX) * Math.min(1, dt * 4);
+    toWorld(s, aimX, 1.25, hz, _b);
     const chest = _b.clone();
     extra.length = 0;
     clearPool();
     hideLamps();
-    let facingMax = 0;
     LIGHT_BIKES.forEach((b, i) => {
       const p = lightBikeAt(b, local);
-      if (!p.on) return;
-      // バイクは主人公を向いて浮かぶ
-      const yawB = Math.atan2(hx - p.x, hz - p.z);
-      extra.push(bikePoseW(s, { x: p.x, y: p.y, z: p.z, yaw: yawB, pitch: 0.18, roll: 0.15 * Math.sin(local * 1.7 + i) }, 30 + b.id, 1.6));
+      const sh = shadows[i];
+      if (!p.on) { sh.visible = false; return; }
+      // バイクは主人公を向いて浮かぶ（カメラには後ろ姿）
+      const yawB = Math.atan2(aimX - p.x, hz - p.z);
+      extra.push(bikePoseW(s, { x: p.x, y: p.y, z: p.z, yaw: yawB, pitch: 0.06, roll: 0.12 * Math.sin(local * 1.7 + i) }, 30 + b.id, 1.6));
       toWorld(s, p.x + Math.sin(yawB) * 1.1, p.y + 0.35, p.z + Math.cos(yawB) * 1.1, _a);
       const lampPos = _a.clone();
-      // 捉える前は前（少し下）を照らし、lock でぴたりと主人公の胸へ
-      const fwd = new THREE.Vector3(Math.sin(s.yaw + yawB + 0.6), -0.35, Math.cos(s.yaw + yawB + 0.6)).normalize();
+      const fwd = new THREE.Vector3(Math.sin(s.yaw + yawB + 0.7), -0.25, Math.cos(s.yaw + yawB + 0.7)).normalize();
       const dir = fwd.lerp(chest.clone().sub(lampPos).normalize(), p.lock).normalize();
       const on = smooth((local - (b.lockAt - 0.4)) / 0.15);
-      // 硬いスポットライト: 細い円錐、はっきりした光の帯
-      const f = setLamp(lamps[i], lampPos, dir, lampPos.distanceTo(chest) * 1.12, 0.06, (0.25 + 0.45 * p.lock) * on, (0.5 + 0.7 * p.lock) * on, 5);
-      facingMax = Math.max(facingMax, f * p.lock);
+      setLamp(lamps[i], lampPos, dir, lampPos.distanceTo(chest) + 1.5, 0.13, (0.05 + 0.07 * p.lock) * on, 0.3 * on, 4);
       poolU.uLamp.value[i].copy(lampPos);
       poolU.uDir.value[i].copy(dir);
-      poolU.uK.value[i] = (0.3 + 0.7 * p.lock) * on * 1.1;
+      poolU.uK.value[i] = (0.2 + 0.8 * p.lock) * on * 0.32;
+      // 壁に映る主人公の影（ライトがとらえている間）
+      sh.visible = p.lock > 0.02;
+      const u = sh.material.uniforms;
+      u.uHero.value.copy(_m); u.uLamp.value.copy(lampPos); u.uP0.value.copy(_wallP); u.uN.value.copy(_wallN); u.uK.value = 0.96 * p.lock;
     });
-    poolU.uCos.value = Math.cos(0.06);
-    poolU.uShadow.value = 1;
-    pool.position.set(chest.x, 0, chest.z);
-    pool.visible = true;
+    poolU.uCos.value = Math.cos(0.13);
+    poolU.uShadow.value = 0;
+    pool.visible = false;
     syncBikes(dt);
-    // 光を背にした影絵。光が増えるほど縁が白く光る
-    heroU.uSil.value = 0.4 + 0.12 * locks;
+    // 正面から照らされる: 影絵ではなく、光で白く飛びかける
     const blind = locks / LIGHT_BIKES.length;
-    Object.assign(grade, { exposure: 0.85 + 0.25 * blind + 0.1 * snap, contrast: 1.25 + 0.1 * blind, streak: 0, ca: 0.3 + 0.8 * snap + 1.2 * hit, zoom: 0.01 * snap + 0.02 * hit, zoomC: [0.5, 0.55], blur: [0, 0], grain: 0.06, vig: 0.75 - 0.15 * blind, warm: 0.15, sat: 1.0 - 0.15 * blind, bloom: 0.9 + 0.5 * blind });
+    heroU.uSil.value = 0;
+    heroU.uGlow.value = 0.15 + 0.45 * blind;
+    Object.assign(grade, { exposure: 0.85 + 0.12 * blind + 0.06 * snap, contrast: 1.3, streak: 0, ca: 0.3 + 0.6 * snap + 1.0 * hit, zoom: 0.008 * snap + 0.02 * hit, zoomC: [0.5, 0.55], blur: [0, 0], grain: 0.06, vig: 0.8 - 0.1 * blind, warm: 0.12, sat: 1.0 - 0.1 * blind, bloom: 0.45 + 0.25 * blind });
     fx.flash = 0;
-    void facingMax;
   }
 
   // 5: すき間へ隠れる（そこが爆心）
@@ -563,7 +609,7 @@ export function createIntro({ views, scene, cityView, enemyView, heroAura, patro
     const runYaw = Math.atan2(HIDE.to[0] - HIDE.from[0], HIDE.to[1] - HIDE.from[1]);
     const yaw = runYaw + (Math.PI / 2 - runYaw) * settle;
     placeHero(s, hx, hz, yaw, rot);
-    heroU.uSil.value = 0.82;
+    heroU.uSil.value = 0.97; // 真っ暗の中の影（縁だけかすかに光る）
     // 光の筋: 開口部（ローカル z = open）を横に走る
     let wash = 0, washSide = 0;
     streaks.forEach((st, i) => {
@@ -594,7 +640,7 @@ export function createIntro({ views, scene, cityView, enemyView, heroAura, patro
     const c = HIDE.cam;
     const push = 0.9 * smooth(local / 2.2);
     setCam(s, [c.pos[0] - 0.2 * push, c.pos[1] - 0.05 * push, c.pos[2] - push], c.look, c.fov - 3 * push, 0.005 + 0.02 * wash, 0.03, t);
-    Object.assign(grade, { exposure: 0.7 + 0.15 * wash, contrast: 1.3, streak: 0, ca: 0.3 + 0.8 * wash, zoom: 0, zoomC: [0.5, 0.5], blur: [0.006 * wash * Math.sign(washSide || 1), 0], grain: 0.07, vig: 0.85, warm: 0.15, sat: 0.95, bloom: 1.0 });
+    Object.assign(grade, { exposure: 0.36 + 0.2 * wash, contrast: 1.35, streak: 0, ca: 0.3 + 0.8 * wash, zoom: 0, zoomC: [0.5, 0.5], blur: [0.006 * wash * Math.sign(washSide || 1), 0], grain: 0.07, vig: 0.85, warm: 0.15, sat: 0.95, bloom: 1.0 });
     fx.flash = 0;
   }
 
@@ -637,7 +683,7 @@ export function createIntro({ views, scene, cityView, enemyView, heroAura, patro
       show(is3d);
       if (is3d) cityView.setCloseView(true);
       if (heroMesh) heroMesh.visible = b.name === 'light' || b.name === 'hide';
-      if (b.name !== 'light') pool.visible = false;
+      if (b.name !== 'light') { pool.visible = false; lightSet.visible = false; heroU.uGlow.value = 0; }
       if (b.name !== 'hide') { gapSet.visible = false; for (const m of streakMeshes) m.visible = false; for (const w of walls) w.visible = false; }
       if (b.name !== 'bikes' && enemyView.focus?.id >= 900) enemyView.setFocus(null);
       if (b.name === 'bikes') bikesBeat(t, b.local, dt);
@@ -661,6 +707,7 @@ export function createIntro({ views, scene, cityView, enemyView, heroAura, patro
       for (const m of streakMeshes) m.visible = false;
       for (const w of walls) w.visible = false;
       gapSet.visible = false;
+      lightSet.visible = false;
       enemyView.sync([], { aids: true });
       hand.reset();
       hand.setFlashScale(1);

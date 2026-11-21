@@ -1,6 +1,6 @@
 import { createRng } from '../rng.js';
 import { LIMITER } from './audio.js';
-import { INTRO, introBikes, whooshAt, introStreaks, streakAt, introCues, introHands, heroPan, LIGHT_BIKES, lightBikeAt, lightBikePan, LIGHT_SHOT } from '../render/introTimeline.js';
+import { INTRO, introBikes, whooshAt, introStreaks, streakAt, introCues, introHands, heroPan } from '../render/introTimeline.js';
 import { scheduleIntroMusic } from './introMusic.js';
 
 // 導入の音（S6）。音は画面に合わせる（持ち主 13:06）: どの音も導入の時刻表（introTimeline.js）の同じ時刻・同じ位置から決める。
@@ -12,7 +12,7 @@ import { scheduleIntroMusic } from './introMusic.js';
 // ライブ（AudioContext）と録画（OfflineAudioContext）で同じものを組む。ノイズは決まった種で作る（録画が毎回同じ音になる）。
 // ctx: BaseAudioContext、dest: つなぐ先、t0: 導入の 0 秒の ctx の時刻、tl: introTimeline。戻り値の cut() で全部すぐ止める（飛ばしたとき）
 // bus: 効果音のまとめ（導入の音楽の下に置く。S6 fix1 で 0.72 → 0.55）
-export const INTRO_SFX = { bus: 0.55, bike: 0.55, engine: 0.07, streak: 0.32, bed: 0.06, lock: 0.5, hum: 0.05 };
+export const INTRO_SFX = { bus: 0.55, bike: 0.55, engine: 0.07, streak: 0.32, bed: 0.06 };
 
 function noiseBuffers(ctx) {
   const sr = ctx.sampleRate, n = Math.floor(sr * 2);
@@ -133,22 +133,7 @@ export function scheduleIntroSfx(ctx, dest, t0, tl, { from = 0 } = {}) {
     s.connect(lp); lp.connect(g); g.connect(bus);
   }
 
-  // ---- 3: スポットライト（持ち主 18:04）: バイクごとの推進の唸り（位置で左右・近さ）と、ライトが主人公を捉える瞬間の鋭い一打 ----
-  const light = tl.beat('light');
-  if (light && !past(light.start)) {
-    for (const b of LIGHT_BIKES) {
-      const s0 = Math.max(0, b.lockAt - 0.4), dur = light.end - light.start - s0, when = at(light.start + s0);
-      const dist = (u) => { const p = lightBikeAt(b, s0 + u); const c = LIGHT_SHOT.cam.pos; return Math.hypot(p.x - c[0], p.y - c[1], p.z - c[2]); };
-      const o = osc('sawtooth', when, dur);
-      o.frequency.setValueAtTime(96 + 9 * b.id, when);
-      const lp = filt('lowpass', 520, 1.1);
-      const g = gainNode();
-      curve(g.gain, when, dur, (u) => INTRO_SFX.hum * Math.min(1, u / 0.25) * Math.min(1, (dur - u) / 0.1) / (1 + (dist(u) / 14) ** 2) * 4);
-      const pn = pan();
-      curve(pn.pan, when, dur, (u) => lightBikePan(b, s0 + u));
-      o.connect(lp); lp.connect(g); g.connect(pn); pn.connect(bus);
-    }
-  }
+  // ---- 3: スポットライトには音をつけない（持ち主 19:05。BGM だけ）----
 
   // ---- 5: すき間の光の筋 ----
   const hide = tl.beat('hide');
@@ -195,13 +180,7 @@ export function scheduleIntroSfx(ctx, dest, t0, tl, { from = 0 } = {}) {
   for (const c of introCues(tl)) {
     if (past(c.t)) continue;
     const w = at(c.t);
-    if (c.name === 'lock') {
-      // ライトが主人公を捉えた: 鋭い金属的な一打（そのバイクの左右）と低い圧
-      const b = LIGHT_BIKES[c.arg], p = lightBikePan(b, b.lockAt);
-      burst(w, 0.09, INTRO_SFX.lock * 0.6, 'highpass', 4200, 2600, 0.9, p);
-      ring(w, 2350 + 140 * c.arg, 0.35, 0.05, p);
-      thump(w, 160, 70, 0.22, INTRO_SFX.lock * 0.7, p * 0.6, 0.002);
-    } else if (c.name === 'flinch') {
+    if (c.name === 'flinch') {
       burst(w, 0.14, 0.4, 'highpass', 2600, 1500, 0.8);
       thump(w, 150, 55, 0.4, 0.55);
       ring(w, 1180, 0.5, 0.05, 0);

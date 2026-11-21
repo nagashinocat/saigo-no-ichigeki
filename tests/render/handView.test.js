@@ -4,7 +4,7 @@ import { CONFIG } from '../../src/config.js';
 import * as THREE from 'three';
 import { buildHandModel } from '../../src/render/handModel.js';
 import { HAND_JOINTS } from '../../src/render/handPose.js';
-import { heartFrames, interlace } from './heartProxy.js';
+import { heartFrames, interlace, litWindow } from './heartProxy.js';
 
 const DT = 1 / 60;
 const run = (view, sec, ...args) => { for (let t = 0; t < sec - 1e-9; t += DT) view.update(DT, ...args); };
@@ -185,44 +185,31 @@ test('貯めるほど両手の間が少し広がる', () => {
   expect(g9).toBeLessThan(g0 * 2);
 });
 
-test('最後の一発: 約0.25秒で両手が球を鷲掴みにする — 指は球の上で交差して球を上から覆い、親指は球の下で先が離れ、ハートの形にならない', () => {
+test('最後の一発（持ち主 19:09）: 放ったら 1〜2 フレームで両手を握り合わせる — 手のひらを合わせて球を押しつぶし、指は相手の付け根を越えて交互に組み、親指は下で横に交差する', () => {
   const wp = (m, s, n) => m[s].bones[n].getWorldPosition(new THREE.Vector3());
   for (const detail of ['low', 'high']) {
     const m = hands(detail);
     const view = createHandView(m, detail);
     view.resize(390 / 295);
-    run(view, 1, 0.9, true, 0.6);
-    const stance = palmGap(view);
+    run(view, 1, 0.9, true, 1);
+    const stance = palmGap(view), stanceR = view.orbSphere.radius;
     view.release({ amount: CONFIG.power.max, isBig: true });
-    run(view, 0.1, 0, false, 0.6);
-    // 0.1 秒では、先に大きく寄ってもう指が閉じかけている（光る内側を手が囲む途中の形を長く見せない）が、まだ締めきっていない。
-    // 球は手の中で燃えたまま（放った瞬間の力の大きさの半分以上）
-    expect(palmGap(view)).toBeLessThan(stance);
-    expect(view.joined).toBeGreaterThan(0.5);
-    expect(view.joined).toBeLessThan(0.95);
-    expect(view.orbSphere.radius).toBeGreaterThan(0.2);
-    run(view, 0.15, 0, false, 0.6);
+    run(view, 2 * DT, 0, false, 0.6);
     const label = detail;
-    expect(view.joined).toBeCloseTo(1, 2);
-    // 手のひらで押し込む: 手のひらの間は構えの半分未満
-    expect(palmGap(view), label).toBeLessThan(stance * 0.5);
+    expect(view.joined, label).toBeGreaterThan(0.95);
+    // 手のひらを合わせる（構えの 3 割より近い）。球は押しつぶされる（構えの半分より小さい）が、芯は残る
+    expect(palmGap(view), label).toBeLessThan(stance * 0.3);
+    expect(view.orbSphere.radius, label).toBeLessThan(stanceR * 0.5);
+    expect(view.orbSphere.radius, label).toBeGreaterThan(0.02);
+    // 指は交互に組み、相手の手の付け根を越えて届く
+    const il = interlace(m);
+    expect(il.alternations, label).toBe(7);
+    expect(il.reach, label).toBe(true);
+    // 親指は球の下で、左右が横に交差する（右手の親指の先が左手の親指の先より左）。先どうしは合わせない
     const { center } = view.orbSphere;
-    const tips = (s) => FINGER_TIPS.map((n) => wp(m, s, n));
-    // 指先は左右で交差する（右手の指先は左手の指先より左まで、左手の指先は右手の指先より右まで届く）
-    expect(Math.min(...tips('right').map((p) => p.x)), label).toBeLessThan(Math.max(...tips('left').map((p) => p.x)));
-    // 球は指より下（指先の高さの平均より下）、親指の先より上
-    for (const side of ['right', 'left']) {
-      const ys = tips(side).map((p) => p.y);
-      expect(ys.reduce((a, b) => a + b, 0) / ys.length, `${label} ${side}`).toBeGreaterThan(center.y);
-      expect(wp(m, side, 'thumb-tip').y, `${label} ${side}`).toBeLessThan(center.y);
-    }
-    // 球を上から覆う: 画面で、どちらの手も、球の中心を越えて向こう側まで届く指先が球の中心より上にある
-    const c = center.clone().project(view.camera);
-    for (const [side, out] of [['right', 1], ['left', -1]]) {
-      const over = tips(side).some((p) => { const q = p.clone().project(view.camera); return (q.x - c.x) * out < 0 && q.y > c.y; });
-      expect(over, `${label} ${side}`).toBe(true);
-    }
-    // 親指の先は合わせない（ハートの下の尖りを作らない）
+    // （画面で）親指の先は球の中心より下: 下の縁に横に並ぶ
+    for (const side of ['right', 'left']) expect(wp(m, side, 'thumb-tip').project(view.camera).y, `${label} ${side}`).toBeLessThan(center.clone().project(view.camera).y);
+    expect(wp(m, 'right', 'thumb-tip').x, label).toBeLessThan(wp(m, 'left', 'thumb-tip').x);
     expect(wp(m, 'right', 'thumb-tip').distanceTo(wp(m, 'left', 'thumb-tip')), label).toBeGreaterThan(0.08);
   }
 });
@@ -280,7 +267,7 @@ test('鷲掴みで締めつける間、弾ける直前に手が震える', () =>
   expect(late).toBeGreaterThan(0.006);
 });
 
-test('鷲掴みのまま保つ間: 手の中に押し縮められた球の芯が脈打って燃え残り、指は芯の上へ鉤をかけ、前腕は手首へ向かって上がり、手は細かく震え続ける', () => {
+test('握り合わせたまま保つ間: 手の中に押しつぶされた球の芯が脈打って燃え残り、指は交互に組んだまま、手は細かく震え続ける', () => {
   const wp = (m, s, n) => m[s].bones[n].getWorldPosition(new THREE.Vector3());
   const m = hands('low');
   const v = createHandView(m, 'low');
@@ -299,16 +286,12 @@ test('鷲掴みのまま保つ間: 手の中に押し縮められた球の芯が
   expect(Math.min(...radii)).toBeGreaterThan(0.05);
   expect(Math.max(...radii)).toBeLessThan(0.2);
   expect(Math.max(...radii) - Math.min(...radii)).toBeGreaterThan(0.02);
-  // 芯は握った手の中: 指先の高さの平均より下、親指の先より上
+  // 芯は握り合わせた手の中: 親指の先より上。指は保つ間も交互に組んだまま（持ち主 19:09）
   const { center } = v.orbSphere;
-  for (const side of ['right', 'left']) {
-    const ys = FINGER_TIPS.map((n) => wp(m, side, n).y);
-    expect(ys.reduce((a, b) => a + b, 0) / 4, side).toBeGreaterThan(center.y);
-    expect(wp(m, side, 'thumb-tip').y, side).toBeLessThan(center.y);
-    // 前腕は手首へ向かって上がる（画面で、前腕の先より手首のほうが上）。手の甲を寝かせない
-    const w = wp(m, side, 'wrist').project(v.camera), a = new THREE.Vector3(0, 0, 0.12).applyMatrix4(m[side].bones.wrist.matrixWorld).project(v.camera);
-    expect(w.y, side).toBeGreaterThan(a.y);
-  }
+  for (const side of ['right', 'left']) expect(wp(m, side, 'thumb-tip').project(v.camera).y, side).toBeLessThan(center.clone().project(v.camera).y);
+  const il = interlace(m);
+  expect(il.alternations).toBe(7);
+  expect(il.reach).toBe(true);
   // 保つ間も細かく震え続ける
   let jit = 0;
   for (let i = 2; i < ps.length; i++) jit += ps[i].clone().sub(ps[i - 1]).sub(ps[i - 1].clone().sub(ps[i - 2])).length();
@@ -351,12 +334,12 @@ test('鷲掴みのまま保つ間、芯は熱い光として明るく燃え、�
   }
 });
 
-test('放ってから保つまで、指先の鉤（第一関節の曲げ）は緩まない', () => {
+test('放ってから保つまで、組んだ指（付け根の曲げ）は緩まない（持ち主 19:09 の握り合わせ）', () => {
   for (const level of [0.6, 0.9]) {
     const m = hands('low');
     const dips = [];
     const sp = m.right.setPose;
-    m.right.setPose = (pose) => { dips.push(pose['index-finger-phalanx-distal'][0]); sp(pose); };
+    m.right.setPose = (pose) => { dips.push(pose['index-finger-phalanx-proximal'][0]); sp(pose); };
     const v = createHandView(m, 'low');
     run(v, 1, level, true, 1);
     dips.length = 0;
@@ -474,12 +457,29 @@ test('S6 fix1: 放った直後の 0〜0.25 秒、1/60 秒ごとのどの瞬間�
       if (f.near < 0.1) expect(f.overlap, `${label} tips within reach must already cross`).toBeGreaterThan(0.33);
       expect(f.overlap, `${label} crossed from the first frame`).toBeGreaterThan(0.33);
       expect(f.apex, `${label} apex`).toBeGreaterThan(0.38);
-      expect(f.thumb, `${label} thumb`).toBeLessThan(-0.03);
+      expect(f.thumb, `${label} thumb`).toBeLessThanOrEqual(0); // 親指は上へ巻き上げない
     }
   }
 });
 
-test('持ち主 18:27: 放つと、溜めていた構えからそのまま指を組む: 0〜0.25 秒の 1/60 秒ごとに、指先は左右交互に並ぶか相手の付け根を越えて届き、締めきると同じ面で交互に組む', () => {
+// S6 fix2: 骨だけでは見えない「光る窓」（手のひらの肉と球の光）の形。下の縁が V に尖らない（下の幅が上の 4 割以上。窓がなければよい）
+// （手の網に光線を当てて調べるので重い。形の同じ low の網で測る）
+test('S6 fix2: 放った直後（+1/60〜+0.1 秒）、両手に囲まれた光る窓の下の縁は尖らない（V にならない）', () => {
+  for (const detail of ['low']) {
+    const m = hands(detail);
+    const view = createHandView(m, detail);
+    view.resize(390 / 295);
+    run(view, 1, 0.9, true, 1);
+    view.release({ amount: CONFIG.power.max, isBig: true });
+    for (let i = 1; i <= 6; i++) {
+      view.update(DT, 0, false, 1);
+      const w = litWindow(view, m, 24);
+      expect(w.ratio, `${detail} +${i}/60 window ${JSON.stringify(w)}`).toBeGreaterThanOrEqual(0.4);
+    }
+  }
+}, 60000);
+
+test('持ち主 18:27: 放つと、溜めていた構えからそのまま指を組む: 0〜0.25 秒の 1/60 秒ごとに、指先は左右交互に並ぶか相手の付け根を越えて届き、締めきると交互に深く組む', () => {
   for (const detail of ['low', 'high']) {
     const m = hands(detail);
     const view = createHandView(m, detail);
@@ -494,6 +494,6 @@ test('持ち主 18:27: 放つと、溜めていた構えからそのまま指を
     run(view, 0.3, 0, false, 1);
     const f = interlace(m);
     expect(f.alternations, detail).toBe(7); // 右左右左…（指が交互）
-    expect(Math.abs(f.depthGap), detail).toBeLessThan(0.08); // 同じ面で組む（重ねた二段ではない）
+    expect(f.reach, detail).toBe(true); // 相手の付け根を越えて深く組む（握り合わせでは指が相手の手の甲へ巻きつく）
   }
 });

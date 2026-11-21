@@ -261,6 +261,8 @@ const introFlow = createIntroFlow({
     overlay.showGate(false);
     introWait = 0;
     const out = audio.introOutput;
+    // 楽器の音がまだ全部できていなければ、ここで作り終えてから導入の 0 秒を決める（最初の拍を過去の時刻に予約しない）
+    while (!prepareIntroMusic()) { /* 残りの楽器を作る */ }
     if (out) { introT0 = out.ctx.currentTime + INTRO_AUDIO_LEAD; introSfx = scheduleIntroSfx(out.ctx, out.dest, introT0, introFlow.timeline); }
     else introClock = 'dt'; // 音を鳴らせない（Web Audio がない）: 絵はフレームの dt で
   },
@@ -298,7 +300,8 @@ function renderIntroAt(t, { force = false, alive = t } = {}) {
 }
 function introTick(dt) {
   // TAP を待つ間に、主人公の導入の体と、導入の音楽の楽器の音を少しずつ作っておく
-  if (introFlow.state === 'gate') { if (!intro.prepared) intro.prepareStep(); else prepareIntroMusic(); return; }
+  // （主人公の体と楽器の音は並べて作る。TAP が先に来ても、楽器の音は TAP の直後、音の時計を決める前に作り終える）
+  if (introFlow.state === 'gate') { if (!intro.prepared) intro.prepareStep(); prepareIntroMusic(); return; }
   const out = audio.introOutput;
   const running = out?.ctx.state === 'running';
   if (introFlow.state === 'intro' && running && introClock === 'dt') {

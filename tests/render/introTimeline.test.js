@@ -5,9 +5,9 @@ const names = (tl) => tl.beats.map((b) => b.name);
 
 test('導入の流れ（持ち主 15:55）: バイク → ありったけを → ライト → 解き放て → 隠れる → 手 → 白 → 最後の一撃', () => {
   const tl = createIntroTimeline();
-  expect(names(tl)).toEqual(['bikes', 'cardA', 'light', 'cardB', 'hide', 'hands', 'white', 'title']);
+  expect(names(tl)).toEqual(['bikes', 'cardA', 'light', 'cardB', 'hide', 'orb', 'hands', 'white', 'title']);
   // 拍の境目はすき間なく続き、長さはブリーフの目安どおり
-  const want = { bikes: 2.2, cardA: 1.3, light: 2.4, cardB: 1.3, hide: 2.2, hands: 2.5, white: 0.4 };
+  const want = { bikes: 2.2, cardA: 1.7, light: 2.4, cardB: 1.7, hide: 2.2, orb: 0.75, hands: 2.5, white: 0.4 };
   let t = 0;
   for (const b of tl.beats) {
     expect(b.start).toBeCloseTo(t, 9);
@@ -16,10 +16,13 @@ test('導入の流れ（持ち主 15:55）: バイク → ありったけを →
   }
   expect(tl.beats.find((b) => b.name === 'cardA').text).toBe('ありったけを');
   expect(tl.beats.find((b) => b.name === 'cardB').text).toBe('解き放て');
-  // 全体: 白が明けるまで 12.3 秒（持ち主 18:04 のスポットライトで +0.6 秒）、そのあと題字と TAP START。+1 秒以内
-  expect(tl.beat('title').start).toBeCloseTo(12.3, 9);
-  expect(tl.total).toBeGreaterThan(13.5);
-  expect(tl.total).toBeLessThan(13.73 + 1);
+  // 全体: 白が明けるまで 13.85 秒（持ち主 18:04 のスポットライトで +0.6、19:04 のカードの真っ黒と球の浮き上がりで +1.55）、
+  // そのあと題字と TAP START
+  expect(tl.beat('title').start).toBeCloseTo(13.85, 9);
+  expect(tl.total).toBeLessThan(14.33 + 1.6);
+  // カード: 最初の INTRO.card.black 秒は真っ黒
+  expect(INTRO.card.black).toBeGreaterThanOrEqual(0.4);
+  expect(INTRO.card.black).toBeLessThanOrEqual(0.6);
   expect(tl.total).toBeCloseTo(tl.beat('title').end, 9);
 });
 
@@ -126,7 +129,7 @@ test('すき間の光の筋: 隠れる拍の中で開口部を横切り、風切
   }
 });
 
-test('合図: ライトが捉える・すくむ・足音・握り込む・白（時刻順）。文字の拍（カード・題字の各文字）には効果音を乗せない（持ち主 18:02）', () => {
+test('合図: すくむ・足音・握り込む（組んだ手が初めて映るコマ）・白（時刻順）。スポットライト（19:05）と文字の拍（カード・題字の各文字）には効果音を乗せない（持ち主 18:02）', () => {
   const tl = createIntroTimeline();
   const cues = introCues(tl);
   for (let i = 1; i < cues.length; i++) expect(cues[i].t).toBeGreaterThanOrEqual(cues[i - 1].t);
@@ -137,17 +140,14 @@ test('合図: ライトが捉える・すくむ・足音・握り込む・白（
     const B = tl.beat(n);
     expect(c.t >= B.start && c.t < B.end, `${c.name} at ${c.t} in ${n}`).toBe(false);
   }
-  // スポットライトは 1 本から増えていく: 捉える一打はライトの拍の中、ばらばらの時刻に 4 回以上、どれもすくむより前
-  const locks = at('lock');
-  expect(locks.length).toBeGreaterThanOrEqual(4);
-  for (const t of locks) { expect(t).toBeGreaterThan(tl.beat('light').start); expect(t).toBeLessThan(at('flinch')[0]); }
-  expect(new Set(locks).size).toBe(locks.length);
+  // スポットライトには音をつけない（持ち主 19:05）。白と題字も無音
+  expect(at('lock')).toEqual([]);
   expect(at('flinch').length).toBe(1);
   expect(at('flinch')[0]).toBeGreaterThan(tl.beat('light').start);
   expect(at('flinch')[0]).toBeLessThan(tl.beat('light').end);
   expect(at('step').length).toBeGreaterThanOrEqual(4);
   for (const t of at('step')) expect(t).toBeGreaterThanOrEqual(tl.beat('light').start);
-  expect(at('grip')).toEqual([tl.beat('hands').start + INTRO.hands.releaseAt]);
+  expect(at('grip')).toEqual([tl.beat('hands').start + INTRO.hands.releaseAt + INTRO.hands.clampFrame]);
   expect(at('white')).toEqual([tl.beat('white').start]);
   // 足音は走る脚の接地と同じ時刻
   const feet = introRunFeet(tl);

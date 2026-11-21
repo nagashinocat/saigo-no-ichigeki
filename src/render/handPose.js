@@ -42,16 +42,17 @@ const POSES = {
     'ring-finger-metacarpal': [5, 0, 3], 'ring-finger-phalanx-proximal': [14, -12, 3], 'ring-finger-phalanx-intermediate': [24, 0, 0], 'ring-finger-phalanx-distal': [70, 0, 0],
     'pinky-finger-metacarpal': [9, 0, 6], 'pinky-finger-phalanx-proximal': [16, -22, 6], 'pinky-finger-phalanx-intermediate': [25, 0, 0], 'pinky-finger-phalanx-distal': [70, 0, 0],
   },
-  // 鷲掴み: 放つと両手が球へかぶさって指が交差し、第一関節から先を球へ食い込ませて締めつける（指先どうしは合わせない）。
-  // 親指は球の下で内・下へ寄せる。先を上へ巻き上げない（巻き上げると球を下から囲むハートの下の弧になる）。
+  // 握り合わせ（持ち主 19:09）: 指は付け根（MCP）から深く曲げて相手の手の甲へ巻きつける（第二・第一関節は軽く）。
+  // 親指は下で横に寝かせて左右で交差させる（先を上へ巻き上げない）。以下は S10 の鷲掴みの説明の名残:
+  // 親指は球の下で横に寝かせて交差させる。先を上へ巻き上げない（巻き上げると球を下から囲むハートの下の弧になる）。
   // 左右の親指の先は合わせない。手首は構えのまま反らしておく（前腕が跳ばない）
   join: {
     wrist: [-WRIST_EXT, 0, 0],
-    'thumb-metacarpal': [0, 0, -6], 'thumb-phalanx-proximal': [35, 0, 0], 'thumb-phalanx-distal': [25, 0, 0],
-    'index-finger-phalanx-proximal': [22, 12, 0], 'index-finger-phalanx-intermediate': [30, 0, 0], 'index-finger-phalanx-distal': [85, 0, 0],
-    'middle-finger-phalanx-proximal': [24, 3, 0], 'middle-finger-phalanx-intermediate': [32, 0, 0], 'middle-finger-phalanx-distal': [88, 0, 0],
-    'ring-finger-metacarpal': [4, 0, 2], 'ring-finger-phalanx-proximal': [26, -6, 2], 'ring-finger-phalanx-intermediate': [33, 0, 0], 'ring-finger-phalanx-distal': [88, 0, 0],
-    'pinky-finger-metacarpal': [8, 0, 4], 'pinky-finger-phalanx-proximal': [28, -14, 4], 'pinky-finger-phalanx-intermediate': [34, 0, 0], 'pinky-finger-phalanx-distal': [88, 0, 0],
+    'thumb-metacarpal': [0, 20, -6], 'thumb-phalanx-proximal': [40, 0, 0], 'thumb-phalanx-distal': [20, 0, 0],
+    'index-finger-phalanx-proximal': [88, 4, 0], 'index-finger-phalanx-intermediate': [30, 0, 0], 'index-finger-phalanx-distal': [15, 0, 0],
+    'middle-finger-phalanx-proximal': [88, 0, 0], 'middle-finger-phalanx-intermediate': [30, 0, 0], 'middle-finger-phalanx-distal': [15, 0, 0],
+    'ring-finger-phalanx-proximal': [88, -3, 0], 'ring-finger-phalanx-intermediate': [30, 0, 0], 'ring-finger-phalanx-distal': [15, 0, 0],
+    'pinky-finger-phalanx-proximal': [88, -6, 0], 'pinky-finger-phalanx-intermediate': [30, 0, 0], 'pinky-finger-phalanx-distal': [15, 0, 0],
   },
   // 払う: 手首を大きく反らし、指をまっすぐ伸ばして広げ、手のひらで突き出す
   push: {

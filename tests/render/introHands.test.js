@@ -3,7 +3,8 @@ import { createHandView } from '../../src/render/handView.js';
 import { buildHandModel } from '../../src/render/handModel.js';
 import { HAND_JOINTS } from '../../src/render/handPose.js';
 import { introHandsTo } from '../../src/render/intro.js';
-import { heartFrames, interlace } from './heartProxy.js';
+import { heartFrames, interlace, litWindow } from './heartProxy.js';
+import * as THREE from 'three';
 import { INTRO, createIntroTimeline } from '../../src/render/introTimeline.js';
 
 // 導入の手の拍（S6。持ち主 15:55「貯め始めと最後の一撃を放つ瞬間（力を握り込む）」）も、S10 と同じく決してハートに見えない（持ち主 15:24）。
@@ -43,7 +44,12 @@ test('導入の手の拍は、放った直後の 0〜0.25 秒の 1/60 秒ごと�
         expect(f.overlap, label).toBeGreaterThan(0.33);
         if (f.near < 0.1) expect(f.overlap, label).toBeGreaterThan(0.33);
         expect(f.apex, label).toBeGreaterThan(0.38);
-        expect(f.thumb, label).toBeLessThan(-0.03);
+        expect(f.thumb, label).toBeLessThanOrEqual(0); // 親指は上へ巻き上げない
+        // 左右の親指の先は合わせない（S10）
+        const tw = (sd) => m[sd].bones['thumb-tip'].getWorldPosition(new THREE.Vector3());
+        expect(tw('right').distanceTo(tw('left')), label).toBeGreaterThan(0.08);
+        // 光る窓の下の縁は尖らない（+0.1 秒まで）
+        if (after <= 0.1 && detail === 'low') expect(litWindow(view, m, 24).ratio, label).toBeGreaterThanOrEqual(0.4);
         // 締めきったら横に広く低い握り（S10 の 1.25 を 390:295 の画面で測ったのと同じ強さ: 縦横をそろえて 0.95）
         if (after >= 0.12) expect(f.shape, label).toBeLessThan(0.95);
         // 指を組む（持ち主 18:27）: 交互に並ぶか、相手の付け根を越えて届く
@@ -52,4 +58,4 @@ test('導入の手の拍は、放った直後の 0〜0.25 秒の 1/60 秒ごと�
       }
     }
   }
-});
+}, 120000);

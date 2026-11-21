@@ -43,3 +43,40 @@ export function interlace(m) {
     || Math.max(...FINGER_TIPS.map((n) => wp('left', n).x)) > Math.min(...KNUCKLES.map((n) => wp('right', n).x));
   return { alternations, depthGap: (mean('right') - mean('left')) / size, reach };
 }
+
+// 光る窓（S6 fix2）: 両手に囲まれた、手の映らない所（球の光が見える窓）の形。球のまわりの画面を格子で調べ、手に当たらない点のうち
+// 左右と上下のどれにも手がある点を「囲まれた窓」とする。下の縁が尖る（V）かを、窓の下 2 割の幅と、上 2 割・真ん中の広い方の幅の比で測る。
+// 窓がない（4 点未満）なら ratio = 1
+export function litWindow(view, m, N = 36) {
+  const cam = view.camera, { center } = view.orbSphere;
+  const meshes = [];
+  for (const s of ['right', 'left']) m[s].root.traverse((o) => { if (o.isSkinnedMesh) meshes.push(o); });
+  view.scene.updateMatrixWorld(true);
+  const c = center.clone().project(cam);
+  const e = center.clone().add(new THREE.Vector3(0.39, 0, 0).applyQuaternion(cam.quaternion)).project(cam); // 構えの球の 3 倍ほどの広さ
+  const rN = Math.hypot(e.x - c.x, e.y - c.y);
+  const rc = new THREE.Raycaster(), hit = [];
+  for (let i = 0; i < N; i++) {
+    hit.push([]);
+    for (let j = 0; j < N; j++) {
+      rc.setFromCamera(new THREE.Vector2(c.x + rN * ((i + 0.5) / N * 2 - 1), c.y + rN * cam.aspect * ((j + 0.5) / N * 2 - 1)), cam);
+      hit[i].push(rc.intersectObjects(meshes, false).length > 0);
+    }
+  }
+  const win = [];
+  for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) {
+    if (hit[i][j]) continue;
+    let l = false, r = false, u = false, d = false;
+    for (let k = 0; k < i; k++) l ||= hit[k][j];
+    for (let k = i + 1; k < N; k++) r ||= hit[k][j];
+    for (let k = 0; k < j; k++) d ||= hit[i][k];
+    for (let k = j + 1; k < N; k++) u ||= hit[i][k];
+    if (l && r && u && d) win.push({ i, j });
+  }
+  if (win.length < 4) return { n: win.length, ratio: 1 };
+  const js = win.map((p) => p.j), j0 = Math.min(...js), j1 = Math.max(...js), H = j1 - j0 + 1;
+  const span = (a, b) => { const is = win.filter((p) => p.j >= a && p.j <= b).map((p) => p.i); return is.length ? Math.max(...is) - Math.min(...is) + 1 : 0; };
+  const bottom = span(j0, j0 + Math.floor(0.2 * H));
+  const top = Math.max(span(j1 - Math.floor(0.2 * H), j1), span(j0 + Math.floor(0.4 * H), j0 + Math.floor(0.6 * H)));
+  return { n: win.length, bottom, top, ratio: bottom / Math.max(1, top) };
+}

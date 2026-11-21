@@ -8,10 +8,13 @@ import { createRng } from '../rng.js';
 export const INTRO = {
   beats: [
     { name: 'bikes', dur: 2.2 },
-    { name: 'cardA', dur: 1.3, text: 'ありったけを' },
+    // カード（持ち主 19:04「文字の画面の切り替わりがちょっと早い」）: 真っ黒を INTRO.card.black 秒見せてから文字
+    { name: 'cardA', dur: 1.7, text: 'ありったけを' },
     { name: 'light', dur: 2.4 }, // 持ち主 18:04: バイクのライトがスポットライトのように一つから増えていく（1.8 → 2.4 秒）
-    { name: 'cardB', dur: 1.3, text: '解き放て' },
+    { name: 'cardB', dur: 1.7, text: '解き放て' },
     { name: 'hide', dur: 2.2 },
+    // 真っ暗な中に力の球がぼうっと浮き上がる（持ち主 19:04。隠れる → 手のアップのつなぎ）
+    { name: 'orb', dur: 0.75 },
     { name: 'hands', dur: 2.5 },
     { name: 'white', dur: 0.4 },
   ],
@@ -20,15 +23,16 @@ export const INTRO = {
   title: { text: '最後の一撃', lead: 0.2, step: 0.22, burst: 0.6, settle: 0.32, buttonGap: 0.45, buttonFade: 0.5, flashOut: 0.07 },
   shortTitle: { lead: 0.25, step: 0.16, burst: 0.5, settle: 0.28, buttonGap: 0.3, buttonFade: 0.4, flashOut: 0 },
   // カードの叩きつけ: overshoot 秒で大きめから縮んで止まる、揺れ shake 秒、粒子の閃き grain 秒
-  card: { overshoot: 0.16, scale0: 1.2, shake: 0.22, grain: 0.12 },
+  card: { black: 0.4, overshoot: 0.16, scale0: 1.2, shake: 0.22, grain: 0.12 },
   // 3: ライトが主人公を捉える（拍の中の秒）。すくむ
   // 3: スポットライトが一つずつ主人公を捉え（LIGHT_BIKES の lockAt）、十字砲火に縫い止められてすくむ
   light: { flinchAt: 1.36 },
   // 走り（足が地面を打つ間隔 stride 秒）: ライトの拍ですくんだ runFrom 秒あと〜、隠れる拍の 0〜stopAt 秒
   run: { stride: 0.26, afterFlinch: 0.42, hideStop: 1.0 },
   // 6: 手。貯め始め（ignite 秒で球が灯る）→ grow 秒で満ちる → releaseAt で放つ（握り込む）
-  // releaseAt: 放つ瞬間（握り込み・音楽を止める所）。録画の 30 fps のコマの頭にそろえる（9.4 + 1.76667 = 11.16667 秒 = 335 コマ目）
-  hands: { ignite: 0.3, grow: 1.3, releaseAt: 53 / 30, flash: 0.2 },
+  // releaseAt: 放つ瞬間。録画の 30 fps のコマの頭にそろえる（手の拍の頭 10.95 + 1.75 = 12.7 秒 = 381 コマ目。テストあり）
+  // clampFrame: 放ってから組んだ手が初めて映るまで（30 fps の 1 コマ）。握り込みの音と音楽を止める所
+  hands: { ignite: 0.3, grow: 1.3, releaseAt: 1.75, flash: 0.2, clampFrame: 1 / 30 },
 };
 
 const clamp01 = (x) => Math.min(1, Math.max(0, x));
@@ -151,15 +155,15 @@ export function streakAt(s, local) {
 }
 
 // ---- 3・5: 主人公の通り道と、撮るカメラ（その拍の撮る場所のローカルの座標。カメラは奥（-z）を見る）----
-export const LIGHT_SHOT = { hero: [0.2, -6.2], walk: 0.55, cam: { pos: [-0.7, 0.5, 2.6], look: [0.25, 2.4, -8], fov: 60 } };
-// 3: 主人公を捉えるバイク（持ち主 18:04「スポットライトみたいにして 1 つからどんどん増えていく」）。主人公の後ろ・上の扇に浮かぶ
-// （ローカルの座標。どれも画面の中にライトの元が見える）。arrive 秒かけて飛び込み、lockAt 秒にライトが主人公へぴたりと向く
+// 3（持ち主 19:04）: 追い詰められた主人公（すぐ後ろに壁）を、バイクのライトが正面から照らす。カメラはバイクの後ろ・間から主人公を見る
+export const LIGHT_SHOT = { hero: [0.3, -7.6], walk: 0, wall: -9, cam: { pos: [0.4, 1.45, 6], look: [0.25, 1.3, -8], fov: 46 } };
+// 主人公の正面に浮かぶバイク（ローカルの座標。画面の手前の左右に後ろ姿が見える）。arrive 秒かけて飛び込み、lockAt 秒にライトが主人公をとらえる
 export const LIGHT_BIKES = [
-  { id: 0, pos: [0.8, 9.5, -24], lockAt: 0.16, from: [3, 15, -14] },
-  { id: 1, pos: [-6.5, 13, -20], lockAt: 0.62, from: [-14, 18, -8] },
-  { id: 2, pos: [7.0, 11, -19], lockAt: 0.84, from: [16, 15, -8] },
-  { id: 3, pos: [-3.5, 7.5, -15], lockAt: 1.02, from: [-11, 6, -28] },
-  { id: 4, pos: [4.0, 15, -13], lockAt: 1.16, from: [10, 21, -4] },
+  { id: 0, pos: [0.9, 1.9, -0.5], lockAt: 0.16, from: [4, 6, 6] },
+  { id: 1, pos: [-2.6, 2.3, 0.8], lockAt: 0.62, from: [-9, 7, 5] },
+  { id: 2, pos: [3.2, 1.5, 1.5], lockAt: 0.84, from: [10, 4, 6] },
+  { id: 3, pos: [-1.4, 1.2, 2.6], lockAt: 1.02, from: [-6, 2, 10] },
+  { id: 4, pos: [2.0, 2.6, 3.4], lockAt: 1.16, from: [7, 9, 12] },
 ];
 const ARRIVE = 0.4;
 // 拍の中の秒 local のバイクの位置（ローカル）と、ライトが主人公をどれだけ捉えたか lock（0〜1）、見えているか on
@@ -233,14 +237,14 @@ export function introHands(local) {
   return { level: 0.04 + 0.14 * ig + 0.82 * grow ** 1.4, active: true };
 }
 
-// ---- 音の合図（導入の秒の順）: lock / flinch / step / grip / white ----
+// ---- 音の合図（導入の秒の順）: flinch / step / grip / white（持ち主 19:05: スポットライトには音をつけない） ----
 // 持ち主 18:02: 文字の拍（カード・「最後の一撃」の各文字）は効果音なし（BGM だけ）。画面の出来事の音だけを合図にする
 export function introCues(tl) {
   const cues = [];
-  if (tl.beat('light')) for (const b of LIGHT_BIKES) cues.push({ t: tl.beat('light').start + b.lockAt, name: 'lock', arg: b.id });
   if (tl.beat('light')) cues.push({ t: tl.beat('light').start + INTRO.light.flinchAt, name: 'flinch' });
   for (const t of introRunFeet(tl)) cues.push({ t, name: 'step' });
-  if (tl.beat('hands')) cues.push({ t: tl.beat('hands').start + INTRO.hands.releaseAt, name: 'grip' });
+  // 握り込みの音は、組んだ手が初めて映るコマ（音楽を止める所と同じ）
+  if (tl.beat('hands')) cues.push({ t: tl.beat('hands').start + INTRO.hands.releaseAt + INTRO.hands.clampFrame, name: 'grip' });
   if (tl.beat('white')) cues.push({ t: tl.beat('white').start, name: 'white' });
   return cues.sort((a, b) => a.t - b.t);
 }

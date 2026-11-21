@@ -1,4 +1,6 @@
 import { test, expect } from 'vitest';
+import { VOICES, hasCachedVoice } from '../../src/audio/bgmVoices.js';
+import { VOICE_SR } from '../../src/audio/bgm.js';
 import { createBgm, LOOKAHEAD } from '../../src/audio/bgm.js';
 
 // 身代わりの AudioContext: 予約された再生（start / stop の時刻）と、AudioParam の予定を記録する
@@ -149,12 +151,18 @@ test('ブラックホール: 鳴っている音も音程が下がり、出口が
 });
 
 test('楽器の音は、AudioContext ができる前から 1 つずつ作っておける', () => {
+  // 楽器の音は BGM と導入の音楽で共有の覚え（bgmVoices.cachedVoice）。前のテストで作ってあることもあるので、
+  // 1 回の呼び出しで増えるのは多くても 1 つ、全部できたら true、を数える
   const bgm = createBgm(() => null);
-  let n = 0;
-  while (!bgm.prepare()) n++;
-  // 10 の楽器、1 回に 1 つずつ（多くても 10 回目で全部）。S6 fix1 から楽器の音は BGM と導入の音楽で共有の覚え
-  // （bgmVoices.cachedVoice）なので、前のテストで作ってあれば早く済む
-  expect(n).toBeLessThanOrEqual(9);
+  const count = () => VOICES.filter((v) => hasCachedVoice(v, VOICE_SR)).length;
+  for (let k = 0; k < VOICES.length + 2; k++) {
+    const before = count();
+    const done = bgm.prepare();
+    const after = count();
+    expect(after - before).toBeLessThanOrEqual(1);
+    expect(done).toBe(after === VOICES.length);
+  }
+  expect(count()).toBe(VOICES.length);
   expect(bgm.prepare()).toBe(true);
 });
 
