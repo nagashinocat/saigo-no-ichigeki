@@ -48,6 +48,16 @@ Files: src/render/cinematic.js, cinematicProps.js, finalePlan.js, finaleTimeline
   - The focus rider body (riderBody) can be reused for the nearest rider in frame.
 - **Timeline:** finaleTimeline is reworked accordingly; total length stays ≤ the current length + 0.5 s. finaleGameSync must hold at 60/30/20 fps.
 - **Audio:** the boom opens when the blast erupts. The distant rumble arrives, then the roar as the wall hits. Sound tracks the screen (owner 13:06).
+- **Debris sound after the replay (owner 23:01).** Today a thin crackling 「チリチリ」 sound plays after the blast replay. Turn it into real, weighty rubble collapse sound:
+  - concrete chunks falling and settling
+  - slabs crumbling
+  - deep thuds and grinding
+  - scattered glass and metal on top
+  - Drive it from on-screen collapse/settle events (sound tracks the screen), panned and distance-attenuated, and rate-capped through the existing collapseGate.
+  - Find what the 「チリチリ」 actually is (likely high-passed debris voices, or settle hits with too little low end) and fix it at its source.
+  - It must also sound right in the live finale aftermath.
+  - Keep the limiter headroom.
+- **Pull the wide shots back (owner 23:01).** Every shot meant to show the whole explosion — the showcase wide, the replay's wide or overview cut, and the aftermath — pulls back further so the whole sphere and crater, plus the city edge, sit comfortably in the portrait frame with margin. Check this at 390×844 and in landscape.
 - **Spot selection (finalePlan):** pick the riders, which must exist (fall back to a patrol), and a camera spot with a clear line of sight to ground zero. Test the selection.
 - **Pacing everywhere (owner 22:18):** today the finale and the replay read as 「初めから早い → ちょっと止まる → 早い」 (fast at start, a stall, fast again), and that is wrong. Every presentation must follow ONE pacing: slow-mo creep and swell at the start → burst → full speed. This covers the live finale, the replay cuts (the replay timeline and replayPlan) and the clip recorder later. There must be no mid-sequence freeze or stall: remove the old near-stopped beat (slowRate 0.012) and anything that looks like a pause. Add a test that the visual time-scale is monotonic non-decreasing from the start of the blast to the burst, and does not dip after the burst, for both the finale and the replay timelines. Record a frame sequence of the replay to prove it.
 - **Shots:** the new beat at several times, plus the transition into the chase.
