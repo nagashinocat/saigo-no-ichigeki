@@ -25,7 +25,7 @@ export const CONFIG = {
   // S8（街を広げ、最大の半径を 440 → 720 m）: 弾ける期で半径の 0.4 → 0.45 まで（大きく弾ける）、見せる期 3.4 → 4.3 秒
   // （光の壁が街を飲むのが見える速さ 150 m/s 以下のまま。最大の一発は 4.8 → 5.7 秒）
   finalBlast: { burstSec: 0.6, burstMin: 0.15, burstFrac: 0.45, burstPow: 4, showSec: 4.3, showMin: 0.5, showPow: 1.6 },
-  cinematic: { freezeSec: 1.4, eyeBeatSec: 0.6 },
+  cinematic: { freezeSec: 1.4 },
   // 湧く速さ（持ち主の決定「終盤ほど一気に増やす」）: 序盤は spawnPerSec で平ら、surgeStart 秒から surgeEnd 秒へ一気に surgeMul 倍まで増える
   // （残り 20 秒ほどで群れになる。60 秒で約 100）。掴んだ一人ごとに貯めた力が drainPerSec ずつ減る。
   // 浮遊バイクは spawnDist（近い上空カメラの画面の端のすぐ外〜少し内）の道路に湧き、道路に沿って searchSpeed m/s で探し回る

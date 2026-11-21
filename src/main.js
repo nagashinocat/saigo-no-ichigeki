@@ -399,12 +399,13 @@ let finalBlastSize = 0;
 const transitObs = game.city.transit ? transitObstacles(game.city.transit) : [];
 game.on('cinematicStart', (shot) => {
   takeReplaySnapshot(shot);
-  // 放つ瞬間は撮る場所だけを決め、重い逃げる道の計算はスローでふくらむ間に回す（必要になるのは追うカットから）
+  // fix2: 撮る場所（planFinale）は放つ瞬間（両手が玉を握り込む一拍）ではなく、画面が真っ白になった最初のフレームで決める
+  // （cinematic.play に関数で渡す。両手の間はゲームが進まないので、同じ答え）。重い逃げる道の計算はスローでふくらむ間に回す
   const buildings = game.city.buildings.filter((b) => standing.has(b.id)), crater = fronts.crater, lead = leadFor(shot.radius);
-  const plan = planFinale({ shot, rng: shotRng, crater, lead, buildings, enemies: game.enemies.list, retreat: false });
   finalBlastSize = Math.sqrt(shot.radius / CONFIG.radius.max);
   // 逃げる道は高架の橋桁もよける（S8）
-  cinematic.play(plan, shot, { buildings, enemies: () => game.enemies.list, retreat: () => planRetreat(plan, { buildings: [...buildings, ...transitObs], crater, radius: shot.radius, lead }) });
+  cinematic.play(() => planFinale({ shot, rng: shotRng, crater, lead, buildings, enemies: game.enemies.list, retreat: false }), shot,
+    { buildings, enemies: () => game.enemies.list, retreat: () => planRetreat(cinematic.plan, { buildings: [...buildings, ...transitObs], crater, radius: shot.radius, lead }) });
 });
 game.on('cinematicEnd', () => cinematic.end());
 // 演出の音の段取り

@@ -243,9 +243,10 @@ test('最後の爆発音は前より重い（オフラインで鳴らして測�
   if (process.env.S3_LOG) console.log(JSON.stringify({ fWas, fNow, lWas, lNow, lowWas: low(was), lowNow: low(now), bodyDb, subWas: lastAbove(was.sub, 0.01), subNow: lastAbove(now.sub, 0.01) }));
   // 地響き（超低域の層を含む地響きの層）も厚く長い。S8 fix2: −40 dB を下回る時刻（100 ms 刻み）は保つ秒が延びると差が
   // 刻みの幅ほどに縮んで揺れるので、120 Hz より下の力で測る（今の時刻表の hold で、前の版の設計図と比べる）。
-  //   - 放ってから 6 秒の力: +0.5 dB 以上（測ると +0.75 dB。一打・胴・うなりも含めた全体では +1.26 dB）
-  //   - 保つ秒（hold）のあと 6 秒までの尾の力: +1.5 dB 以上（測ると +2.16 dB）
-  //   - −40 dB を下回る時刻は前の版より早くならない（測ると 5.7 → 6.2 秒）
+  //   - 放ってから 6 秒の力: +0.5 dB 以上（R0b fix2 で測ると +0.82 dB。一打・胴・うなりも含めた全体では +1.42 dB）
+  //   - 尾の厚さ: hold + 1 〜 hold + 3.7 秒の力が +1.5 dB 以上（測ると +4.88 dB。hold は R0b の時刻表で 2.62 秒）
+  //   - hold 〜 hold + 2.7 秒（R0b より前の窓の長さ）の力が −1.0 dB 以上（測ると −0.68 dB）
+  //   - −40 dB を下回る時刻は前の版より早くならない
   const below120 = (x) => lowpass(lowpass(x, 120, 0.707), 120, 0.707);
   const sWas = below120(was.sub), sNow = below120(now.sub);
   const db = (t0, t1) => 10 * Math.log10(energy(sNow, t0, t1) / energy(sWas, t0, t1));
@@ -255,7 +256,8 @@ test('最後の爆発音は前より重い（オフラインで鳴らして測�
   // 重い一発の尾はその先で長く残る（hold + 1 〜 hold + 3.7 秒で +4.9 dB）。尾の厚さはそこで測る
   expect(db(o.hold + 1, o.hold + 3.7)).toBeGreaterThanOrEqual(1.5);
   // fix1（I-3）: もとの窓（hold〜hold + 2.7 秒、前の hold 3.3 秒で 6 秒まで）も見張る。測ると −0.68 dB（hold が縮んで、hold の直後の尾は
-  // 前の版よりわずかに弱い。持ち主は 23:01 にこの音でよいと言った）。前の版より 1 dB 以上弱くはしない
+  // 前の版よりわずかに弱い）。持ち主が 23:01 に実機で「音は大丈夫」と言ったのは R0b より前の音で、R0b のこの尾はまだ聞いていない。
+  // その音から離れすぎないよう、前の版より 1 dB 以上弱くはしない
   expect(db(o.hold, o.hold + 2.7)).toBeGreaterThanOrEqual(-1.0);
   expect(lastAbove(now.sub, 0.01)).toBeGreaterThanOrEqual(lastAbove(was.sub, 0.01));
 });

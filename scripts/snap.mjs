@@ -100,8 +100,14 @@ async function stepped(page) {
   }
   const info = await page.evaluate(() => ({ phase: window.__game.phase, blasts: window.__game.blasts.map((b) => ({ r: +b.shot.radius.toFixed(1), front: +b.front.toFixed(1) })), tier: window.__tier }));
   console.log('released', JSON.stringify(info));
-  const plan = await page.evaluate(() => { const p = window.__cinematic?.plan; if (!p) return null; const tl = window.__cinematic.timeline; return { rider: p.riderId, open: p.open, window: p.window, riders: p.riders?.map((r) => r.id), at: p.rider?.pos.map((v) => +v.toFixed(1)), cam: p.camPos.map((v) => +v.toFixed(1)), beat: ['white', 'burst', 'engulf', 'camHit', 'snap', 'chaseEnd', 'end'].map((k) => k + '=' + (+tl[k].toFixed(2))).join(' ') }; });
-  if (plan) console.log('finale plan', JSON.stringify(plan));
+  // 演出の撮る場所（fix2: 画面が真っ白になった最初のフレームで決まる。決まったら一度だけ出す）
+  let planShown = false;
+  const showPlan = async () => {
+    if (planShown) return;
+    const plan = await page.evaluate(() => { const p = window.__cinematic?.plan; if (!p) return null; const tl = window.__cinematic.timeline; return { rider: p.riderId, open: p.open, soft: p.soft, window: p.window, riders: p.riders?.map((r) => r.id), at: p.rider?.pos.map((v) => +v.toFixed(1)), cam: p.camPos.map((v) => +v.toFixed(1)), hide: p.hide?.length, line: p.riders?.map((r) => { const c = p.camPos, dx = r.pos[0] - c[0], dz = r.pos[2] - c[2], f = [-c[0], -c[2]], fl = Math.hypot(...f); return [+Math.hypot(dx, dz).toFixed(0), +(Math.atan2(dx * -f[1] / fl + dz * f[0] / fl, (dx * f[0] + dz * f[1]) / fl) * 57.3).toFixed(1), +(r.pos[1] - c[1]).toFixed(1)]; }), beat: ['white', 'burst', 'firstEngulf', 'engulf', 'camHit', 'snap', 'chaseEnd', 'end'].map((k) => k + '=' + (+tl[k].toFixed(2))).join(' ') }; });
+    if (plan) { console.log('finale plan', JSON.stringify(plan)); planShown = true; }
+  };
+  await showPlan();
   if (args.perf > 0) {
     const t = await page.evaluate((n) => window.__debug.timeFrames(n), args.perf);
     console.log('frame JS ms (simulate+draw)', JSON.stringify(stats(t.js)));
@@ -122,13 +128,16 @@ async function stepped(page) {
     }
     const r = await step(Math.max(1 / 60, target - t));
     t = target;
+    await showPlan();
     const file = out.replace('{t}', String(target));
     await page.screenshot({ path: file });
     const st = await page.evaluate(() => {
       const rp = window.__replay;
       const replay = rp?.active ? { phase: rp.phase, cut: rp.cut, t: +rp.time.toFixed(2), front: +rp.timeline.frontAt(rp.time).toFixed(1), result: !document.getElementById('result').hidden } : null;
       const bh = window.__blackhole?.active ? { stage: window.__blackhole.stage, t: +window.__blackhole.time.toFixed(2), result: !document.getElementById('result').hidden, hud: document.getElementById('hud').style.visibility !== 'hidden' } : null;
-      return { blasts: window.__game.blasts.map((b) => +b.front.toFixed(1)), pull: +window.__views.pullback.toFixed(1), busy: window.__explosionView.busy, replay, blackhole: bh };
+      const ci = window.__cinematic, cc = ci?.active ? ci.camera : null, r0 = ci?.beat?.riders?.[0];
+      const cin = cc ? { stage: ci.stage, pos: cc.position.toArray().map((v) => +v.toFixed(1)), fov: +cc.fov.toFixed(1), r0: r0 ? [r0.x, r0.y, r0.z, r0.keep].map((v) => +v.toFixed(1)) : null, ndc: r0 ? new cc.position.constructor(r0.x, r0.y + 0.95, r0.z).project(cc).toArray().map((v) => +v.toFixed(2)) : null, gz: new cc.position.constructor(0, 0, 0).project(cc).toArray().map((v) => +v.toFixed(2)) } : null;
+      return { cin, blasts: window.__game.blasts.map((b) => +b.front.toFixed(1)), pull: +window.__views.pullback.toFixed(1), busy: window.__explosionView.busy, replay, blackhole: bh };
     });
     console.log('saved', file, 't=' + target, JSON.stringify(st), 'sim ms/frame', r.simMs.toFixed(2), 'draw ms', r.drawMs.toFixed(1));
   }

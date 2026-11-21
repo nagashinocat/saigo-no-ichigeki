@@ -1,8 +1,8 @@
 import { test, expect } from 'vitest';
 import * as THREE from 'three';
-import { leadFor, minLeadFor, createChase, createCinematic, barsFor, shellRadius, FLING, spaceSparkTime, VEIL_NEAR, VEIL_K, VEIL_ADD, OCCLUDE, WHITE_AHEAD, CHASE_HOLD } from '../../src/render/cinematic.js';
+import { leadFor, minLeadFor, createChase, createCinematic, barsFor, shellRadius, FLING, spaceSparkTime, VEIL_NEAR, VEIL_K, VEIL_ADD, VEIL_GROW, WHITE_AHEAD, CHASE_HOLD, BEAT_LENS, LENS, beatLens } from '../../src/render/cinematic.js';
 import { createEnemies } from '../../src/game/enemies.js';
-import { createTimeline } from '../../src/render/finaleTimeline.js';
+import { createTimeline, FINALE } from '../../src/render/finaleTimeline.js';
 import { planFinale, planRetreat } from '../../src/render/finalePlan.js';
 import { generateCity } from '../../src/world/cityGen.js';
 import { radiusFor } from '../../src/game/charge.js';
@@ -297,29 +297,85 @@ test('乗り手の列: 画面全体になってから決めた隊形に描かれ
   }
 });
 
-test('fix1 カメラ: スローの間は長いレンズ（縦長 22° 以下）で地平の爆心が画面の真ん中に入り、光の玉はふくらんで画面の高さの 1/5 以上になる。弾けると画角が広がり、乗り手の列の大半が画面に入る。白いのは光の壁がカメラの数 m 手前に来てから', () => {
-  for (const size of [{ w: 390, h: 844 }, { w: 1280, h: 720 }]) {
+const SIZES = [{ w: 390, h: 844 }, { w: 1280, h: 720 }];
+// 画面の上の乗り手の箱（NDC）: 体（バイクの底から 1.9 m）を写し、遠くで小さすぎる者は enemyView と同じく最低 16 px に大きく描く
+function riderBox(cam, size, p) {
+  const lo = project(cam, [p[0], p[1], p[2]]), hi = project(cam, [p[0], p[1] + 1.9, p[2]]);
+  const minH = 16 / (size.h / 2), h = Math.max(minH, hi.y - lo.y), cy = (lo.y + hi.y) / 2;
+  const hw = h * 0.6 / 2 * (size.h / size.w);
+  return { x0: lo.x - hw, x1: lo.x + hw, y0: cy - h / 2, y1: cy + h / 2, z: lo.z, h };
+}
+
+test('fix2 スローの間のレンズ: スローの終わりに、じわじわ期の光の玉（半径 f0）が画面の高さの 0.25〜0.4 倍（画角は 18〜35°）', () => {
+  expect(beatLens(10, 100)).toBeCloseTo(Math.min(35, Math.max(18, 2 * Math.atan(0.1) * 180 / Math.PI / 0.33)), 9);
+  expect(beatLens(1, 1000)).toBe(BEAT_LENS.min);
+  expect(beatLens(500, 100)).toBe(BEAT_LENS.max);
+  for (const size of SIZES) {
     for (const shot of SHOTS) {
       const { cin, plan } = makeBeat(shot, size);
       cin.play(plan, shot);
       const tl = cin.timeline;
-      advance(cin, tl.white + 0.1);
-      const fov0 = cin.camera.fov;
-      if (size.w < size.h) expect(fov0).toBeLessThanOrEqual(22);
+      advance(cin, tl.white + 0.05);
+      while (cin.time < tl.burst - 1 / 60) {
+        expect(cin.camera.fov).toBeGreaterThanOrEqual(BEAT_LENS.min - 1e-9);
+        expect(cin.camera.fov).toBeLessThanOrEqual(BEAT_LENS.max + 1e-9);
+        advance(cin, 1 / 60);
+      }
+      const d = cin.camera.position.length(), ball = 2 * Math.atan(tl.creepFront / d) / THREE.MathUtils.degToRad(cin.camera.fov);
+      expect(ball, `${size.w} r=${shot.radius.toFixed(0)}`).toBeGreaterThanOrEqual(0.25);
+      expect(ball, `${size.w} r=${shot.radius.toFixed(0)}`).toBeLessThanOrEqual(0.4);
+    }
+  }
+});
+
+test('fix2 スローの間: 手前の撮る一人は画面の中（下 1/3、画面の高さの 12% 以上）で、爆心の光の玉の真ん中より下。光の玉（爆心の 0.5·f0 の高さ）も画面の中', () => {
+  for (const size of SIZES) {
+    for (const shot of SHOTS) {
+      const { cin, plan } = makeBeat(shot, size);
+      cin.play(plan, shot);
+      const tl = cin.timeline;
+      advance(cin, tl.white + 0.05);
       while (cin.time < tl.burst) {
-        const gz = project(cin.camera, [0, tl.creepFront * 0.5, 0]);
-        expect(Math.abs(gz.x)).toBeLessThan(0.3);
-        expect(Math.abs(gz.y)).toBeLessThan(0.3);
+        const cam = cin.camera, b = riderBox(cam, size, plan.riders[0].pos), gz = project(cam, [0, 0.5 * tl.creepFront, 0]);
+        const tag = `${size.w} r=${shot.radius.toFixed(0)} t=${cin.time.toFixed(2)}`;
+        expect(Math.abs(gz.x), tag).toBeLessThan(0.8);
+        expect(Math.abs(gz.y), tag).toBeLessThan(0.8);
+        // 撮る一人: 画面の中（体の大半が入る）、下 1/3 の高さ、大きく、爆心の光の玉の真ん中より下（バイクの底）
+        expect((b.x0 + b.x1) / 2, tag).toBeGreaterThan(-0.95);
+        expect((b.x0 + b.x1) / 2, tag).toBeLessThan(0.95);
+        expect((b.y0 + b.y1) / 2, tag).toBeLessThan(-1 / 3);
+        expect(b.y0, tag).toBeGreaterThan(-1);
+        expect(b.h / 2, tag).toBeGreaterThanOrEqual(0.12);
+        expect(project(cam, plan.riders[0].pos).y, tag).toBeLessThan(gz.y);
         advance(cin, 0.1);
       }
-      // じわじわ期の終わりの光の玉（半径 creepFront）の見かけの直径 / 画面の高さ
-      const d = cin.camera.position.length(), ball = 2 * Math.atan(tl.creepFront / d) / THREE.MathUtils.degToRad(cin.camera.fov);
-      expect(ball, `${size.w} r=${shot.radius.toFixed(0)}`).toBeGreaterThan(0.18);
+    }
+  }
+});
+
+test('fix2 乗り手どうしは画面の上で重ならない（スローの終わりと弾けた直後。遠くで大きく描かれる分も見込む）。弾けると画角が広がり、乗り手の大半が画面に入る。白いのは光の壁がカメラの数 m 手前に来てから', () => {
+  for (const size of SIZES) {
+    for (const shot of SHOTS) {
+      const { cin, plan } = makeBeat(shot, size);
+      cin.play(plan, shot);
+      const tl = cin.timeline;
+      const check = () => {
+        const boxes = plan.riders.map((r) => riderBox(cin.camera, size, r.pos));
+        for (let i = 0; i < boxes.length; i++) for (let j = i + 1; j < boxes.length; j++) {
+          const p = boxes[i], q = boxes[j];
+          const overlap = p.x0 < q.x1 && q.x0 < p.x1 && p.y0 < q.y1 && q.y0 < p.y1;
+          expect(overlap, `${size.w} r=${shot.radius.toFixed(0)} riders ${i},${j} t=${cin.time.toFixed(2)}`).toBe(false);
+        }
+      };
+      advance(cin, tl.burst - 0.02);
+      const fov0 = cin.camera.fov;
+      check();
+      advance(cin, Math.min(tl.burst + 0.3, tl.firstEngulf - 0.02) - cin.time);
+      check();
       advance(cin, Math.min(tl.burst + 0.3, tl.camHit - 0.1) - cin.time);
       expect(cin.camera.fov).toBeGreaterThan(fov0 + 8);
       const inView = plan.riders.filter((r) => { const q = project(cin.camera, [r.pos[0], r.pos[1] + 1, r.pos[2]]); return Math.abs(q.x) < 1 && Math.abs(q.y) < 1 && q.z < 1; });
       expect(inView.length, `${size.w} r=${shot.radius.toFixed(0)}`).toBeGreaterThanOrEqual(Math.ceil(plan.riders.length / 2));
-      // 弾けたあと: 白くしない（光の壁がカメラの WHITE_AHEAD m 手前に来るまで）、露出を下げる
       while (cin.time < tl.camHit - 0.05) {
         const gap = tl.camDist - tl.front(cin.time);
         if (gap > WHITE_AHEAD + 1) expect(cin.screen.flash, `t=${cin.time.toFixed(3)}`).toBeLessThan(0.02);
@@ -330,7 +386,42 @@ test('fix1 カメラ: スローの間は長いレンズ（縦長 22° 以下）�
   }
 });
 
-test('fix1 光の壁が触れたビルのうち、カメラのそば（VEIL_NEAR 以内）か、画面の中でカメラの近く（壁の残りの道のりの VEIL_K 倍 + VEIL_ADD 以内）のものだけ、触れた瞬間に一時的に隠し、追うカットへ切り替わると戻す。遠くのビルは隠さない', () => {
+test('fix2 時刻表は撮る場所の乗り手とカメラの距離（riderDist・firstDist・camDist）で作る', () => {
+  for (const shot of SHOTS) {
+    const { cin, plan } = makeBeat(shot);
+    cin.play(plan, shot);
+    const tl = cin.timeline, ref = createTimeline({ radius: shot.radius, riderDist: plan.riderDist, firstDist: plan.firstDist, camDist: plan.camDist });
+    expect(tl.riderDist).toBeCloseTo(plan.riderDist, 9);
+    expect(tl.camDist).toBeCloseTo(plan.camDist, 9);
+    expect(tl.firstDist).toBeCloseTo(plan.firstDist, 9);
+    for (const k of ['burst', 'firstEngulf', 'engulf', 'camHit', 'snap', 'chaseEnd', 'end']) expect(tl[k]).toBeCloseTo(ref[k], 9);
+  }
+});
+
+test('fix2 撮る場所は放つ瞬間ではなく、画面が真っ白になった最初のフレームで一度だけ決める。ゲームの時計・段は撮る場所を先に渡したときと同じ（60/30/20 fps）', () => {
+  for (const fps of [60, 30, 20]) {
+    const shot = SHOTS[2];
+    const eager = makeBeat(shot), lazy = makeBeat(shot);
+    eager.cin.play(eager.plan, shot);
+    let calls = 0;
+    lazy.cin.play(() => { calls++; return lazy.plan; }, shot);
+    const dt = 1 / fps;
+    expect(calls).toBe(0);
+    while (eager.cin.time < eager.cin.timeline.snap + 0.5) {
+      eager.cin.update(dt); lazy.cin.update(dt);
+      if (lazy.cin.time < FINALE.hands - 1e-9) expect(calls).toBe(0);
+      else expect(calls).toBe(1);
+      expect(lazy.cin.stage).toBe(eager.cin.stage);
+      expect(lazy.cin.gameDt).toBeCloseTo(eager.cin.gameDt, 12);
+      expect(lazy.cin.worldDt).toBeCloseTo(eager.cin.worldDt, 12);
+    }
+    expect(lazy.cin.timeline.camHit).toBeCloseTo(eager.cin.timeline.camHit, 12);
+    expect(lazy.cin.camera.position.distanceTo(eager.cin.camera.position)).toBeLessThan(1e-9);
+  }
+});
+
+test('fix1/fix2 隠すビル: 白の間に plan.hide を先に隠す。光の壁が触れたビルは、カメラのそば（VEIL_NEAR 以内）か、画面の中でカメラの近く（壁の残りの道のりの VEIL_K 倍 + VEIL_ADD 以内）なら触れた瞬間に、弾けたあと画面の上で乗り手に重なるものはそのときに隠す。追うカットへ切り替わると戻す。遠くのビルは隠さない', () => {
+  const riderVeils = [], hides = [];
   for (const shot of SHOTS) {
     const veiled = new Map(), restored = new Map();
     const { cin, plan } = makeBeat(shot, undefined, { veilBuilding: (id, on) => (on ? veiled.set(id, cin.time) : restored.set(id, cin.time)) });
@@ -338,28 +429,61 @@ test('fix1 光の壁が触れたビルのうち、カメラのそば（VEIL_NEAR
     const tl = cin.timeline;
     const near = (b) => Math.hypot(Math.max(0, Math.abs(b.x) - b.w / 2), Math.max(0, Math.abs(b.z) - b.d / 2));
     const byCam = (b) => Math.hypot(Math.max(0, Math.abs(b.x - plan.camPos[0]) - b.w / 2), Math.max(0, Math.abs(b.z - plan.camPos[2]) - b.d / 2));
+    let why = new Map();
     while (cin.time < tl.snap + 0.3) {
       cin.update(1 / 60);
-      if (cin.time < tl.snap) expect(restored.size).toBe(0);
+      if (cin.time < tl.snap) { expect(restored.size).toBe(0); why = new Map(cin.veilReasons); }
     }
+    const hide = new Set(plan.hide);
+    hides.push(plan.hide.length);
+    for (const id of plan.hide) expect(veiled.get(id)).toBeLessThan(tl.white + 1e-9);
+    let byRider = 0;
     for (const [id, at] of veiled) {
       const b = city.buildings.find((x) => x.id === id);
-      // 爆心のそば（じわじわ期の光の OCCLUDE 倍の内）で光の玉をふさぐビルは、白の間（画面が真っ白）に先に隠す
-      if (at < tl.white) { expect(near(b)).toBeLessThanOrEqual(OCCLUDE * tl.creepFront + 1e-6); expect(at).toBeGreaterThanOrEqual(tl.hands); expect(restored.get(id)).toBeGreaterThanOrEqual(tl.snap); continue; }
-      expect(byCam(b) < VEIL_NEAR || byCam(b) < VEIL_K * (tl.camDist - near(b)) + VEIL_ADD).toBe(true);
-      expect(at).toBeGreaterThanOrEqual(tl.white);
-      expect(at).toBeLessThan(tl.snap + 1e-9);
-      expect(near(b)).toBeLessThanOrEqual(tl.front(at) + 1e-6);
       expect(restored.get(id)).toBeGreaterThanOrEqual(tl.snap);
       expect(restored.get(id)).toBeLessThan(tl.snap + 1 / 60 + 1e-9);
+      if (at < tl.white) { expect(hide.has(id)).toBe(true); expect(at).toBeGreaterThanOrEqual(tl.hands); expect(why.get(id)).toBe('hide'); continue; }
+      expect(at).toBeLessThan(tl.snap + 1e-9);
+      expect(near(b)).toBeLessThanOrEqual(tl.front(at) + 1e-6);
+      if (why.get(id) === 'rider') { byRider++; expect(at).toBeGreaterThanOrEqual(tl.burst); continue; }
+      expect(byCam(b) < VEIL_NEAR || byCam(b) < VEIL_K * (tl.camDist - near(b)) + VEIL_ADD).toBe(true);
     }
-    // 遠くのビル（どちらの決まりにも入らない）は隠さない
-    const far = city.buildings.filter((b) => near(b) < tl.front(tl.snap - 1e-6) && byCam(b) >= VEIL_K * (tl.camDist - near(b)) + VEIL_ADD && byCam(b) >= VEIL_NEAR);
+    riderVeils.push(byRider);
+    // 遠くのビル（どの決まりにも入らない）は隠さない
+    const far = city.buildings.filter((b) => !hide.has(b.id) && near(b) < tl.front(tl.snap - 1e-6) && byCam(b) >= VEIL_K * (tl.camDist - near(b)) + VEIL_ADD && byCam(b) >= VEIL_NEAR && why.get(b.id) !== 'rider');
     expect(far.length).toBeGreaterThan(0);
     for (const b of far) expect(veiled.has(b.id)).toBe(false);
     const n = restored.size;
     cin.stop();
     expect(restored.size).toBe(n);
+  }
+  if (process.env.R0B_LOG) console.log('rider veils', riderVeils, 'hide', hides);
+  expect(riderVeils.reduce((a, b) => a + b, 0)).toBeGreaterThan(0);
+  expect(hides.reduce((a, b) => a + b, 0)).toBeGreaterThan(0);
+});
+
+test('fix2 画面の外と決めた触れたビルも、画角が広がり向きが変わって画面に入る前に隠す（60 fps の毎フレーム、近いもので隠れていないものは画面の外）', () => {
+  for (const size of SIZES) {
+    for (const shot of SHOTS) {
+      const veiled = new Set();
+      const { cin, plan } = makeBeat(shot, size, { veilBuilding: (id, on) => (on ? veiled.add(id) : veiled.delete(id)) });
+      cin.play(plan, shot, { buildings: city.buildings });
+      const tl = cin.timeline;
+      const near = (b) => Math.hypot(Math.max(0, Math.abs(b.x) - b.w / 2), Math.max(0, Math.abs(b.z) - b.d / 2));
+      const byCam = (b) => Math.hypot(Math.max(0, Math.abs(b.x - plan.camPos[0]) - b.w / 2), Math.max(0, Math.abs(b.z - plan.camPos[2]) - b.d / 2));
+      const frus = new THREE.Frustum(), m = new THREE.Matrix4(), box = new THREE.Box3();
+      while (cin.time < tl.snap - 1 / 60) {
+        cin.update(1 / 60);
+        if (cin.stage !== 'race' && cin.stage !== 'swell') continue;
+        const cam = cin.camera, f = tl.front(cin.time);
+        frus.setFromProjectionMatrix(m.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse));
+        for (const b of city.buildings) {
+          if (near(b) > f || veiled.has(b.id) || byCam(b) >= VEIL_K * (tl.camDist - near(b)) + VEIL_ADD) continue;
+          box.min.set(b.x - b.w / 2, 0, b.z - b.d / 2); box.max.set(b.x + b.w / 2, b.h, b.z + b.d / 2);
+          expect(frus.intersectsBox(box), `${size.w} r=${shot.radius.toFixed(0)} b${b.id} t=${cin.time.toFixed(3)}`).toBe(false);
+        }
+      }
+    }
   }
 });
 

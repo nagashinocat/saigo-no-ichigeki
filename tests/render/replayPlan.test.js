@@ -2,6 +2,8 @@ import { test, expect } from 'vitest';
 import * as THREE from 'three';
 import { planReplay, REPLAY_PLAN, aftermathView, AFTERMATH } from '../../src/render/replayPlan.js';
 import { generateCity, GRID } from '../../src/world/cityGen.js';
+import { segHitsBox } from '../../src/render/finalePlan.js';
+import { phaseTimes, frontAt } from '../../src/game/blast.js';
 import { radiusFor } from '../../src/game/charge.js';
 import { CONFIG } from '../../src/config.js';
 
@@ -23,6 +25,18 @@ test('street: 爆心へ向かう通りの真ん中、ビルの外、人の目の
       // 向き: 爆心へ近づく
       const nx = x + street.dir[0] * 10, nz = z + street.dir[1] * 10;
       expect(Math.hypot(nx, nz)).toBeLessThan(street.dist);
+    }
+  }
+});
+
+test('R0b fix2 street: 人の目から爆心の光（じわじわ期の前線の seeH 倍の高さ）がビルにふさがれない（通りの突き当たりのビルがスローでふくらむ光の玉を隠さない）', () => {
+  for (let seed = 1; seed <= 12; seed++) {
+    const { buildings } = generateCity(seed);
+    for (const radius of RADII) {
+      const { street } = planReplay({ radius, buildings });
+      const glow = [0, REPLAY_PLAN.seeH * frontAt(phaseTimes(radius).creep, radius), 0];
+      expect(street.sees).toBe(true);
+      expect(buildings.filter((b) => segHitsBox(street.pos, glow, b, 0)).map((b) => b.id), `seed ${seed} r=${radius.toFixed(0)}`).toEqual([]);
     }
   }
 });

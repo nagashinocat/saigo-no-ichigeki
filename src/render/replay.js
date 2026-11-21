@@ -112,9 +112,10 @@ export function createReplay(views, { scene, lights = null, fog = null, blastLig
     // R0b（持ち主 22:18）: スローでふくらむ間は、通りの突き当たり（爆心）の光の玉を少し長いレンズで見る。弾けて壁が迫るにつれて
     // 通りの先の上を見上げ（壁の上の縁が頭の上を越えていく）、レンズは広がる
     const up = smooth(burst * 0.6 + prox) * (t >= tl.burst ? 1 : 0);
-    const endX = s.pos[0] + s.dir[0] * s.dist, endZ = s.pos[2] + s.dir[1] * s.dist;
+    // fix2: スローの間は爆心そのもの（通りの真ん中から横へ半区画ずれる）を見る。長いレンズの狭い画面から光の玉が外れない
+    // （通りは爆心の光を見通せるものを選ぶ: replayPlan の sees）
     const ahead = 60, lift = 14 + 16 * up + 10 * prox;
-    _look.set(endX, Math.max(2.5, 0.45 * F), endZ);
+    _look.set(0, Math.max(2.5, 0.45 * F), 0);
     _look.lerp(_up.set(s.pos[0] + s.dir[0] * ahead, lift, s.pos[2] + s.dir[1] * ahead), up);
     // fix1（I-2）: スローの間は長いレンズ（縦長 22°・横長 15°）でふくらむ光の玉を大きく、弾けると一気に広がる
     const wideAt = t >= tl.burst ? smooth((t - tl.burst) / 0.25) : 0;

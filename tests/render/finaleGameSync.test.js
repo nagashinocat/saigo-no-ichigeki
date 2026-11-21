@@ -19,9 +19,9 @@ function setup(seed, amount) {
   const explosionView = { screen: { flash: 0, time: 0, heat: null }, cameraInfo: { front: 0, shake: 0 } };
   const renderer = { getRenderTarget: () => null, setRenderTarget() {}, render() {}, getPixelRatio: () => 1, compile() {} };
   const cin = createCinematic(views, enemyView, explosionView, { renderer, scene: new THREE.Scene() });
+  // fix2: main.js と同じく、撮る場所は画面が真っ白になった最初のフレームで決める（関数で渡す）
   game.on('cinematicStart', (shot) => {
-    const plan = planFinale({ shot, rng: createRng(seed), lead: leadFor(shot.radius), buildings: game.city.buildings, enemies: game.enemies.list });
-    cin.play(plan, shot);
+    cin.play(() => planFinale({ shot, rng: createRng(seed), lead: leadFor(shot.radius), buildings: game.city.buildings, enemies: game.enemies.list }), shot);
   });
   game.pressStart();
   game.power.drain(1e9);
@@ -35,14 +35,15 @@ test('本物のゲームの前線は、演出の時刻表の前線と数 cm 以�
     for (const amount of [CONFIG.power.minRelease, CONFIG.power.max]) {
       for (const fps of [60, 30, 20]) {
         const { game, cin } = setup(seed, amount);
-        const tl = cin.timeline;
         const dt = 1 / fps;
         let worst = 0, checked = 0;
-        while (cin.time < tl.snap + 0.3) {
+        // 時刻表は撮る場所が決まると作り直されるので、毎フレーム読む
+        while (cin.time < cin.timeline.snap + 0.3) {
           cin.update(dt);
           stepGame(game, cin.gameDt);
-          const b = game.blasts[0];
+          const b = game.blasts[0], tl = cin.timeline;
           if (cin.time < tl.white + 1e-9) continue;
+          expect(cin.plan, `seed ${seed} amount ${amount} ${fps}fps`).not.toBeNull();
           expect(b, `seed ${seed} amount ${amount} ${fps}fps t=${cin.time.toFixed(3)}`).toBeDefined();
           if (!b) break;
           worst = Math.max(worst, Math.abs(b.front - tl.front(cin.time)));
@@ -66,7 +67,9 @@ test('弾けたあとの見せる期も、本物のゲームの前線は演出�
   for (const amount of [CONFIG.power.minRelease, 60, CONFIG.power.max]) {
     for (const fps of [60, 30, 20]) {
       const { game, cin } = setup(7, amount);
+      cin.update(0.25); stepGame(game, cin.gameDt); // 画面が真っ白になった最初のフレームで撮る場所が決まる
       const tl = cin.timeline;
+      expect(cin.plan).not.toBeNull();
       let worst = 0, phaseAtChaseEnd = null;
       while (cin.time < tl.domeEnd + 2 / fps) {
         cin.update(1 / fps);

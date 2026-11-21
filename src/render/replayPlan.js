@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 import { GRID } from '../world/cityGen.js';
+import { segHitsBox } from './finalePlan.js';
+import { phaseTimes, frontAt } from '../game/blast.js';
 
 // リプレイの「どこから撮るか」を決める純粋な関数（描画は知らない）。放つ直前の街（壊れていないビル）から決める。
 //   street: 爆心へまっすぐ向かう通りの真ん中、両側のビルが高いところ（見上げると、谷底から光の壁が来る）
@@ -16,6 +18,10 @@ export const REPLAY_PLAN = {
   sideAbove: 14,        // 屋根からこれだけ上
   sideClear: 26,        // 道の左右この距離のビルの屋根を見る
   heroAz: 1.15,         // 主人公の向きからこれだけ回った向き（ほぼ横顔。影の輪郭が読める）
+  // R0b fix2: street のカメラ（人の目）から爆心の光（じわじわ期の前線の seeH 倍の高さ）がビルにふさがれない通りを選ぶ
+  // （通りの突き当たりのビルが、スローでふくらむ光の玉を隠さない）。見通せる通りがなければ、区画を alongSteps の順に手前・先へずらして探す
+  seeH: 0.3,
+  alongSteps: [0, -1, 1, -2, 2, -3, -4],
 };
 
 const roadCenter = GRID.PITCH / 2; // 原点に一番近い道路の真ん中（格子の区画の中心は PITCH の倍数）
@@ -27,23 +33,32 @@ export function planReplay({ radius, buildings, heroYaw = 0 }, P = REPLAY_PLAN) 
   // ---- street ----
   const want = Math.min(P.streetMax, Math.max(P.streetMin, P.streetFrac * radius));
   // 区画の真ん中の高さ（交差点を避ける）
-  const along = Math.max(GRID.PITCH, Math.round(want / GRID.PITCH) * GRID.PITCH);
+  const along0 = Math.max(GRID.PITCH, Math.round(want / GRID.PITCH) * GRID.PITCH);
+  const glow = [0, P.seeH * frontAt(phaseTimes(radius).creep, radius), 0];
   let street = null;
-  for (const axis of ['x', 'z']) {
-    for (const sign of [1, -1]) {
-      for (const off of [roadCenter, -roadCenter]) {
-        const pos = axis === 'x' ? [sign * along, P.eye, off] : [off, P.eye, sign * along];
-        const dir = axis === 'x' ? [-sign, 0] : [0, -sign]; // 爆心の方
-        let depth = 0, blocked = false;
-        for (const b of buildings) {
-          const a = axis === 'x' ? b.x * sign : b.z * sign, c = axis === 'x' ? b.z : b.x;
-          if (Math.abs(pos[0] - b.x) < b.w / 2 + 1.5 && Math.abs(pos[2] - b.z) < b.d / 2 + 1.5) blocked = true;
-          if (Math.abs(a - along) < P.flankAlong && Math.abs(c - off) < P.flankAcross && a < along + 10) depth += b.h;
+  for (const k of P.alongSteps) {
+    const along = along0 + k * GRID.PITCH;
+    if (along < GRID.PITCH) continue;
+    for (const axis of ['x', 'z']) {
+      for (const sign of [1, -1]) {
+        for (const off of [roadCenter, -roadCenter]) {
+          const pos = axis === 'x' ? [sign * along, P.eye, off] : [off, P.eye, sign * along];
+          const dir = axis === 'x' ? [-sign, 0] : [0, -sign]; // 爆心の方
+          let depth = 0, blocked = false;
+          for (const b of buildings) {
+            const a = axis === 'x' ? b.x * sign : b.z * sign, c = axis === 'x' ? b.z : b.x;
+            if (Math.abs(pos[0] - b.x) < b.w / 2 + 1.5 && Math.abs(pos[2] - b.z) < b.d / 2 + 1.5) blocked = true;
+            if (Math.abs(a - along) < P.flankAlong && Math.abs(c - off) < P.flankAcross && a < along + 10) depth += b.h;
+          }
+          if (blocked) continue;
+          // 爆心の光を見通せる通りが先（その中で谷の深いもの）。区画をずらすほど、少しだけ譲る
+          const sees = !buildings.some((b) => segHitsBox(pos, glow, b, 0));
+          const score = (sees ? 1e6 : 0) + depth - Math.abs(k) * 1e-3;
+          if (!street || score > street.score) street = { pos, dir, depth, sees, score, dist: Math.hypot(pos[0], pos[2]), az: Math.atan2(pos[2], pos[0]) };
         }
-        if (blocked) continue;
-        if (!street || depth > street.depth) street = { pos, dir, depth, dist: Math.hypot(pos[0], pos[2]), az: Math.atan2(pos[2], pos[0]) };
       }
     }
+    if (street?.sees) break; // 好みの区画で見通せる通りが見つかれば、ずらさない
   }
   // ---- side ----
   const r0 = Math.max(10, Math.min(radius * 0.8, street.dist - 3)), r1 = radius * 1.05 + 40;

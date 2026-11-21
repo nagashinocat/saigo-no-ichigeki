@@ -1,5 +1,5 @@
 import { test, expect } from 'vitest';
-import { planFinale, planRetreat, pickLead, openness, PLAN, retreatPoint, segHitsBox, retreatMargin, nearDist } from '../../src/render/finalePlan.js';
+import { planFinale, planRetreat, pickLead, openness, hiddenFor, PLAN, retreatPoint, segHitsBox, retreatMargin, nearDist } from '../../src/render/finalePlan.js';
 import { createTimeline } from '../../src/render/finaleTimeline.js';
 import { phaseTimes, frontAt } from '../../src/game/blast.js';
 import { facadeWindows } from '../../src/render/facadeWindows.js';
@@ -18,7 +18,14 @@ const ARMY = [enemy(1, 0.3, 40), enemy(2, 2.1, 30), enemy(3, 4.0, 3, 'grab'), en
 const lead = (r) => 20 + 0.6 * r;
 const inside = (p, b, m = 0) => Math.abs(p[0] - b.x) < b.w / 2 + m && Math.abs(p[2] - b.z) < b.d / 2 + m && p[1] < b.h + m;
 
+// 同じ場面を何度も作らない（planFinale は 1 回 数十 ms。テストの時間切れを避ける）。テストは plan を書き換えない
+const memo = new Map();
 function cases(seeds = [3, 7, 11]) {
+  const key = seeds.join(',');
+  if (!memo.has(key)) memo.set(key, makeCases(seeds));
+  return memo.get(key);
+}
+function makeCases(seeds) {
   const out = [];
   for (const seed of seeds) {
     const city = generateCity(seed);
@@ -50,35 +57,90 @@ test('撮る一人の選び方: 帯（半径の band）の中の生きた見回�
   expect(pickLead([enemy(9, 0, 10, 'dead')], R, createRng(1))).toBeNull();
 });
 
-test('fix1 乗り手の列: 6〜10 人が、カメラの 30〜180 m 先（爆心の側）に屋上か地面に立って並ぶ。全員がじわじわ期の光の外・半径の 0.7 より内で、ほかのビルの壁に入らず、爆心を向く。撮る一人（[0]）がいちばん手前', () => {
+// カメラから見た点 p の、爆心への水平の線からの角度（°、右が正）と、前への距離・横の距離・下への距離
+function rel(c, p) {
+  const f = [-c[0], -c[2]], fl = Math.hypot(...f), fw = [f[0] / fl, f[1] / fl], rt = [-fw[1], fw[0]];
+  const dx = p[0] - c[0], dz = p[2] - c[2];
+  const along = dx * fw[0] + dz * fw[1], across = dx * rt[0] + dz * rt[1];
+  return { along, across, below: c[1] - p[1], az: Math.atan2(across, along) * 180 / Math.PI };
+}
+
+test('fix2 撮る一人（riders[0]）: カメラの 12〜18 m 先、横に 3〜4 m、2.5〜3.5 m 下（見下ろす 8〜10° ほど。爆心の光をかなり見下ろす小さな一発だけ steep m まで）。ビルの壁に入らず、爆心を向く', () => {
+  for (const { city, shot, plan } of cases()) {
+    const c = plan.camPos, r = rel(c, plan.riders[0].pos), R = shot.radius;
+    expect(plan.riders[0].id).toBe(plan.riderId);
+    expect(plan.rider.pos).toEqual(plan.riders[0].pos);
+    expect(r.along).toBeGreaterThanOrEqual(12 - 1e-6);
+    expect(r.along).toBeLessThanOrEqual(18 + 1e-6);
+    expect(Math.abs(r.across)).toBeGreaterThanOrEqual(3 - 1e-6);
+    expect(Math.abs(r.across)).toBeLessThanOrEqual(4 + 1e-6);
+    expect(r.below).toBeGreaterThanOrEqual(PLAN.near.below[0] - 1e-6);
+    const steep = Math.atan2(c[1] - 0.5 * f0Of(R), horiz(c)) * 180 / Math.PI + PLAN.near.under > PLAN.near.dipMax;
+    expect(r.below, `r=${R.toFixed(0)}`).toBeLessThanOrEqual((steep ? PLAN.near.steep : PLAN.near.below[1]) + 1e-6);
+    if (!steep) {
+      const dip = Math.atan2(r.below, Math.hypot(r.along, r.across)) * 180 / Math.PI;
+      expect(dip).toBeGreaterThanOrEqual(7.5);
+      expect(dip).toBeLessThanOrEqual(11.5);
+    }
+    expect(city.buildings.filter((o) => inside(plan.riders[0].pos, o, PLAN.riderClear - 0.01)).map((o) => o.id)).toEqual([]);
+  }
+  // 最大の一発では、撮る一人は選んだ見回る者（街を見回る者）
+  for (const { shot, plan } of cases()) {
+    if (shot.amount !== CONFIG.power.max) continue;
+    expect(ARMY.find((e) => e.id === plan.riderId)?.patrol, `r=${shot.radius.toFixed(0)}`).toBe(true);
+  }
+});
+
+test('fix2 列の乗り手: 撮る一人の 30〜180 m 先（小さな一発は縮める）に、左右へ交互に 5〜15 m、爆心への線から 2° 以上それて、ほぼ目の高さ（lineDip° 下の線。屋上が高ければその上）に浮く。じわじわ期の光の外・半径の 0.7 より内で、ビルの壁に入らず、爆心を向く', () => {
   for (const { city, shot, plan } of cases()) {
     const R = shot.radius, f0 = f0Of(R), c = plan.camPos;
     expect(plan.riders.length).toBeGreaterThanOrEqual(PLAN.minRiders);
     expect(plan.riders.length).toBeLessThanOrEqual(10);
-    expect(plan.riders[0].id).toBe(plan.riderId);
-    expect(plan.rider.pos).toEqual(plan.riders[0].pos);
-    const ahead = (r) => Math.hypot(r.pos[0] - c[0], r.pos[2] - c[2]);
-    for (const r of plan.riders) {
-      expect(ahead(r)).toBeGreaterThanOrEqual(Math.min(PLAN.ahead[0], ahead(plan.riders[0])) - 1e-6);
-      expect(ahead(r)).toBeLessThanOrEqual(PLAN.ahead[1] + 20);
-      expect(horiz(r.pos)).toBeLessThan(horiz(c)); // カメラより爆心の側
+    const base = rel(c, plan.riders[0].pos).along;
+    const line = plan.riders.slice(1).map((r) => ({ r, q: rel(c, r.pos) }));
+    // いちばん手前の列の者は撮る一人と同じ側から（縦長の画面は撮る一人の方へ振るので、その側に余白がある）。そこから交互
+    let prevSign = -Math.sign(rel(c, plan.riders[0].pos).across), flips = 0;
+    for (const { r, q } of line) {
+      expect(q.along).toBeGreaterThan(base);
+      expect(q.along).toBeLessThanOrEqual(base + PLAN.ahead[1] + 1e-6);
+      expect(Math.abs(q.across)).toBeGreaterThanOrEqual(PLAN.side[0] - 1e-6);
+      expect(Math.abs(q.across)).toBeLessThanOrEqual(PLAN.side[1] + 1e-6);
+      expect(Math.abs(q.az)).toBeGreaterThanOrEqual(PLAN.minAz - 1e-6);
+      if (Math.sign(q.across) !== prevSign) flips++;
+      prevSign = Math.sign(q.across);
       const d3 = Math.hypot(...r.pos);
       expect(d3).toBeGreaterThan(f0 + 3);
       expect(d3).toBeLessThan(0.7 * R);
-      expect(ahead(r)).toBeGreaterThanOrEqual(ahead(plan.riders[0]) - 1e-6);
-      // 立つ所: 足もとのビルの屋上か地面の hover 上
+      // 目の高さより下（胸がほぼ目の高さ）。線より下へは、屋上か地面の hoverMax の上までしか下がらない
+      expect(q.below).toBeGreaterThanOrEqual(PLAN.lineDrop - 1e-6);
       const under = city.buildings.filter((o) => Math.abs(r.pos[0] - o.x) < o.w / 2 - 0.8 && Math.abs(r.pos[2] - o.z) < o.d / 2 - 0.8).sort((a, b) => b.h - a.h)[0];
-      // 屋上（なければ地面）の hover〜hoverMax 上に浮き（屋上が低ければカメラから lineDip° 下の線へ）、カメラから maxDipLoose° より見下ろさない
       const floorY = under ? under.h : 0;
       expect(r.pos[1]).toBeGreaterThanOrEqual(floorY + PLAN.hover - 0.05);
       expect(r.pos[1]).toBeLessThanOrEqual(floorY + PLAN.hoverMax + 0.05);
-      expect(Math.atan2(c[1] - r.pos[1], ahead(r)) * 180 / Math.PI).toBeLessThanOrEqual(PLAN.maxDipLoose + 1e-6);
+      const line0 = PLAN.lineDrop + q.along * Math.tan(PLAN.lineDip * Math.PI / 180);
+      if (r.pos[1] > floorY + PLAN.hover + 0.05 && r.pos[1] < floorY + PLAN.hoverMax - 0.05) expect(q.below).toBeCloseTo(line0, 6);
       expect(city.buildings.filter((o) => o !== under && inside(r.pos, o, PLAN.riderClear - 0.01)).map((o) => o.id)).toEqual([]);
       const f = [Math.sin(r.yaw), Math.cos(r.yaw)], d = horiz(r.pos);
       expect(f[0] * -r.pos[0] / d + f[1] * -r.pos[2] / d).toBeCloseTo(1, 6);
     }
+    // 左右へ交互（抜けた者がいれば同じ側が続くこともある）
+    expect(flips).toBeGreaterThanOrEqual(line.length - 2);
     expect(plan.riderDist).toBeCloseTo(Math.hypot(...plan.rider.pos), 6);
     expect(plan.firstDist).toBeCloseTo(Math.min(...plan.riders.map((r) => Math.hypot(...r.pos))), 6);
+  }
+});
+
+test('fix2 隠すビル（plan.hide）: じわじわ期の光の玉の中（nearDist < glowIgnore·f0）のビルは全部、カメラから hideFar m より遠いものは光の玉をふさぐものだけ。hideFar m 以内のビルは隠さない', () => {
+  for (const { city, shot, plan } of cases([3, 7])) {
+    const f0 = f0Of(shot.radius), c = plan.camPos, hide = new Set(plan.hide);
+    expect(plan.hide).toEqual(hiddenFor(c, f0, city.buildings).map((o) => o.id));
+    for (const o of city.buildings) {
+      const dCam = Math.hypot(Math.max(0, Math.abs(c[0] - o.x) - o.w / 2), Math.max(0, Math.abs(c[2] - o.z) - o.d / 2));
+      if (nearDist(o) < PLAN.glowIgnore * f0) expect(hide.has(o.id)).toBe(true);
+      else if (dCam <= PLAN.hideFar) expect(hide.has(o.id)).toBe(false);
+      // 真ん中（爆心の向き、光の玉の 0.65 倍の高さ）をふさぐ遠いビルは隠す
+      else if (segHitsBox(c, [0, 0.65 * f0, 0], o, 0.3)) expect(hide.has(o.id)).toBe(true);
+    }
   }
 });
 
@@ -97,10 +159,11 @@ test('fix1 開けた所の決まり（谷でない・真ん中が見通せる・
   for (const { plan } of all) expect(plan.soft).toBeLessThanOrEqual(1);
 });
 
-test('fix1 開けた所: 爆心へ向けた ±8° の扇の光線（と画面の下半分の光線）の open.min 以上がビルにふさがれず、±4° の光線はカメラの 60 m 以内でビルに当たらない（谷ではない）', () => {
+test('fix1 開けた所: 爆心へ向けた ±8° の扇の光線（と画面の下半分の光線）の open.min 以上がビルにふさがれず（fix2: 白の間に隠すビルは数えない）、±4° の光線はカメラの 60 m 以内でビルに当たらない（谷ではない）', () => {
   for (const { city, shot, plan } of cases()) {
     const f0 = f0Of(shot.radius);
-    const live = city.buildings.filter((o) => nearDist(o) > f0 * PLAN.glowIgnore);
+    const hide = new Set(plan.hide);
+    const live = city.buildings.filter((o) => !hide.has(o.id));
     const o = openness(plan.camPos, f0, live);
     expect(o.canyon).toBe(false);
     expect(o.open).toBeGreaterThanOrEqual(PLAN.open.min);
@@ -128,13 +191,20 @@ test('最大の一発: カメラと乗り手の列は爆心から数百 m（列�
   }
 });
 
-test('カメラ: 列の後ろ（爆心から離れた側）の屋上の並みの上でビルの外。爆心の光（じわじわ期の光の玉の上）と、乗り手の一人ひとりを見通せる。見る先は爆心', () => {
+test('カメラ: 列の後ろ（爆心から離れた側）、まわり（camReach m 以内）の屋上の camAbove m 上（fix2: 屋上の並みのすぐ上。爆心の光を見通すのに要るときだけ hideFar m 以内のビルの上まで上げる）でビルの外。爆心の光（隠すビルを除く）と、乗り手の一人ひとりを見通せる。見る先は爆心', () => {
   for (const { city, shot, plan } of cases()) {
-    const R = shot.radius, f0 = f0Of(R), c = plan.camPos;
-    for (const r of plan.riders) expect(c[1]).toBeGreaterThan(r.pos[1] + 1.9);
+    const R = shot.radius, f0 = f0Of(R), c = plan.camPos, hide = new Set(plan.hide);
+    for (const r of plan.riders) expect(c[1]).toBeGreaterThanOrEqual(r.pos[1] + PLAN.lineDrop - 1e-6);
     expect(city.buildings.filter((o) => inside(c, o, PLAN.camClear - 0.01)).map((o) => o.id)).toEqual([]);
+    const boxD = (o) => Math.hypot(Math.max(0, Math.abs(c[0] - o.x) - o.w / 2), Math.max(0, Math.abs(c[2] - o.z) - o.d / 2));
+    const roof = Math.max(0, ...city.buildings.filter((o) => boxD(o) < PLAN.camReach).map((o) => o.h));
+    expect(c[1]).toBeGreaterThanOrEqual(roof + PLAN.camAbove - 1e-6);
+    // 上げたのは、hideFar m 以内のビル越しに爆心の光を見通すためだけ
+    if (c[1] > Math.max(roof + PLAN.camAbove, PLAN.hover + PLAN.camAbove) + 0.6) {
+      expect(city.buildings.some((o) => boxD(o) <= PLAN.hideFar && o.h > roof && nearDist(o) >= PLAN.glowIgnore * f0)).toBe(true);
+    }
     for (const g of PLAN.glow) {
-      expect(city.buildings.filter((o) => nearDist(o) > f0 * PLAN.glowIgnore && segHitsBox(c, [0, g * f0, 0], o, 0.5)).map((o) => o.id)).toEqual([]);
+      expect(city.buildings.filter((o) => !hide.has(o.id) && segHitsBox(c, [0, g * f0, 0], o, 0.5)).map((o) => o.id)).toEqual([]);
     }
     for (const r of plan.riders) {
       const under = city.buildings.filter((o) => Math.abs(r.pos[0] - o.x) < o.w / 2 - 0.8 && Math.abs(r.pos[2] - o.z) < o.d / 2 - 0.8).sort((a, b) => b.h - a.h)[0];
