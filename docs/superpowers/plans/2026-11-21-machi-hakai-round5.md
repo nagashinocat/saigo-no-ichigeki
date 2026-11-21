@@ -7,7 +7,7 @@
 
 ## Global Constraints
 - Portrait 390×844 primary; mid Android 30 fps; original content only; existing tests not weakened.
-- Balance: best play reaches full at p50 48–52 s; the no-払う play never reaches full; a max charge always clears (bosses included).
+- Balance (owner 22:15 + controller ruling): best play reaches full at p50 ≈ 54 s (52–56, over runs that reach full); best-play clear rate 70–80% under the BEST release policy (any charge level); no-払う never reaches full; a max charge always clears (bosses included).
 - Sound follows the screen (owner 13:06). Text beats carry no SFX.
 - Static hosting only (GitHub Pages), with no server.
 - Title 「最後の一撃」; the score label is 「被害額」.
