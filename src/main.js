@@ -137,9 +137,12 @@ const BLACKHOLE_DRONE_SEC = 7; // 唸りが上がりきるまで（何もない�
 let pendingResult = null;
 let lastResult = null;
 let finaleDone = false;
-game.on('over', ({ reason, total }) => {
+// S9: outcome は最後の一発の勝ち負け（撃退成功／撃退失敗と生き残り。時間切れは無い）
+game.on('over', ({ reason, total, outcome = null }) => {
   audio.chargeHum(0); audio.rumble(0);
-  pendingResult = { reason, total, wait: RESULT_DELAY };
+  pendingResult = { reason, total, outcome, wait: RESULT_DELAY };
+  // リプレイが無いとき（ふつうは無い）は、終わった街の上空で生き残りの光を脈打たせる
+  if (outcome && !outcome.clear && !replaySnap) patrolGlow.setSurvivors(survivorIds(outcome));
   // 時間切れ: 主人公がブラックホールになり、すべてを飲み込む（BGM と唸りの段取りは演出の cue）
   if (reason === 'blackhole') { finaleDone = false; blackhole.play(); }
 });
@@ -147,7 +150,7 @@ function updateResult(dt) {
   if (!pendingResult || (!finaleDone && (cinematic.active || replay.active || blackhole.active))) return;
   pendingResult.wait -= dt;
   if (pendingResult.wait > 0) return;
-  result.show(pendingResult.total, pendingResult.reason, { replay: !!replaySnap });
+  result.show(pendingResult.total, pendingResult.reason, pendingResult.outcome, { replay: !!replaySnap });
   lastResult = pendingResult;
   pendingResult = null;
 }
@@ -193,7 +196,7 @@ game.on('shot', (shot) => {
   cityView.setDetail('fine'); // ビルを球の線に沿って曲がる細かい箱へ（遊んでいる間は粗い箱）
   explosionView.begin(shot); hand.release(shot);
 });
-// 小爆発: 両手が素早く組み合わさって弾け、主人公のまわりに小さな光の球（貯めの唸りは止めない）
+// 小爆発: 両手が玉を鷲掴みに押さえ込んで弾け、主人公のまわりに小さな光の球（貯めの唸りは止めない）
 // 足りずに離した: 放たず、両手がびくっと震え、ひとこと知らせる
 game.on('fizzle', () => { hand.fizzle(); hud.hint('まだ足りない。もっと貯めてから離して'); });
 game.on('puff', (shot) => { explosionView.begin(shot); hand.release(shot); });
@@ -211,7 +214,9 @@ game.on('shot', ensureHeroBody);
 game.on('shot', () => { if (enemyView.focusMesh?.geometry !== riderBuilder.finish().geometry) enemyView.setRiderBody(riderBuilder.body); });
 game.on('over', ensureHeroBody);
 // 街を見回る軍勢の光の点と、光の壁に飲まれた瞬間の火花（fix1。遠くの地区の軍勢も読める）
-const patrolGlow = createPatrolGlow(CONFIG.enemy.patrol.count, tier);
+// S9: 撃退失敗の生き残りは、探す者も同じ点で目印にする（その分の余り）
+const patrolGlow = createPatrolGlow(CONFIG.enemy.patrol.count, tier, { extra: 256 });
+const survivorIds = (outcome) => new Set(outcome.survivors.map((s) => s.id));
 cityScene.add(patrolGlow.points);
 const heroAura = createHeroAura(tier); // 浮いている主人公のまわりの力のゆらぎ
 cityScene.add(heroAura.group);
@@ -239,7 +244,7 @@ blackhole.on('cue', ({ name }) => {
 blackhole.on('end', () => { finaleDone = true; bgm.quiet(); });
 const shotRng = createRng(seed ^ 0xc1a3e);
 const standing = new Set(game.city.buildings.map((b) => b.id)); // まだ壊れていないビル
-// 撮る場所の計算を一度空回しして JIT を温めておく（放つ瞬間、両手が組み合わさる間に止まらないように）。乱数は別のものを使う
+// 撮る場所の計算を一度空回しして JIT を温めておく（放つ瞬間、両手が玉を握り込む間に止まらないように）。乱数は別のものを使う
 {
   const warm = { radius: CONFIG.radius.max };
   planFinale({ shot: warm, rng: createRng(seed ^ 0x5eed), lead: leadFor(warm.radius), buildings: game.city.buildings, enemies: game.enemies.list });
@@ -313,7 +318,7 @@ function onTransit(events) {
 // ---- リプレイ（仕様 12 章の絵コンテ 6〜7）----
 // 最後の一発の直前の街を覚えておき、同じ一発を決まった刻みで起こし直す（同じ種なら同じリプレイ。何度でも見せ直せる）。
 // 街の姿（ビルと props の置き場所・つぶれ）は、最後の一発より前には変わらない（小爆発は軍勢だけを払う）ので、
-// 起動したときに写しておく（放つ瞬間に写すと、両手が組み合わさる間に止まる）。念のため、変わっていたら放つ瞬間に写し直す。
+// 起動したときに写しておく（放つ瞬間に写すと、両手が玉を握り込む間に止まる）。念のため、変わっていたら放つ瞬間に写し直す。
 let citySnap = cityView.snapshot();
 let replaySnap = null; // { shot, targets, enemies, buildings }
 let replaySim = null;
@@ -336,6 +341,7 @@ const replay = createReplay(views, {
   onRestore() {
     cityView.restore(citySnap);
     patrolGlow.reset();
+    patrolGlow.setSurvivors(null); // 生き残りの目印は、リプレイを最後まで見せてから
     destruction.reset();
     explosionView.reset();
     fronts.reset();
@@ -352,7 +358,12 @@ const replay = createReplay(views, {
 replay.warmup(renderer, views.cityCamera);
 // 音: リプレイの間は世界の音を鳴らさない（BGM は 'replayStart' で静かな変奏になり、結果画面でもそのまま続く）
 replay.on('replayStart', () => { replayTag.hidden = false; bgm.quiet(); audio.debrisMode('replay'); });
-replay.on('replayEnd', () => { replayTag.hidden = true; finaleDone = true; });
+replay.on('replayEnd', () => {
+  replayTag.hidden = true; finaleDone = true;
+  // S9: 撃退失敗: 最後の絵（生き残りの引きの絵）と結果の後ろで、生き残りの光が赤と緑に脈打つ
+  const o = game.outcome;
+  if (o && !o.clear) patrolGlow.setSurvivors(survivorIds(o));
+});
 replay.on('skip', () => { replayTag.hidden = true; });
 function startReplay() {
   if (!replaySnap) return;
@@ -360,7 +371,8 @@ function startReplay() {
   result.hide();
   if (lastResult) pendingResult = { ...lastResult, wait: RESULT_DELAY };
   finaleDone = false;
-  replay.play({ shot: replaySnap.shot, buildings: replaySnap.buildings, heroYaw: enemyView.heroYaw });
+  const o = game.outcome;
+  replay.play({ shot: replaySnap.shot, buildings: replaySnap.buildings, heroYaw: enemyView.heroYaw, survivors: o && !o.clear ? o.survivors : null });
 }
 function skipReplay() { replay.skip(); }
 
@@ -422,7 +434,7 @@ function stepWorld(wdt, live, enemies, cam, focus, glowScale = 1) {
   _frustum.setFromProjectionMatrix(_projView.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse));
   _shown.length = 0;
   for (const e of enemies) if (!e.patrol || _frustum.intersectsSphere(_sph.set(_sphC.set(e.x, 3, e.z), 12))) _shown.push(e);
-  patrolGlow.update(enemies, { pixelRatio: renderer.getPixelRatio(), dt: wdt, visible: patrolGlowVisible({ overhead: aids, over: game.phase === 'over' }) });
+  patrolGlow.update(enemies, { pixelRatio: renderer.getPixelRatio(), dt: wdt, time: performance.now() / 1000, visible: patrolGlowVisible({ overhead: aids, over: game.phase === 'over' }) });
   enemyView.sync(_shown, { fronts: list, pointScale: ps, glow: explosionView.ground.heat * glowScale, dt: wdt, pixelRatio: renderer.getPixelRatio(), silhouette: 1 - glowScale, aids });
   heroAura.update(wdt, ps, 1 - glowScale);
 }
@@ -458,8 +470,8 @@ function finishFrame(dt, live) {
   // 手の中の球の大きさは貯めた力。掴まれている間は、光が弱く不安定に瞬く
   const h = handInput ?? { level: game.power.level, active: game.charge.active, steady: game.grabbing > 0 ? GRABBED_STEADY : 1 };
   hand.update(dt, h.level, h.active, h.steady);
-  hud.update({ remaining: game.timer.remaining, power: game.power.value, max: CONFIG.power.max, canPuff: game.canPuff });
-  // 最後の一発を放ってから結果までずっと HUD は出さない（両手が組み合わさる間も、リプレイの間も）
+  hud.update({ remaining: game.timer.remaining, power: game.power.value, max: CONFIG.power.max, canPuff: game.canPuff, alive: game.aliveCount });
+  // 最後の一発を放ってから結果までずっと HUD は出さない（両手が玉を握り込む間も、リプレイの間も）
   hud.setVisible(!debugCam && !cinematic.active && !replay.active && !blackhole.active);
   updateAudio(live, dt);
   updateResult(dt);

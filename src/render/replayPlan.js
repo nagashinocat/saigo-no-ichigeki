@@ -1,3 +1,4 @@
+import * as THREE from 'three';
 import { GRID } from '../world/cityGen.js';
 
 // リプレイの「どこから撮るか」を決める純粋な関数（描画は知らない）。放つ直前の街（壊れていないビル）から決める。
@@ -67,4 +68,35 @@ export function planReplay({ radius, buildings, heroYaw = 0 }, P = REPLAY_PLAN) 
     top: { az: street.az + Math.PI / 2 },
     hero: { az: heroYaw + P.heroAz },
   };
+}
+
+// S9（撃退失敗のとき、生き残った軍勢の光が爆発のあとの街に残って見える）: 生き残りを見せる引きの絵。
+// 爆心と生き残り全員（たいてい街の外側の見回る者）を、黒い帯の内に収めて斜め上から見下ろす。
+// survivors: [{ x, z }]、aspect: 画面の縦横比、az: 見る向き（爆心から見たカメラの方角）。戻り値 { pos, look, fov }
+export const AFTERMATH = { elev: 0.98, fov: { portrait: 58, landscape: 40 }, fitX: 0.84, fitY: 0.62, minDist: 260, maxDist: 7600 };
+const _cam = new THREE.PerspectiveCamera(), _v = new THREE.Vector3(), _l = new THREE.Vector3();
+export function aftermathView({ survivors, aspect, az = 0 }, A = AFTERMATH) {
+  let x0 = 0, x1 = 0, z0 = 0, z1 = 0;
+  for (const s of survivors) { x0 = Math.min(x0, s.x); x1 = Math.max(x1, s.x); z0 = Math.min(z0, s.z); z1 = Math.max(z1, s.z); }
+  const look = [(x0 + x1) / 2, 0, (z0 + z1) / 2];
+  const fov = aspect < 1 ? A.fov.portrait : A.fov.landscape;
+  const dir = [Math.cos(A.elev) * Math.cos(az), Math.sin(A.elev), Math.cos(A.elev) * Math.sin(az)];
+  _cam.fov = fov; _cam.aspect = aspect; _cam.near = 1; _cam.far = 9000; _cam.updateProjectionMatrix();
+  _l.fromArray(look);
+  const pts = [{ x: 0, z: 0 }, ...survivors];
+  let D = A.minDist;
+  // 全員が収まるまで少しずつ引く（決まった刻みなので同じ生き残りなら同じ絵）
+  for (; D < A.maxDist; D *= 1.04) {
+    _cam.position.set(look[0] + dir[0] * D, look[1] + dir[1] * D, look[2] + dir[2] * D);
+    _cam.lookAt(_l);
+    _cam.updateMatrixWorld();
+    let ok = true;
+    for (const s of pts) {
+      _v.set(s.x, 3, s.z).project(_cam);
+      if (Math.abs(_v.x) > A.fitX || Math.abs(_v.y) > A.fitY) { ok = false; break; }
+    }
+    if (ok) break;
+  }
+  D = Math.min(D, A.maxDist);
+  return { pos: [look[0] + dir[0] * D, look[1] + dir[1] * D, look[2] + dir[2] * D], look, fov };
 }

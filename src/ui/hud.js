@@ -13,14 +13,18 @@ export function powerText(power, max) {
   return `力 ${Math.floor(Math.max(0, Math.min(1, power / max)) * 100)}%`;
 }
 
+// S9: 一発で街じゅうの軍勢を全員倒せばクリア。街に生きている軍勢の数（小さく、残り時間の下に）
+export const armyText = (n) => `街の軍勢 ${n}`;
+
 export function createHud(root, { onPuff } = {}) {
-  root.innerHTML = '<div class="hud-strip"><div class="hud-power-text"></div><div class="hud-time"></div></div>'
+  root.innerHTML = '<div class="hud-strip"><div class="hud-power-text"></div><div class="hud-right"><div class="hud-time"></div><div class="hud-army"></div></div></div>'
     + '<div class="hud-power"><i></i></div>'
     + '<button type="button" class="hud-puff off" aria-disabled="true"><b>払う</b><small>Space</small></button>'
     + '<div class="hud-hint"></div>';
   const strip = root.querySelector('.hud-strip');
   const label = root.querySelector('.hud-power-text');
   const time = root.querySelector('.hud-time');
+  const army = root.querySelector('.hud-army');
   const bar = root.querySelector('.hud-power');
   const fill = bar.querySelector('i');
   const button = root.querySelector('.hud-puff');
@@ -29,7 +33,7 @@ export function createHud(root, { onPuff } = {}) {
   // 押した瞬間に払う（click は指を離すまで来ない）。押せないときの押下も、ここで受け止めて長押しにはしない
   button.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); onPuff?.(); });
   button.addEventListener('contextmenu', (e) => e.preventDefault());
-  let shownLabel, shownTime, shownFill, shownOn;
+  let shownLabel, shownTime, shownFill, shownOn, shownArmy;
   return {
     // layout: layoutViews の戻り値、height: 画面の高さ（Rect は左下原点なので上端からの位置へ直す）
     place(layout, height) {
@@ -49,7 +53,9 @@ export function createHud(root, { onPuff } = {}) {
       hintTimer = setTimeout(() => hintEl.classList.remove('show'), sec * 1000);
     },
     setVisible(v) { root.style.visibility = v ? 'visible' : 'hidden'; },
-    update({ remaining, power, max, canPuff }) {
+    // alive: 街に生きている軍勢の数（省けば出さない）
+    update({ remaining, power, max, canPuff, alive = null }) {
+      if (alive !== shownArmy) { army.textContent = alive == null ? '' : armyText(alive); shownArmy = alive; }
       const p = powerText(power, max);
       if (p !== shownLabel) { label.textContent = p; shownLabel = p; }
       const t = String(Math.ceil(remaining));

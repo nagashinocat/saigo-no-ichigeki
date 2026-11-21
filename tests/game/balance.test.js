@@ -44,3 +44,28 @@ test('「何人かに掴ませておく」より、早く払うほうが早く�
   const lazy = med({ grab: 4, crowd: Infinity });
   expect(early).toBeLessThan(lazy);
 });
+
+// S9: 撃退成功（放った一発で街の軍勢を全員倒す）。最善に近い操作で力が level に届いた瞬間に離す
+function releaseAtLevel(seed, level) {
+  const g = createGame({ seed });
+  g.pressStart();
+  const DT = 1 / 30;
+  for (let t = 0; t < CONFIG.roundSeconds - DT / 2; t += DT) {
+    const n = g.enemies.list.filter((e) => e.state !== 'dead' && e.dist <= 4).length;
+    if (g.grabbing >= 1 || n >= 1) g.puff();
+    g.update(DT);
+    if (g.power.value >= level - 1e-6) { g.pressEnd(); g.settle(); return g.outcome; }
+  }
+  return null; // 届かないまま時間切れ（ブラックホール）
+}
+
+test('S9: 最善に近い操作で満タンで放てば撃退成功。7 割で放つと街の外側の見回る者が残って撃退失敗（ギリギリまで貯める意味がある）', () => {
+  const seeds = Array.from({ length: 8 }, (_, i) => i + 1);
+  const full = seeds.map((s) => releaseAtLevel(s, CONFIG.power.max));
+  expect(full.filter((o) => o?.clear).length).toBeGreaterThanOrEqual(7);
+  for (const s of seeds) {
+    const o = releaseAtLevel(s, 70);
+    expect(o.clear).toBe(false);
+    expect(o.survivors.some((v) => v.patrol)).toBe(true);
+  }
+});

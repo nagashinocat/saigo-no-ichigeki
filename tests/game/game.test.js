@@ -91,7 +91,7 @@ test('離すと最後の一発: 貯めた量で半径が決まり、演出（fre
   expect(names.indexOf('shotScored')).toBeLessThan(names.indexOf('over'));
   const over = log.filter(([n]) => n === 'over');
   expect(over).toHaveLength(1);
-  expect(over[0][1]).toEqual({ reason: 'released', total: g.score.total });
+  expect(over[0][1]).toEqual({ reason: 'released', total: g.score.total, outcome: g.outcome });
 });
 
 test('最大まで貯めた一発は街の端まで届く', () => {
@@ -394,7 +394,7 @@ test('settle: 最後の一発を放ったあと（演出・爆発の途中）な
     expect(hits.length).toBeGreaterThan(before);
     for (const [, p] of hits.slice(before)) expect(p.settled).toBe(true);
     expect(new Set(hits.map(([, p]) => p.hit.id)).size).toBe(hits.length);
-    expect(log.filter(([n]) => n === 'over')).toEqual([['over', { reason: 'released', total: g.score.total }]]);
+    expect(log.filter(([n]) => n === 'over')).toEqual([['over', { reason: 'released', total: g.score.total, outcome: g.outcome }]]);
     expect(log.filter(([n]) => n === 'cinematicEnd')).toHaveLength(1);
     g.settle(); // 終わったあとは何もしない
     expect(log.filter(([n]) => n === 'over')).toHaveLength(1);

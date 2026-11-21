@@ -4,10 +4,10 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="icon" href="data:,">
-  <title>街破壊（仮題）</title>
+  <title>最後の一撃</title>
   <meta name="description" content="手の中で爆発する力で、街をまるごと吹き飛ばす3Dゲーム。">
   <meta property="og:type" content="website">
-  <meta property="og:title" content="街破壊（仮題）">
+  <meta property="og:title" content="最後の一撃">
   <meta property="og:description" content="長押しで力を貯め、離せば最後の一発。60秒で街をまるごと吹き飛ばせ。">
   <meta property="og:locale" content="ja_JP">
   <meta name="twitter:card" content="summary">
@@ -19,7 +19,9 @@
     #hud { position: fixed; inset: 0; pointer-events: none; }
     .hud-strip { position: absolute; display: flex; justify-content: space-between; align-items: flex-start; box-sizing: border-box; padding: 0.6em 4vw 0; text-shadow: 0 1px 3px rgba(20, 10, 30, 0.85), 0 0 10px rgba(20, 10, 30, 0.5); }
     .hud-power-text { font-size: clamp(18px, 5.6vw, 30px); font-weight: 800; letter-spacing: 0.02em; font-variant-numeric: tabular-nums; }
+    .hud-right { display: flex; flex-direction: column; align-items: flex-end; }
     .hud-time { font-size: clamp(13px, 3.8vw, 20px); font-weight: 700; opacity: 0.92; padding-top: 0.35em; }
+    .hud-army { font-size: clamp(11px, 3vw, 15px); font-weight: 700; opacity: 0.7; margin-top: 0.15em; color: #c9f5d8; font-variant-numeric: tabular-nums; }
     .hud-power { position: absolute; height: 5px; background: rgba(0, 0, 0, 0.45); }
     .hud-power i { display: block; height: 100%; transform-origin: left; background: linear-gradient(90deg, #ffb347, #fff3c4); box-shadow: 0 0 8px #ffc766; }
     .hud-puff { position: absolute; pointer-events: auto; touch-action: none; box-sizing: border-box; margin: 0; padding: 0; border-radius: 50%; border: 2px solid rgba(255, 236, 190, 0.95); background: radial-gradient(circle at 50% 40%, rgba(255, 214, 140, 0.55), rgba(120, 50, 20, 0.55)); color: #fff; font-family: inherit; font-weight: 800; display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1.05; text-shadow: 0 1px 3px rgba(20, 10, 30, 0.9); box-shadow: 0 0 14px rgba(255, 190, 100, 0.55); cursor: pointer; -webkit-tap-highlight-color: transparent; }
@@ -32,9 +34,14 @@
     #start { position: fixed; left: 0; right: 0; top: 30%; text-align: center; pointer-events: none; font-size: clamp(16px, 4.6vw, 26px); font-weight: 700; text-shadow: 0 1px 4px rgba(20, 10, 30, 0.9), 0 0 14px rgba(20, 10, 30, 0.6); }
     #start[hidden], #result[hidden], #result [hidden] { display: none; }
     #result { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.4em; background: rgba(12, 8, 24, 0.72); text-align: center; }
-    .result-reason { font-size: clamp(16px, 4.4vw, 24px); opacity: 0.85; }
-    .result-label { font-size: clamp(13px, 3.6vw, 18px); opacity: 0.7; margin-top: 0.8em; }
-    .result-amount { font-size: clamp(40px, 13vw, 84px); font-weight: 900; text-shadow: 0 0 24px rgba(255, 180, 90, 0.6); }
+    /* 撃退失敗: 後ろの引きの絵（生き残りの光）が読めるよう、真ん中の文字の後ろだけ暗くする */
+    #result.fail { background: radial-gradient(ellipse 80% 34% at 50% 50%, rgba(12, 8, 24, 0.78), rgba(12, 8, 24, 0.12) 100%); }
+    .result-title { font-size: clamp(13px, 3.6vw, 18px); font-weight: 700; letter-spacing: 0.5em; padding-left: 0.5em; opacity: 0.6; }
+    .result-headline { font-size: clamp(36px, 11vw, 72px); font-weight: 900; letter-spacing: 0.06em; margin-top: 0.15em; white-space: nowrap; }
+    #result.clear .result-headline { color: #fff6dc; text-shadow: 0 0 28px rgba(255, 200, 110, 0.75), 0 0 6px rgba(255, 230, 170, 0.8); }
+    #result.fail .result-headline { font-size: clamp(28px, 8.4vw, 60px); color: #ffd9d2; text-shadow: 0 0 22px rgba(255, 70, 60, 0.6), 0 0 4px rgba(120, 255, 170, 0.35); }
+    .result-label { font-size: clamp(12px, 3.2vw, 16px); opacity: 0.65; margin-top: 1.4em; letter-spacing: 0.1em; }
+    .result-amount { font-size: clamp(22px, 6.4vw, 40px); font-weight: 800; opacity: 0.92; text-shadow: 0 0 16px rgba(255, 180, 90, 0.45); }
     .result-row { display: flex; gap: 1em; margin-top: 1.6em; }
     .result-btn { font: inherit; font-size: clamp(16px, 4.4vw, 22px); font-weight: 700; padding: 0.7em 1.6em; border-radius: 999px; border: 2px solid #fff; background: transparent; color: #fff; cursor: pointer; }
     .result-btn.primary { background: #fff; color: #1b1030; }

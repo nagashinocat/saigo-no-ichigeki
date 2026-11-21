@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { createReplayTimeline } from './replayTimeline.js';
-import { planReplay } from './replayPlan.js';
+import { planReplay, aftermathView } from './replayPlan.js';
 import { createReplayLight } from './replayLight.js';
 
 // 最後の一発のリプレイ（画面全体。仕様 12 章の絵コンテ 6〜7）。時間割は replayTimeline.js、撮る場所は replayPlan.js。
@@ -17,6 +17,9 @@ const FF_TICKS = 10;          // 早送りで1フレームに進める刻みの�
 const OUTRO_FADE = 0.5;       // 飛ばしたあと、最後の絵へ明けるまで
 const END_FADE = 0.38;        // 結果の後ろの最後の絵の暗さ
 const HELD_RATE = 0.25;       // 待つ間の世界の進み（粉や熾火がゆっくり動く）
+// S9: 撃退失敗のとき、最後の絵は生き残りを見せる引きの絵（暗転を挟んで切り替える）。結果の後ろでも光が読めるよう暗くしすぎない
+const AFTER_FADE_IN = 0.9;    // 暗転から引きの絵へ明けるまで
+const AFTER_END_FADE = 0.16;  // 引きの絵の結果の後ろの暗さ
 // 黒い帯: 縦長はこの縦横比、横長はシネマスコープ
 export const REPLAY_BARS = { portrait: 0.6, landscape: 2.39 };
 // レンズ（縦の画角、度）
@@ -53,6 +56,7 @@ export function createReplay(views, { scene, lights = null, fog = null, blastLig
   // 今の値へ掛け直すと重ねて弱まってしまう。元の値から作り直す
   let blastBase = 0, blastWritten = NaN;
   let phase = 'off', t = 0, acc = 0, b = 0, tl = null, plan = null, cutName = '', skipK = 0, outro = 0, heldT = 0;
+  let survivors = null, after = null; // S9: 撃退失敗の生き残り（[{ x, z }]）と、その引きの絵（最後まで見せたら）
   const screen = { flash: 0, time: 0, heat: null, grade: { bars: 0, ca: 0, vig: 0, sat: 1, grain: 0, streak: 0, exposure: 1, fade: 1, warm: 0, contrast: 1, bloom: 1 } };
   const baseLight = lights ? { sun: lights.sun?.intensity ?? 0, fill: lights.fill?.intensity ?? 0 } : null;
   function dimLights(k) {
@@ -157,6 +161,19 @@ export function createReplay(views, { scene, lights = null, fog = null, blastLig
     screen.flash = 1 - smooth(u / 0.04);
   }
 
+  // S9: 撃退失敗の引きの絵（爆心と生き残り全員を斜め上から）。生き残りの光は patrolGlow が赤と緑に脈打たせる
+  function shotAfter() {
+    heroK = 0;
+    screen.grade.bars = replayBars(aspect());
+    _pos.fromArray(after.pos); _look.fromArray(after.look);
+    aim(_pos, _look, after.fov);
+    setFog(_pos.distanceTo(_look) * 0.8);
+    setGrade({ sat: 1.0, warm: 0.2, contrast: 1.12, vig: 0.45, ca: 0.15, grain: 0.03, exposure: 0.95, streak: 0, bloom: 1 });
+    screen.flash = 0;
+    light.hide();
+    dimLights(0);
+  }
+
   function shot(tt) {
     const { name, u } = tl.cutAt(tt);
     heroK = 0;
@@ -187,6 +204,7 @@ export function createReplay(views, { scene, lights = null, fog = null, blastLig
 
   function finish() {
     phase = 'held'; heldT = 0;
+    if (survivors) { after = aftermathView({ survivors, aspect: aspect(), az: plan.top.az }); outro = AFTER_FADE_IN; }
     emit('replayEnd');
   }
 
@@ -202,8 +220,9 @@ export function createReplay(views, { scene, lights = null, fog = null, blastLig
     if (phase === 'play') {
       g.fade = 1 - smooth((t - tl.intro) / 0.25);
       // 最後: 結果の後ろへ少し暗くなる
-      g.fade = Math.max(g.fade, END_FADE * smooth((t - (tl.end - 0.6)) / 0.6));
-      if (t >= tl.end - 1e-9) { finish(); g.fade = END_FADE; }
+      // （撃退失敗は暗転しきって、生き残りの引きの絵へ）
+      g.fade = Math.max(g.fade, (survivors ? 1 : END_FADE) * smooth((t - (tl.end - 0.6)) / 0.6));
+      if (t >= tl.end - 1e-9) { finish(); g.fade = after ? 1 : END_FADE; }
       return;
     }
     if (phase === 'skip') {
@@ -217,14 +236,16 @@ export function createReplay(views, { scene, lights = null, fog = null, blastLig
       for (let n = 0; n < FF_TICKS && t < tl.end - 1e-9; n++) tickOnce(Math.min(FF_TICK, tl.end - t));
       g.fade = 1;
       if (t >= tl.end - 1e-9) { outro = OUTRO_FADE; finish(); }
+      if (after) shotAfter();
       return;
     }
     // held: 最後の絵のまま。世界はゆっくり進む（粉・熾火・主人公のまわりのゆらぎ）
     heldT += dt;
-    shot(tl.end);
+    if (after) shotAfter(); else shot(tl.end);
     onTick(dt * HELD_RATE, cam);
     if (outro > 0) outro = Math.max(0, outro - dt);
-    g.fade = END_FADE + (1 - END_FADE) * smooth(outro / OUTRO_FADE);
+    if (after) g.fade = AFTER_END_FADE + (1 - AFTER_END_FADE) * smooth(outro / AFTER_FADE_IN);
+    else g.fade = END_FADE + (1 - END_FADE) * smooth(outro / OUTRO_FADE);
   }
 
   const self = {
@@ -239,6 +260,8 @@ export function createReplay(views, { scene, lights = null, fog = null, blastLig
     get cut() { return cutName; },
     get timeline() { return tl; },
     get plan() { return plan; },
+    // S9: 撃退失敗の引きの絵（最後まで見せたあと。成功なら null）
+    get aftermath() { return after; },
     // 最後のカットで主人公を影絵にする強さ（0〜1）。爆発の光で白く光らせない
     get silhouette() { return heroK; },
     get light() { return light; },
@@ -259,7 +282,9 @@ export function createReplay(views, { scene, lights = null, fog = null, blastLig
       light.mesh.visible = false;
     },
     // shot: 最後の一発、buildings: 放つ直前の（壊れていない）ビル、heroYaw: 主人公の向き
-    play({ shot: s, buildings, heroYaw = 0 }) {
+    // survivors: 撃退失敗の生き残り（[{ x, z }]。最後の絵を生き残りの引きの絵にする）。成功・省けば前のまま
+    play({ shot: s, buildings, heroYaw = 0, survivors: sv = null }) {
+      survivors = sv && sv.length ? sv : null; after = null;
       plan = planReplay({ radius: s.radius, buildings, heroYaw });
       tl = createReplayTimeline({ radius: s.radius, streetDist: plan.street.dist });
       phase = 'play'; t = 0; acc = 0; cutName = 'intro'; skipK = 0; outro = 0;
@@ -289,7 +314,7 @@ export function createReplay(views, { scene, lights = null, fog = null, blastLig
     },
     // やめる（何も描かない）
     stop() {
-      phase = 'off'; cutName = '';
+      phase = 'off'; cutName = ''; after = null;
       light.hide();
       dimLights(0);
       setFog(0);

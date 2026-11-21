@@ -141,3 +141,31 @@ test('最後のカットの爆心の光は、刻みのないフレームが続�
     expect(blastLight.intensity).toBeCloseTo(100 * (1 - r.silhouette), 6);
   }
 });
+
+test('S9: 撃退失敗なら、最後まで見せたあと（飛ばしても）暗転を挟んで生き残りの引きの絵で待つ。成功なら前のまま', () => {
+  const survivors = [{ x: 620, z: 30 }, { x: -40, z: -650 }];
+  for (const skip of [false, true]) {
+    const { r } = make();
+    r.play({ shot, buildings: city.buildings, heroYaw: 0.5, survivors });
+    if (skip) { r.update(1 / 60); r.skip(); }
+    for (let i = 0; i < 60 * 16 && !r.finished; i++) r.update(1 / 60);
+    expect(r.finished).toBe(true);
+    expect(r.aftermath).not.toBe(null);
+    for (let i = 0; i < 90; i++) r.update(1 / 60);
+    const cam = r.camera;
+    expect(cam.position.toArray()).toEqual(r.aftermath.pos.map((v) => expect.closeTo(v, 4)));
+    for (const s of survivors) {
+      const p = new THREE.Vector3(s.x, 3, s.z).project(cam);
+      expect(Math.abs(p.x)).toBeLessThan(1);
+      expect(Math.abs(p.y)).toBeLessThan(1);
+    }
+    expect(r.screen.grade.fade).toBeLessThan(0.3); // 結果の後ろでも街と光が読める
+    expect(r.silhouette).toBe(0);
+  }
+  const { r } = make();
+  r.play({ shot, buildings: city.buildings, heroYaw: 0.5, survivors: [] });
+  for (let i = 0; i < 60 * 16 && !r.finished; i++) r.update(1 / 60);
+  expect(r.aftermath).toBe(null);
+  r.update(1 / 60);
+  expect(r.cut).toBe('hero');
+});

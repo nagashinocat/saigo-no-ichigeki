@@ -51,3 +51,22 @@ test('飲まれた者は、この層の時計で flash 秒だけ火花になり�
   g.update([a, b], { dt: 0.05 });
   expect(dead()).toEqual([0, -1]); // リプレイ: もう一度飲まれた瞬間から
 });
+
+test('S9: 撃退失敗のあと、生き残った者（見回る者も探す者も）は赤と緑に脈打つ目印になる。近くでも描く。null で戻す', () => {
+  const g = createPatrolGlow(2, 'high', { extra: 2 });
+  const a = pat(1, 600, 0), b = pat(2, 300, 0), h = { id: 7, x: 20, z: 0, state: 'search' }, h2 = { id: 8, x: 30, z: 0, state: 'search' };
+  const surv = () => [...g.points.geometry.getAttribute('aSurv').array.slice(0, g.count())];
+  g.update([a, b, h, h2]);
+  expect(g.count()).toBe(2); // 探す者は描かない
+  expect(surv()).toEqual([0, 0]);
+  g.setSurvivors(new Set([1, 7]));
+  g.update([a, b, h, h2], { dt: 0.1 });
+  expect(g.count()).toBe(3);
+  expect(surv()).toEqual([1, 0, 1]);
+  const p = g.points.geometry.getAttribute('position').array;
+  expect(p[6]).toBeCloseTo(20); // 探す者の生き残りの位置
+  expect(g.points.material.uniforms.uTime.value).toBeCloseTo(0.1);
+  g.setSurvivors(null);
+  g.update([a, b, h, h2]);
+  expect(surv()).toEqual([0, 0]);
+});

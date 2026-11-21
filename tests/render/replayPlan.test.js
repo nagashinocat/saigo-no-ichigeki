@@ -1,5 +1,6 @@
 import { test, expect } from 'vitest';
-import { planReplay, REPLAY_PLAN } from '../../src/render/replayPlan.js';
+import * as THREE from 'three';
+import { planReplay, REPLAY_PLAN, aftermathView } from '../../src/render/replayPlan.js';
 import { generateCity, GRID } from '../../src/world/cityGen.js';
 import { radiusFor } from '../../src/game/charge.js';
 import { CONFIG } from '../../src/config.js';
@@ -41,5 +42,35 @@ test('side: 前線に沿う道の上の屋根より高く、street と違う向�
     }
     expect(planReplay({ radius, buildings, heroYaw: 0.4 })).toEqual(p);
     expect(p.hero.az).toBeCloseTo(0.4 + REPLAY_PLAN.heroAz, 9);
+  }
+});
+
+// S9: 撃退失敗のあと、生き残った軍勢を見せる引きの絵（リプレイの最後の絵と、結果の後ろ）
+
+test('S9: 撃退失敗の引きの絵は、爆心と生き残り全員を画面の内に収め、斜め上から見下ろす', () => {
+  const cases = [
+    [{ x: 600, z: 40 }, { x: -20, z: -660 }, { x: 300, z: 520 }],
+    [{ x: -640, z: 10 }],
+    [{ x: 15, z: 30 }, { x: 680, z: 0 }],
+  ];
+  for (const aspect of [390 / 844, 16 / 9]) {
+    for (const survivors of cases) {
+      const v = aftermathView({ survivors, radius: 400, aspect, az: 0.7 });
+      const cam = new THREE.PerspectiveCamera(v.fov, aspect, 1, 9000);
+      cam.position.fromArray(v.pos);
+      cam.lookAt(new THREE.Vector3().fromArray(v.look));
+      cam.updateMatrixWorld();
+      for (const s of [...survivors, { x: 0, z: 0 }]) {
+        const p = new THREE.Vector3(s.x, 3, s.z).project(cam);
+        expect(Math.abs(p.x), `${aspect} ${s.x},${s.z}`).toBeLessThan(0.92);
+        expect(Math.abs(p.y)).toBeLessThan(0.75); // 黒い帯の内
+        expect(p.z).toBeLessThan(1);
+      }
+      // 見下ろす（真上ではなく斜め）
+      const dy = v.pos[1] - v.look[1], dh = Math.hypot(v.pos[0] - v.look[0], v.pos[2] - v.look[2]);
+      expect(Math.atan2(dy, dh)).toBeGreaterThan(0.6);
+      expect(Math.atan2(dy, dh)).toBeLessThan(1.35);
+      expect(Math.hypot(...v.pos)).toBeLessThan(8000); // カメラの遠い面の内
+    }
   }
 });

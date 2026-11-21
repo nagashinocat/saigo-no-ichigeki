@@ -13,6 +13,8 @@ const MAX_DT = 0.1;
 // ゲーム全体の進行。描画や入力デバイスは知らず、pressStart/pressEnd/puff/update だけで動く。
 // phase: 'ready' → 'playing'（長押しで力を貯める・小爆発で払う） → 'cinematic'（最後の一発を放った瞬間、演出の間は止まる）
 //        → 'finale'（最後の一発が街を壊していく） → 'over'（'released': その一発の破壊額 / 'blackhole': 時間切れまで放たなかった）
+// 勝ち負け（S9、持ち主 13:16）: 放った瞬間に生きている軍勢（見回る者を含む）を写し、一発が終わったとき全員倒れていれば
+// 撃退成功（clear）、一人でも残れば撃退失敗。放ったあとは湧かず、あとから現れた者は数えない。破壊額はおまけの点数
 export function createGame({ seed, cfg = CONFIG }) {
   const city = generateCity(seed, cfg);
   // 見回る者（S8）は別の乱数（探して掴みに来る者の湧き方・動きは前のまま）
@@ -40,6 +42,8 @@ export function createGame({ seed, cfg = CONFIG }) {
   let pendingShot = null;
   let finalBlast = null;
   let blasts = []; // { id, shot, blast, values }
+  let releaseIds = null; // 放った瞬間に生きていた軍勢の id
+  let outcome = null; // { clear, total, survivors: [{ id, x, z, patrol }] }（最後の一発のときだけ）
   let nextBlastId = 1;
 
   // 小爆発は軍勢だけを払う（対象のビル・props はなし）。最後の一発はまだ壊れていないものすべて
@@ -55,7 +59,17 @@ export function createGame({ seed, cfg = CONFIG }) {
     blasts = [];
     phase = 'over';
     charge.active = false;
-    emit('over', { reason, total: score.total });
+    emit('over', outcome ? { reason, total: score.total, outcome } : { reason, total: score.total });
+  }
+
+  // 一発が終わった: 放った瞬間に生きていた者のうち、まだ倒れていない者が生き残り
+  function judge() {
+    const survivors = [];
+    for (const e of enemies.list) {
+      if (!releaseIds.has(e.id) || e.state === 'dead') continue;
+      survivors.push({ id: e.id, x: e.x, z: e.z, patrol: !!e.patrol });
+    }
+    outcome = { clear: survivors.length === 0, total: releaseIds.size, survivors };
   }
 
   // settled: settle が一気に進めた分の命中（描く側は見た目を作らなくてよい）
@@ -82,6 +96,7 @@ export function createGame({ seed, cfg = CONFIG }) {
   function scoreFinale() {
     const added = score.addShot(finalBlast.values);
     emit('shotScored', { added, total: score.total });
+    judge();
     finish('released');
   }
 
@@ -93,6 +108,10 @@ export function createGame({ seed, cfg = CONFIG }) {
     get phase() { return phase; },
     // 今、主人公を掴んでいる軍勢の数
     get grabbing() { return grabbing; },
+    // 今、街に生きている軍勢の数（見回る者を含む。HUD の「街の軍勢 N」）
+    get aliveCount() { let n = 0; for (const e of enemies.list) if (e.state !== 'dead') n++; return n; },
+    // 最後の一発の勝ち負け（over(released) のあと。それまでと時間切れは null）
+    get outcome() { return outcome; },
     // 小爆発のボタンを押せるか（力が足りる・遊んでいる最中・前の小爆発が広がり終わった）
     get canPuff() { return canPuff(); },
     // 進行中の一発の読み取り専用の写し（描画が一発ごとに球を描くため）。小爆発は shot.small
@@ -115,6 +134,7 @@ export function createGame({ seed, cfg = CONFIG }) {
       const shot = charge.release();
       // 足りない: 放たない。手の画面とヒントで「まだ足りない」を知らせる
       if (!shot) { emit('fizzle', { power: power.value, need: cfg.power.minRelease }); return; }
+      releaseIds = new Set(enemies.list.filter((e) => e.state !== 'dead').map((e) => e.id));
       emit('shot', shot);
       phase = 'cinematic';
       timer.pause();
