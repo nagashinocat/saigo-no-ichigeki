@@ -1,5 +1,5 @@
 import { test, expect } from 'vitest';
-import { poseFor, HAND_JOINTS, JOIN_POSE } from '../../src/render/handPose.js';
+import { poseFor, HAND_JOINTS, JOIN_POSE, PUSH_POSE } from '../../src/render/handPose.js';
 
 const DEG = Math.PI / 180;
 // 手首は「前腕に対する手の曲げ」: rx が負で手の甲の側へ反らす。指の関節とは別の範囲
@@ -9,24 +9,22 @@ const inRange = (name, [rx, ry, rz]) => name === 'wrist'
 
 const flex = (pose, name) => pose[name][0];
 
-test('level 0 は軽く開いた手、1 は指が強く曲がりこわばる', () => {
+test('level 0 は力の抜けた鉤爪、1 は指先がさらに深く鉤のように曲がり、指が外へ張ってこわばる', () => {
   const open = poseFor(0, 0), tense = poseFor(1, 0);
   for (const f of ['index', 'middle', 'ring', 'pinky']) {
-    const j = `${f}-finger-phalanx-proximal`;
-    expect(flex(open, j)).toBeGreaterThan(0);          // 開いていても少し丸い（力が抜けた手）
-    expect(flex(open, j)).toBeLessThan(25 * DEG);
-    expect(flex(tense, j)).toBeGreaterThan(flex(open, j) + 20 * DEG);
-    // 中ほどの関節も強く曲がる（鉤爪のようにこわばる）
-    const m = `${f}-finger-phalanx-intermediate`;
-    expect(flex(tense, m)).toBeGreaterThan(flex(open, m) + 30 * DEG);
+    // 付け根は力が抜けていてもほとんどまっすぐ
+    expect(flex(open, `${f}-finger-phalanx-proximal`)).toBeGreaterThanOrEqual(0);
+    expect(flex(open, `${f}-finger-phalanx-proximal`)).toBeLessThan(15 * DEG);
+    // こもるほど第一関節が深く曲がる（鉤爪）
+    expect(flex(tense, `${f}-finger-phalanx-distal`)).toBeGreaterThan(flex(open, `${f}-finger-phalanx-distal`) + 20 * DEG);
   }
   // 力がこもるほど指は外へ張る（人差し指と小指の開きが広がる）
   const spread = (p) => p['index-finger-phalanx-proximal'][1] - p['pinky-finger-phalanx-proximal'][1];
   expect(spread(tense)).toBeGreaterThan(spread(open));
   // 途中の level はその間
   const mid = poseFor(0.5, 0);
-  expect(flex(mid, 'index-finger-phalanx-proximal')).toBeGreaterThan(flex(open, 'index-finger-phalanx-proximal'));
-  expect(flex(mid, 'index-finger-phalanx-proximal')).toBeLessThan(flex(tense, 'index-finger-phalanx-proximal'));
+  expect(flex(mid, 'index-finger-phalanx-distal')).toBeGreaterThan(flex(open, 'index-finger-phalanx-distal'));
+  expect(flex(mid, 'index-finger-phalanx-distal')).toBeLessThan(flex(tense, 'index-finger-phalanx-distal'));
 });
 
 test('level 0.8 以上で震えの振れ幅が出て、t で変化する', () => {
@@ -64,16 +62,19 @@ test('どの level でも関節の角度は自然な範囲（曲げ 0〜100°）
   for (const l of [-1, 2, NaN]) for (const name of HAND_JOINTS) expect(poseFor(l, 0)[name].every(Number.isFinite)).toBe(true);
 });
 
-test('閉じた手（JOIN_POSE）は構えより指を深く丸め（輪を閉じる）、角度は自然な範囲に収まる', () => {
-  const open = poseFor(0, 0);
+test('鷲掴み（JOIN_POSE）は構えより指先を深く食い込ませ、親指の先も鉤に曲げる。払う（PUSH_POSE）は指をまっすぐ伸ばす。角度は自然な範囲', () => {
+  const tense = poseFor(1, 0);
   for (const f of ['index', 'middle', 'ring', 'pinky']) {
-    const curl = (p) => flex(p, `${f}-finger-phalanx-proximal`) + flex(p, `${f}-finger-phalanx-intermediate`);
-    expect(curl(JOIN_POSE), f).toBeGreaterThan(curl(open) + 20 * DEG);
+    expect(flex(JOIN_POSE, `${f}-finger-phalanx-distal`), f).toBeGreaterThan(flex(tense, `${f}-finger-phalanx-distal`) + 10 * DEG);
+    for (const part of ['proximal', 'intermediate', 'distal']) expect(flex(PUSH_POSE, `${f}-finger-phalanx-${part}`), f).toBeLessThan(10 * DEG);
   }
-  for (const name of HAND_JOINTS) expect(inRange(name, JOIN_POSE[name]), name).toBe(true);
+  expect(flex(JOIN_POSE, 'thumb-phalanx-distal')).toBeGreaterThan(40 * DEG);
+  // 払うは手首を構えより大きく反らす（手のひらで突く）
+  expect(PUSH_POSE.wrist[0]).toBeLessThan(poseFor(0, 0).wrist[0]);
+  for (const pose of [JOIN_POSE, PUSH_POSE]) for (const name of HAND_JOINTS) expect(inRange(name, pose[name]), name).toBe(true);
 });
 
-test('球を包む構え（持ち主のスケッチ）: 手首を反らし、指は軽い鉤爪に丸め、親指は手のひらの側へ大きく開く', () => {
+test('球を包む構え（持ち主のスケッチ）: 手首を反らし、指は第一関節から鉤に曲げ、親指は手のひらの側へ大きく開く', () => {
   for (const l of [0, 0.5, 1]) {
     const p = poseFor(l, 0.2);
     // 手首は手の甲の側へ 25〜60° 反らす（前腕が球の左右の下・外から低く入る）
@@ -81,9 +82,13 @@ test('球を包む構え（持ち主のスケッチ）: 手首を反らし、指
     expect(p.wrist[0], `${l} wrist`).toBeGreaterThan(-60 * DEG);
     // 手首は震えない（手全体のぶれは手の画面が受け持つ）
     expect(poseFor(1, 0.1).wrist).toEqual(poseFor(1, 0.7).wrist);
-    // 指は力が抜けていても丸い（球の上へかぶさる）: 付け根と第二関節の曲げの合計が 35° 以上
+    // 鷲掴みの指（持ち主 15:24）: 指は付け根と第二関節ではあまり曲げず、第一関節（DIP）から先を鉤に曲げる。
+    // 4 本の指とも、第一関節の曲げが付け根（MCP）と第二関節（PIP）の曲げより大きく、35° 以上
     for (const f of ['index', 'middle', 'ring', 'pinky']) {
-      expect(flex(p, `${f}-finger-phalanx-proximal`) + flex(p, `${f}-finger-phalanx-intermediate`), `${l} ${f}`).toBeGreaterThan(35 * DEG);
+      const dip = flex(p, `${f}-finger-phalanx-distal`);
+      expect(dip, `${l} ${f}`).toBeGreaterThan(flex(p, `${f}-finger-phalanx-proximal`));
+      expect(dip, `${l} ${f}`).toBeGreaterThan(flex(p, `${f}-finger-phalanx-intermediate`));
+      expect(dip, `${l} ${f}`).toBeGreaterThan(35 * DEG);
     }
     // 親指は手のひらの側へ開く（休みの形でもう半分以上開いていて、構えでさらに ry を正へ）。指から離れて球の下へ回る
     expect(p['thumb-metacarpal'][1], `${l} thumb`).toBeGreaterThan(5 * DEG);

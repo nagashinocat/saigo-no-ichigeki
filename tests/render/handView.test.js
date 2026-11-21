@@ -183,83 +183,128 @@ test('貯めるほど両手の間が少し広がる', () => {
   expect(g9).toBeLessThan(g0 * 2);
 });
 
-test('release の約0.25秒後、両手が寄って輪を閉じる: 指先どうし・親指の先どうしが合わさり、手のひらの間は構えより狭い', () => {
-  const tipGaps = (view, m) => {
-    const wp = (s, n) => m[s].bones[n].getWorldPosition(new THREE.Vector3());
-    let fingers = Infinity;
-    for (const a of FINGER_TIPS) for (const b of FINGER_TIPS) fingers = Math.min(fingers, wp('right', a).distanceTo(wp('left', b)));
-    return { fingers, thumbs: wp('right', 'thumb-tip').distanceTo(wp('left', 'thumb-tip')) };
-  };
-  for (const isBig of [true, false]) {
-    const m = hands('low');
-    const view = createHandView(m, 'low');
+test('最後の一発: 約0.25秒で両手が球を鷲掴みにする — 指は球の上で交差して球を上から覆い、親指は球の下で先が離れ、ハートの形にならない', () => {
+  const wp = (m, s, n) => m[s].bones[n].getWorldPosition(new THREE.Vector3());
+  for (const detail of ['low', 'high']) {
+    const m = hands(detail);
+    const view = createHandView(m, detail);
+    view.resize(390 / 295);
     run(view, 1, 0.9, true, 0.6);
-    const stance = palmGap(view), open = tipGaps(view, m);
-    view.release({ amount: isBig ? CONFIG.power.max : 10, isBig });
+    const stance = palmGap(view);
+    view.release({ amount: CONFIG.power.max, isBig: true });
     run(view, 0.1, 0, false, 0.6);
-    // 0.1 秒ではまだ寄っている途中
-    const mid = tipGaps(view, m);
+    // 0.1 秒ではまだ寄っている途中。球は手の中で燃えたまま（放った瞬間の力の大きさの半分以上）
     expect(palmGap(view)).toBeLessThan(stance);
-    expect(mid.fingers).toBeLessThan(open.fingers);
-    expect(mid.fingers).toBeGreaterThan(0.2);
+    expect(view.joined).toBeGreaterThan(0.05);
+    expect(view.joined).toBeLessThan(0.5);
+    expect(view.orbSphere.radius).toBeGreaterThan(0.2);
     run(view, 0.15, 0, false, 0.6);
-    const label = isBig ? 'big' : 'small', shut = tipGaps(view, m);
-    expect(palmGap(view), label).toBeLessThan(stance * 0.7);
-    expect(shut.fingers, label).toBeLessThan(0.2);
-    expect(shut.thumbs, label).toBeLessThan(0.2);
-    // 球は閉じた輪の中（指先より下、親指の先より上）
-    const { center } = view.orbSphere;
-    const y = (s, n) => m[s].bones[n].getWorldPosition(new THREE.Vector3()).y;
-    expect(y('right', 'middle-finger-tip'), label).toBeGreaterThan(center.y);
-    expect(y('right', 'thumb-tip'), label).toBeLessThan(center.y);
+    const label = detail;
     expect(view.joined).toBeCloseTo(1, 2);
+    // 手のひらで押し込む: 手のひらの間は構えの半分未満
+    expect(palmGap(view), label).toBeLessThan(stance * 0.5);
+    const { center } = view.orbSphere;
+    const tips = (s) => FINGER_TIPS.map((n) => wp(m, s, n));
+    // 指先は左右で交差する（右手の指先は左手の指先より左まで、左手の指先は右手の指先より右まで届く）
+    expect(Math.min(...tips('right').map((p) => p.x)), label).toBeLessThan(Math.max(...tips('left').map((p) => p.x)));
+    // 球は指より下（指先の高さの平均より下）、親指の先より上
+    for (const side of ['right', 'left']) {
+      const ys = tips(side).map((p) => p.y);
+      expect(ys.reduce((a, b) => a + b, 0) / ys.length, `${label} ${side}`).toBeGreaterThan(center.y);
+      expect(wp(m, side, 'thumb-tip').y, `${label} ${side}`).toBeLessThan(center.y);
+    }
+    // 球を上から覆う: 画面で、どちらの手も、球の中心を越えて向こう側まで届く指先が球の中心より上にある
+    const c = center.clone().project(view.camera);
+    for (const [side, out] of [['right', 1], ['left', -1]]) {
+      const over = tips(side).some((p) => { const q = p.clone().project(view.camera); return (q.x - c.x) * out < 0 && q.y > c.y; });
+      expect(over, `${label} ${side}`).toBe(true);
+    }
+    // 親指の先は合わせない（ハートの下の尖りを作らない）
+    expect(wp(m, 'right', 'thumb-tip').distanceTo(wp(m, 'left', 'thumb-tip')), label).toBeGreaterThan(0.08);
   }
 });
 
-test('小さな一発は約0.4秒で構えに戻り、大きな一発は組み合わさったまま保つ', () => {
+test('鷲掴みで締めつける間、弾ける直前に手が震える', () => {
+  const jitter = (v, from, to) => {
+    // 手のひらの位置の、フレームごとの加速度（二階差分）の平均
+    const ps = [];
+    run(v, from, 0, false, 1);
+    for (let t = from; t < to; t += DT) { v.update(DT, 0, false, 1); ps.push(v.palms.right); }
+    let sum = 0;
+    for (let i = 2; i < ps.length; i++) sum += ps[i].clone().sub(ps[i - 1]).sub(ps[i - 1].clone().sub(ps[i - 2])).length();
+    return sum / (ps.length - 2);
+  };
+  const a = createHandView(hands('low'), 'low'), b = createHandView(hands('low'), 'low');
+  for (const v of [a, b]) run(v, 1, 0.5, true, 1);
+  a.release({ amount: CONFIG.power.max, isBig: true });
+  b.release({ amount: CONFIG.power.max, isBig: true });
+  const early = jitter(a, 0, 0.08), late = jitter(b, 0.15, 0.24);
+  expect(late).toBeGreaterThan(early * 1.5);
+  expect(late).toBeGreaterThan(0.004);
+});
+
+test('払う（小爆発）: 手のひらを街のほうへ鋭く突き出して弾き、約0.4秒で構えに戻る。両手は合わさらない', () => {
+  const m = hands('low');
+  const v = createHandView(m, 'low');
+  run(v, 1, 0.3, true, 1);
+  const stance = { gap: palmGap(v), z: v.palms.right.z };
+  v.release({ amount: CONFIG.puff.cost, isBig: false });
+  run(v, 0.09, 0, false, 1);
+  expect(v.pushed).toBeGreaterThan(0.9);
+  expect(v.joined).toBe(0);
+  expect(v.flash).toBeGreaterThan(0.3);
+  // 前（街のほう、目から遠ざかる -z）へ突き出し、両手の間は狭まらない
+  expect(v.palms.right.z).toBeLessThan(stance.z - 0.3);
+  expect(palmGap(v)).toBeGreaterThan(stance.gap * 0.9);
+  // 手のひらは前（-z）を向く
+  const q = m.right.bones['middle-finger-metacarpal'].getWorldQuaternion(new THREE.Quaternion());
+  expect(new THREE.Vector3(0, -1, 0).applyQuaternion(q).z).toBeLessThan(-0.5);
+  // 約0.4秒で構えに戻る
+  run(v, 0.2, 0, false, 1);
+  expect(v.pushed).toBeGreaterThan(0.05);
+  expect(v.pushed).toBeLessThan(0.95);
+  run(v, 0.15, 0, false, 1);
+  expect(v.pushed).toBe(0);
+  const rest = createHandView(hands('low'), 'low');
+  run(rest, 1, 0, false, 1);
+  expect(Math.abs(palmGap(v) - palmGap(rest)) / palmGap(rest)).toBeLessThan(0.08);
+});
+
+test('大きな一発は演出の間、鷲掴みのまま保ち、演出が終わると構えへ戻る', () => {
   const freeze = CONFIG.cinematic.freezeSec;
-  const big = createHandView(hands('low'), 'low'), small = createHandView(hands('low'), 'low');
-  for (const v of [big, small]) run(v, 1, 0.9, true, 0.6);
+  const big = createHandView(hands('low'), 'low');
+  run(big, 1, 0.9, true, 0.6);
   expect(big.joined).toBe(0);
   big.release({ amount: CONFIG.power.max, isBig: true });
-  small.release({ amount: 10, isBig: false });
-  run(big, 0.25, 0, false, 0.6); run(small, 0.25, 0, false, 0.6);
+  run(big, 0.25, 0, false, 0.6);
   expect(big.joined).toBeCloseTo(1, 2);
-  expect(small.joined).toBeCloseTo(1, 2);
-  // 組み合わさった瞬間に光が弾ける（球は手の間でつぶれて消える）
-  expect(small.flash).toBeGreaterThan(0.3);
-  // 小さな一発: 組み合わさってから約0.4秒で構え（貯め 0）に戻る
-  run(small, 0.2, 0, false, 0.6);
-  expect(small.joined).toBeGreaterThan(0.05);
-  expect(small.joined).toBeLessThan(0.95);
-  run(small, 0.25, 0, false, 0.6);
-  expect(small.joined).toBe(0);
-  const rest = createHandView(hands('low'), 'low');
-  run(rest, 1, 0, false, 0.6);
-  expect(Math.abs(palmGap(small) - palmGap(rest)) / palmGap(rest)).toBeLessThan(0.08);
-  // 大きな一発: 演出の間（画面全体が白くなってから引いている間）組み合わさったまま
+  // 締めきった瞬間に光が弾ける
+  expect(big.flash).toBeGreaterThan(0.3);
   run(big, freeze - 0.3, 0, false, 0.6);
   expect(big.joined).toBeCloseTo(1, 5);
-  // 演出が終わると戻る
   run(big, 1.5, 0, false, 0.6);
   expect(big.joined).toBe(0);
 });
 
-test('組み合わさる途中や戻る途中にもう一度放っても、両手は跳ばずに今の位置から続けて寄る', () => {
-  for (const wait of [0.12, 0.25 + 0.2 + 0.1]) {
-    const v = createHandView(hands('low'), 'low');
-    run(v, 1, 0.5, true, 0.6);
-    v.release({ amount: 10, isBig: false });
-    run(v, wait, 0, false, 0.6);
-    const before = v.joined;
-    expect(before).toBeGreaterThan(0.1);
-    v.release({ amount: 10, isBig: false });
-    v.update(DT, 0, false, 0.6);
-    expect(Math.abs(v.joined - before)).toBeLessThan(0.08);
-    expect(v.joined).toBeGreaterThanOrEqual(before - 1e-6); // 戻らず、また寄っていく
-    let peak = 0;
-    for (let t = 0; t < 0.25; t += DT) { v.update(DT, 0, false, 0.6); peak = Math.max(peak, v.joined); }
-    expect(peak).toBeCloseTo(1, 2);
+test('寄る途中や戻る途中にもう一度放っても、両手は跳ばずに今の位置から続けて動く', () => {
+  for (const [isBig, key, waits] of [[true, 'joined', [0.12]], [false, 'pushed', [0.05, 0.08 + 0.05 + 0.15]]]) {
+    for (const wait of waits) {
+      const v = createHandView(hands('low'), 'low');
+      run(v, 1, 0.5, true, 0.6);
+      const shot = { amount: isBig ? CONFIG.power.max : CONFIG.puff.cost, isBig };
+      v.release(shot);
+      run(v, wait, 0, false, 0.6);
+      const before = v[key];
+      expect(before, `${key} ${wait}`).toBeGreaterThan(0.1);
+      v.release(shot);
+      v.update(DT, 0, false, 0.6);
+      // 戻らず、今の具合から続けて動く（払うは 0.08 秒で突き出しきる速い動きなので、1 フレームの進みはそのぶん大きい）
+      expect(v[key], `${key} ${wait}`).toBeGreaterThanOrEqual(before - 1e-6);
+      expect(v[key] - before, `${key} ${wait}`).toBeLessThan(isBig ? 0.15 : 0.55);
+      let peak = 0;
+      for (let t = 0; t < 0.25; t += DT) { v.update(DT, 0, false, 0.6); peak = Math.max(peak, v[key]); }
+      expect(peak, `${key} ${wait}`).toBeCloseTo(1, 2);
+    }
   }
 });
 

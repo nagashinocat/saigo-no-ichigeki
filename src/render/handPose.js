@@ -9,7 +9,7 @@
 
 const DEG = Math.PI / 180;
 // 手首の反らし（度）。構えでは手の甲の側へ大きく反らし、前腕を球の左右の下・外から低く寝かせて入れる
-export const WRIST_EXT = 40;
+export const WRIST_EXT = 34;
 const FINGERS = ['index', 'middle', 'ring', 'pinky'];
 const FINGER_PARTS = ['metacarpal', 'phalanx-proximal', 'phalanx-intermediate', 'phalanx-distal', 'tip'];
 const THUMB_PARTS = ['metacarpal', 'phalanx-proximal', 'phalanx-distal', 'tip'];
@@ -20,36 +20,46 @@ export const HAND_JOINTS = [
   ...FINGERS.flatMap((f) => FINGER_PARTS.map((p) => `${f}-finger-${p}`)),
 ];
 
-// 度で書いた [rx, ry, rz]。どれも球を左右から包む構え（持ち主のスケッチ）: 手首を反らし、指は球の上へ丸くかぶさり、
+// 度で書いた [rx, ry, rz]。どれも球を左右から包む構え（持ち主のスケッチ）: 手首を反らして手を立て、
 // 親指は手のひらの側へ開いて球の下へ回る（親指は休みの形でもう大きく開いている。handModel の THUMB）。
-// open: 力の抜けた、軽い鉤爪の手。tense: 力がこもりきった手。指を外へ張り、付け根・第二・第一関節を深く曲げた鉤爪でこわばる。
+// 指は鷲掴みの形（持ち主 15:24）: 付け根と第二関節はほとんど伸ばしたまま、第一関節（DIP）から先を鉤に曲げて球へ向ける。
+// open: 力の抜けた鉤爪。tense: 力がこもりきった手。指を外へ張り、指先をさらに深く鉤に曲げてこわばる。
 // 薬指・小指の中手骨も曲げて、手のひら全体をくぼませる。
 const POSES = {
   open: {
     wrist: [-WRIST_EXT, 0, 0],
-    'thumb-metacarpal': [0, 6, -6], 'thumb-phalanx-proximal': [0, 6, 0], 'thumb-phalanx-distal': [8, 0, 0],
-    'index-finger-metacarpal': [0, 0, 0], 'index-finger-phalanx-proximal': [18, 4, 0], 'index-finger-phalanx-intermediate': [26, 0, 0], 'index-finger-phalanx-distal': [16, 0, 0],
-    'middle-finger-metacarpal': [0, 0, 0], 'middle-finger-phalanx-proximal': [19, 0, 0], 'middle-finger-phalanx-intermediate': [27, 0, 0], 'middle-finger-phalanx-distal': [17, 0, 0],
-    'ring-finger-metacarpal': [2, 0, 0], 'ring-finger-phalanx-proximal': [20, -3, 0], 'ring-finger-phalanx-intermediate': [28, 0, 0], 'ring-finger-phalanx-distal': [18, 0, 0],
-    'pinky-finger-metacarpal': [4, 0, 0], 'pinky-finger-phalanx-proximal': [21, -6, 0], 'pinky-finger-phalanx-intermediate': [29, 0, 0], 'pinky-finger-phalanx-distal': [18, 0, 0],
+    'thumb-metacarpal': [0, 6, -6], 'thumb-phalanx-proximal': [0, 6, 0], 'thumb-phalanx-distal': [24, 0, 0],
+    'index-finger-metacarpal': [0, 0, 0], 'index-finger-phalanx-proximal': [6, 4, 0], 'index-finger-phalanx-intermediate': [12, 0, 0], 'index-finger-phalanx-distal': [42, 0, 0],
+    'middle-finger-metacarpal': [0, 0, 0], 'middle-finger-phalanx-proximal': [6, 0, 0], 'middle-finger-phalanx-intermediate': [13, 0, 0], 'middle-finger-phalanx-distal': [44, 0, 0],
+    'ring-finger-metacarpal': [2, 0, 0], 'ring-finger-phalanx-proximal': [7, -3, 0], 'ring-finger-phalanx-intermediate': [14, 0, 0], 'ring-finger-phalanx-distal': [44, 0, 0],
+    'pinky-finger-metacarpal': [4, 0, 0], 'pinky-finger-phalanx-proximal': [8, -6, 0], 'pinky-finger-phalanx-intermediate': [15, 0, 0], 'pinky-finger-phalanx-distal': [44, 0, 0],
   },
   tense: {
     wrist: [-WRIST_EXT, 0, 0],
-    'thumb-metacarpal': [0, 16, -6], 'thumb-phalanx-proximal': [0, 10, 0], 'thumb-phalanx-distal': [22, 0, 0],
-    'index-finger-metacarpal': [0, 0, 0], 'index-finger-phalanx-proximal': [44, 20, -4], 'index-finger-phalanx-intermediate': [62, 0, 0], 'index-finger-phalanx-distal': [30, 0, 0],
-    'middle-finger-metacarpal': [1, 0, 0], 'middle-finger-phalanx-proximal': [45, 5, 0], 'middle-finger-phalanx-intermediate': [63, 0, 0], 'middle-finger-phalanx-distal': [31, 0, 0],
-    'ring-finger-metacarpal': [5, 0, 3], 'ring-finger-phalanx-proximal': [46, -12, 3], 'ring-finger-phalanx-intermediate': [64, 0, 0], 'ring-finger-phalanx-distal': [31, 0, 0],
-    'pinky-finger-metacarpal': [9, 0, 6], 'pinky-finger-phalanx-proximal': [48, -22, 6], 'pinky-finger-phalanx-intermediate': [65, 0, 0], 'pinky-finger-phalanx-distal': [31, 0, 0],
+    'thumb-metacarpal': [0, 16, -6], 'thumb-phalanx-proximal': [0, 10, 0], 'thumb-phalanx-distal': [40, 0, 0],
+    'index-finger-metacarpal': [0, 0, 0], 'index-finger-phalanx-proximal': [12, 20, -4], 'index-finger-phalanx-intermediate': [22, 0, 0], 'index-finger-phalanx-distal': [68, 0, 0],
+    'middle-finger-metacarpal': [1, 0, 0], 'middle-finger-phalanx-proximal': [13, 5, 0], 'middle-finger-phalanx-intermediate': [23, 0, 0], 'middle-finger-phalanx-distal': [70, 0, 0],
+    'ring-finger-metacarpal': [5, 0, 3], 'ring-finger-phalanx-proximal': [14, -12, 3], 'ring-finger-phalanx-intermediate': [24, 0, 0], 'ring-finger-phalanx-distal': [70, 0, 0],
+    'pinky-finger-metacarpal': [9, 0, 6], 'pinky-finger-phalanx-proximal': [16, -22, 6], 'pinky-finger-phalanx-intermediate': [25, 0, 0], 'pinky-finger-phalanx-distal': [70, 0, 0],
   },
-  // 閉じた手: 放つと両手が寄り、指を球の上でさらに丸めて相手の指先へ、親指を球の下で相手の親指へ合わせ、輪を閉じる。
-  // 手首は構えのまま反らしておく（前腕が跳ばない）
+  // 鷲掴み: 放つと両手が球へかぶさって指が交差し、第一関節から先を球へ食い込ませて締めつける（指先どうしは合わせない）。
+  // 親指は球の下で先を曲げるが、左右の親指の先は合わせない。手首は構えのまま反らしておく（前腕が跳ばない）
   join: {
     wrist: [-WRIST_EXT, 0, 0],
-    'thumb-metacarpal': [10, 6, -6], 'thumb-phalanx-proximal': [0, 6, 0], 'thumb-phalanx-distal': [16, 0, 0],
-    'index-finger-phalanx-proximal': [34, 2, 0], 'index-finger-phalanx-intermediate': [44, 0, 0], 'index-finger-phalanx-distal': [26, 0, 0],
-    'middle-finger-phalanx-proximal': [35, 0, 0], 'middle-finger-phalanx-intermediate': [45, 0, 0], 'middle-finger-phalanx-distal': [27, 0, 0],
-    'ring-finger-metacarpal': [2, 0, 0], 'ring-finger-phalanx-proximal': [36, -2, 0], 'ring-finger-phalanx-intermediate': [46, 0, 0], 'ring-finger-phalanx-distal': [28, 0, 0],
-    'pinky-finger-metacarpal': [4, 0, 0], 'pinky-finger-phalanx-proximal': [37, -4, 0], 'pinky-finger-phalanx-intermediate': [47, 0, 0], 'pinky-finger-phalanx-distal': [28, 0, 0],
+    'thumb-metacarpal': [0, 14, -6], 'thumb-phalanx-proximal': [30, 8, 0], 'thumb-phalanx-distal': [80, 0, 0],
+    'index-finger-phalanx-proximal': [22, 12, 0], 'index-finger-phalanx-intermediate': [30, 0, 0], 'index-finger-phalanx-distal': [85, 0, 0],
+    'middle-finger-phalanx-proximal': [24, 3, 0], 'middle-finger-phalanx-intermediate': [32, 0, 0], 'middle-finger-phalanx-distal': [88, 0, 0],
+    'ring-finger-metacarpal': [4, 0, 2], 'ring-finger-phalanx-proximal': [26, -6, 2], 'ring-finger-phalanx-intermediate': [33, 0, 0], 'ring-finger-phalanx-distal': [88, 0, 0],
+    'pinky-finger-metacarpal': [8, 0, 4], 'pinky-finger-phalanx-proximal': [28, -14, 4], 'pinky-finger-phalanx-intermediate': [34, 0, 0], 'pinky-finger-phalanx-distal': [88, 0, 0],
+  },
+  // 払う: 手首を大きく反らし、指をまっすぐ伸ばして広げ、手のひらで突き出す
+  push: {
+    wrist: [-55, 0, 0],
+    'thumb-metacarpal': [0, 6, -6], 'thumb-phalanx-proximal': [0, 0, 0], 'thumb-phalanx-distal': [4, 0, 0],
+    'index-finger-phalanx-proximal': [0, 18, 0], 'index-finger-phalanx-intermediate': [4, 0, 0], 'index-finger-phalanx-distal': [6, 0, 0],
+    'middle-finger-phalanx-proximal': [0, 4, 0], 'middle-finger-phalanx-intermediate': [4, 0, 0], 'middle-finger-phalanx-distal': [6, 0, 0],
+    'ring-finger-phalanx-proximal': [0, -10, 0], 'ring-finger-phalanx-intermediate': [4, 0, 0], 'ring-finger-phalanx-distal': [6, 0, 0],
+    'pinky-finger-phalanx-proximal': [0, -24, 0], 'pinky-finger-phalanx-intermediate': [5, 0, 0], 'pinky-finger-phalanx-distal': [6, 0, 0],
   },
 };
 
@@ -65,6 +75,7 @@ function build(name) {
 }
 const OPEN = build('open'), TENSE = build('tense');
 export const JOIN_POSE = Object.freeze(build('join'));
+export const PUSH_POSE = Object.freeze(build('push'));
 
 // 関節ごとにずらした2つの波を重ねた、規則的に見えない震え（-1〜1）
 const shake = (t, k, axis) => 0.6 * Math.sin(t * 29 + k * 1.7 + axis * 2.3) + 0.4 * Math.sin(t * 47 + k * 2.9 + axis * 0.7);
