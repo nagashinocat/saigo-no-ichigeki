@@ -127,7 +127,8 @@ export function createCinematic(views, enemyView, explosionView, { renderer, sce
     resolveRetreat = null;
     return plan.retreat;
   }
-  const P = { cam: new THREE.Vector3(), look: new THREE.Vector3(), radial: new THREE.Vector3() };
+  // cam / look: 始めの肩越し（少し後ろ）。near / lookNear: ガラス片が来ると寄る肩越し（頭の後ろ・肩の上、ガラス片を見る）。glass: 目が映るガラス片の止まる所
+  const P = { cam: new THREE.Vector3(), look: new THREE.Vector3(), radial: new THREE.Vector3(), near: new THREE.Vector3(), lookNear: new THREE.Vector3(), glass: new THREE.Vector3(), end: new THREE.Vector3() };
   const _pos = new THREE.Vector3(), _look = new THREE.Vector3(), _q = new THREE.Quaternion(), _e = new THREE.Euler();
   const screen = { flash: 0, time: 0, heat: null, grade: { bars: 0, ca: 0, vig: 0, sat: 1, grain: 0, streak: 0, exposure: 1, fade: 0, warm: 0, contrast: 1, bloom: 1 } };
   let rMax = 20, spaceDist = 260, wideK = 0;
@@ -171,7 +172,7 @@ export function createCinematic(views, enemyView, explosionView, { renderer, sce
   // 肩越しのカメラの基準（play で決める）: 位置 P.cam、見る先 P.look、その向きの右・上・前 B.R / B.U / B.F
   const B = { R: new THREE.Vector3(), U: new THREE.Vector3(), F: new THREE.Vector3() };
   // 乗り手（演出の一人）: 置き場所・頭・目・外向き（爆心から離れる、吹き飛ぶ向き）・前・右手側。姿勢は毎フレーム riderPose に書き、enemyView が読む
-  const RD = { pos: new THREE.Vector3(), head: new THREE.Vector3(), eye: new THREE.Vector3(), out: new THREE.Vector3(), fwd: new THREE.Vector3(), right: new THREE.Vector3(), yaw: 0, side: 1 };
+  const RD = { pos: new THREE.Vector3(), head: new THREE.Vector3(), eye: new THREE.Vector3(), out: new THREE.Vector3(), fwd: new THREE.Vector3(), right: new THREE.Vector3(), yaw: 0, side: 1, turn: 0 };
   const riderPose = { x: 0, y: 0, z: 0, yaw: 0, pitch: 0, roll: 0, reach: 0, thrust: 1, keep: 0, head: 0, anchor: 0 };
   // 目が映るガラス片の道（演出の秒で: 光の壁から現れ → 目が合う所 → 乗り手の頭の横をこちらへ）と、目が合う向き
   const HS = { p0: new THREE.Vector3(), p1: new THREE.Vector3(), p2: new THREE.Vector3(), m0: new THREE.Vector3(), m1a: new THREE.Vector3(), m1b: new THREE.Vector3(), m2: new THREE.Vector3(), t0: 0, tM: 0, t2: 0, width: 0.6, axis: new THREE.Vector3(0.35, 1, 0.15).normalize(), q0: new THREE.Quaternion() };
@@ -183,10 +184,13 @@ export function createCinematic(views, enemyView, explosionView, { renderer, sce
     const u2 = u * u, u3 = u2 * u;
     return out.copy(p0).multiplyScalar(2 * u3 - 3 * u2 + 1).addScaledVector(m0, u3 - 2 * u2 + u).addScaledVector(p1, -2 * u3 + 3 * u2).addScaledVector(m1, u3 - u2);
   };
-  // ガラス片の向き: 鏡の面がカメラを正面に向く（法線がカメラの方）。上はカメラの上。
-  // カメラを映すはずの向きにそろった一瞬、ガラスには遊んでいる人の代わりに乗り手の目が映り、こちらをまっすぐ見る
-  function mirrorQuat(out, at, camPos) {
+  // ガラス片の向き: ガラス片は乗り手の顔の前（光の壁の側）にあり、鏡の面は後ろ（乗り手とカメラの方）を向く。法線はガラス片から
+  // カメラへの向きと乗り手の目への向きのちょうど間: カメラの視線がそこで返ると乗り手の目に届く＝カメラには乗り手の顔が正面から映る。
+  // 映った目は（演出として）まっすぐこちらを見る。上はカメラの上
+  function mirrorQuat(out, at, camPos, eyePos = camPos) {
     _n.copy(camPos).sub(at).normalize();
+    _c.copy(eyePos).sub(at).normalize();
+    _n.add(_c).normalize();
     _c.crossVectors(B.U, _n).normalize();
     _b.crossVectors(_n, _c);
     return out.setFromRotationMatrix(_m.makeBasis(_c, _b, _n));
@@ -198,21 +202,32 @@ export function createCinematic(views, enemyView, explosionView, { renderer, sce
     return out.copy(HS.p2).addScaledVector(HS.m2, (t - HS.t2) / (HS.t2 - HS.tM) / FINALE.slowRate);
   }
 
+  // 寄る肩越しへの動き（0 → 1）: ガラス片が飛んでくる間（contact の少しあと〜目が合う直前）に、演出の秒でゆっくり
+  const nearAt = (t) => easeInOut((t - (tl.contact + 0.3)) / (tl.eye[0] + 0.05 - (tl.contact + 0.3)));
+  // 目が合ったあと、最後の鼓動の間に少し戻る（0 → 1。飲まれる所 P.end へ）
+  const backAt = (t) => easeInOut((t - (tl.eye[1] + 0.1)) / (tl.beatEnd - (tl.eye[1] + 0.1)));
+
   function updateShoulder() {
     const c = tl.contact, be = tl.beatEnd;
     const Pt = perceivedTime(t);
     const b = clamp01((t - c) / (be - c));
     const hb = pulse(t, tl.beats);
     const front = tl.front(t);
-    // カメラ: ごくわずかに押し込む（白が晴れてから一拍の終わりまでで 0.32 m）。時間が戻って乗り手が飲まれると、
-    // 押し寄せる光に後ろへ弾かれ、揺れる
-    const push = 0.08 * smooth((t - tl.white) / (c - tl.white)) + 0.24 * easeInOut(b);
+    // カメラ: 少し後ろの肩越しから始まり、ごくわずかに押し込む。ガラス片が飛んでくると（演出の秒で、体感時間ではなく）ゆっくり
+    // 乗り手の肩の上へ寄り、顔の前のガラス片を見る（ガラス片と映った目が画面の大きな部分を占め、ヘルメットと肩が縁に入る）。
+    // 寄ったところで止まり、時間が戻って乗り手が飲まれると、押し寄せる光に後ろへ弾かれ、揺れる
+    const push = 0.08 * smooth((t - tl.white) / (c - tl.white)) + 0.1 * smooth((t - c) / (be - c));
+    const m = nearAt(t), mb = backAt(t);
     const r = Math.max(0, t - tl.engulf + 0.03);
     const recoil = 9 * r + 20 * r * r;
-    _pos.copy(P.cam).addScaledVector(B.F, push).addScaledVector(RD.out, recoil);
+    _pos.copy(P.cam).addScaledVector(B.F, push).lerp(P.near, m).addScaledVector(B.U, 0.12 * Math.sin(Math.PI * m)).lerp(P.end, mb);
+    _a.copy(P.look).addScaledVector(B.F, push).sub(_pos).normalize();
+    _b.copy(P.lookNear).sub(_pos).normalize();
+    _look.copy(_pos).addScaledVector(_a.lerp(_b, m * (1 - 0.75 * mb)).normalize(), 10);
+    _pos.addScaledVector(RD.out, recoil);
+    _look.addScaledVector(RD.out, recoil);
     // 手持ちのごくわずかな揺れ（止まった時間の中なので、ほとんど動かない）
     _pos.addScaledVector(B.R, 0.006 * Math.sin(t * 0.9)).addScaledVector(B.U, 0.005 * Math.sin(t * 0.7 + 1));
-    _look.copy(P.look).addScaledVector(B.F, push);
     let fov = lens(LENS.shoulder) * (1 - 0.012 * hb) + 9 * smooth(r / 0.22);
     aim(_pos, _look, fov, -0.02 * easeInOut(b));
     const shake = r > 0 ? 0.03 * smooth(r / 0.05) : 0;
@@ -228,7 +243,7 @@ export function createCinematic(views, enemyView, explosionView, { renderer, sce
     const k = Math.max(0, t - (tl.engulf - FLING_LEAD));
     riderPose.x = RD.pos.x; riderPose.y = RD.pos.y + 0.03 * Math.sin(t * 0.9); riderPose.z = RD.pos.z;
     riderPose.yaw = RD.yaw + 0.01 * Math.sin(t * 0.6); riderPose.pitch = 0.015; riderPose.roll = 0.02 * Math.sin(t * 0.7);
-    riderPose.head = -RD.side * 0.3 * look;
+    riderPose.head = RD.turn * look; // 顔の前へ来るガラス片の方へ
     riderPose.thrust = 1.25; riderPose.keep = 1; riderPose.reach = 0;
     if (k > 0) {
       const fly = FLING.v * k + 0.5 * FLING.a * k * k;
@@ -254,13 +269,13 @@ export function createCinematic(views, enemyView, explosionView, { renderer, sce
       const w = smooth((t - (tl.eye[0] - 0.5)) / 0.35) * (1 - smooth((t - (tl.eye[1] + 0.05)) / 0.4));
       // 向きがそろった姿勢から、目が合う間はごくわずか（0.07 rad/s）、その外は大きく（3 乗で）回る
       const theta = 0.07 * dt + 0.5 * dt * dt * dt;
-      mirrorQuat(_q2, heroState.pos, cam.position);
+      mirrorQuat(_q2, heroState.pos, cam.position, RD.eye);
       heroState.quat.copy(HS.q0).multiply(_q.setFromAxisAngle(HS.axis, theta)).slerp(_q2.multiply(_q.setFromAxisAngle(HS.axis, 0.07 * dt)), w);
-      // 映った目の像のずれ: 鏡の中心で反射した視線が、カメラへまっすぐ返る向きからどれだけそれたか（ガラスの面の向きで）
+      // 映った目の像のずれ: 鏡の中心で反射した視線が、乗り手の目へまっすぐ届く向きからどれだけそれたか（ガラスの面の向きで）
       _n.set(0, 0, 1).applyQuaternion(heroState.quat);
       _a.copy(heroState.pos).sub(cam.position).normalize(); // 見る向き
       _a.reflect(_n);                                       // 反射した視線
-      _b.copy(cam.position).sub(heroState.pos).normalize();
+      _b.copy(RD.eye).sub(heroState.pos).normalize();
       _a.sub(_b);
       _c.set(1, 0, 0).applyQuaternion(heroState.quat);
       _b.set(0, 1, 0).applyQuaternion(heroState.quat);
@@ -467,9 +482,23 @@ export function createCinematic(views, enemyView, explosionView, { renderer, sce
       // 乗り手（演出の一人）: 置き場所・頭（前かがみで少し前）・目・外向き（カメラの方）・右手側
       RD.pos.fromArray(p.rider.pos); RD.out.fromArray(p.rider.out); RD.fwd.fromArray(p.rider.fwd); RD.yaw = p.rider.yaw; RD.side = p.rider.side;
       RD.right.set(-RD.fwd.z, 0, RD.fwd.x);
-      RD.head.copy(RD.pos).add(_a.set(0, 1.55, 0)).addScaledVector(RD.fwd, 0.2);
-      RD.eye.copy(RD.head).addScaledVector(RD.fwd, 0.13).add(_a.set(0, 0.02, 0));
+      if (p.rider.head) RD.head.fromArray(p.rider.head);
+      else RD.head.copy(RD.pos).add(_a.set(0, 1.43, 0)).addScaledVector(RD.fwd, 0.02);
+      RD.eye.copy(RD.head).addScaledVector(RD.fwd, 0.11);
       riderPose.keep = 0;
+      // 寄った肩越しのカメラとガラス片の止まる所（古い plan にはないので、そのときは乗り手から決める）
+      const side = (x) => _a.copy(RD.right).multiplyScalar(x * RD.side);
+      if (p.glass) P.glass.fromArray(p.glass); else P.glass.copy(RD.head).addScaledVector(RD.fwd, 1.25).add(side(0.3)).add(_b.set(0, 0.28, 0));
+      if (p.camNear) P.near.fromArray(p.camNear); else P.near.copy(RD.head).addScaledVector(RD.fwd, -1.35).add(side(0.24)).add(_b.set(0, 0.1, 0));
+      if (p.lookNear) P.lookNear.fromArray(p.lookNear); else P.lookNear.copy(P.glass).lerp(RD.head, 0.22);
+      if (p.camEnd) P.end.fromArray(p.camEnd); else P.end.copy(P.near).lerp(P.cam, 0.55);
+      // 頭を向ける角度（材質の頭の向きは + で乗り手の右手側の反対へ）
+      _a.copy(P.glass).sub(RD.head);
+      RD.turn = -0.8 * Math.atan2(_a.dot(RD.right), _a.dot(RD.fwd));
+      // 寄ったカメラの上（ガラス片の向きの基準）
+      aim(P.near, P.lookNear, lens(LENS.shoulder));
+      cam.matrixWorld.extractBasis(B.R, B.U, B.F);
+      const upNear = B.U.clone();
       // 肩越しのカメラの向き（小道具とガラス片の道の基準）
       aim(P.cam, P.look, lens(LENS.shoulder));
       cam.matrixWorld.extractBasis(B.R, B.U, B.F);
@@ -478,25 +507,29 @@ export function createCinematic(views, enemyView, explosionView, { renderer, sce
       const toWorld = (out, x, y, z) => out.copy(P.cam).addScaledVector(B.R, x).addScaledVector(B.U, y).addScaledVector(B.F, z);
       _a.copy(RD.head).sub(P.cam);
       const hc = { x: _a.dot(B.R), y: _a.dot(B.U), z: _a.dot(B.F) };
-      const sx = hc.x < 0 ? 1 : -1; // 乗り手の頭と反対の側（画面の空いている側）
-      // 目が映るガラス片: 光の壁の際から現れ（t0）、乗り手の頭の横を抜けて、カメラの手前（約 1.8 m）を横切る。
-      // 横切る真ん中（tM）でカメラに正面を向け、乗り手の目が映る。一拍の終わり（t2）には画面の外へ
+      const sx = _a.copy(P.glass).sub(P.cam).dot(B.R) < hc.x ? -1 : 1; // ガラス片の側（頭から見て）
+      // 目が映るガラス片: 光の壁の際から現れ（t0）、ゆっくり回りながら飛んできて、乗り手の顔の前（光の壁の側）で止まりかける。
+      // 寄ったカメラから見て頭に隠れない所（tM でカメラと乗り手の目の間を向き、乗り手の顔が映る）。一拍の終わり（t2）には
+      // 頭の横（頭と反対の側）を抜けて画面の外へ
       HS.t0 = tl.contact - 0.12; HS.tM = (tl.eye[0] + tl.eye[1]) / 2; HS.t2 = tl.beatEnd;
       // 奥行き z での画面の半分の幅・高さ
       const halfW = (z) => z * tanV * cam.aspect, halfHt = (z) => z * tanV;
-      const zW = hc.z + FINALE.riderGap, zEye = 1.8;
-      toWorld(HS.p0, sx * 0.55 * halfW(zW), 0.55 * halfHt(zW), zW);
-      toWorld(HS.p1, sx * 0.08 * halfW(zEye), 0.1 * halfHt(zEye), zEye);
-      toWorld(HS.p2, -sx * 1.5 * halfW(0.9), -0.1 * halfHt(0.9), 0.9);
+      const zW = hc.z + FINALE.riderGap;
+      toWorld(HS.p0, sx * 0.45 * halfW(zW), 0.5 * halfHt(zW), zW);
+      HS.p1.copy(P.glass);
+      HS.p2.copy(P.glass).addScaledVector(RD.fwd, -1.6).add(side(1.3)).add(_b.set(0, 0.35, 0));
       const T1 = HS.tM - HS.t0, T2 = HS.t2 - HS.tM;
-      _b.copy(HS.p2).sub(HS.p1).normalize().multiplyScalar(0.16); // 横切る所でのゆっくりした速さ（m/s）
+      _b.copy(HS.p2).sub(HS.p1).normalize().multiplyScalar(0.06); // 顔の前でのゆっくりした速さ（m/s）
       HS.m0.copy(HS.p1).sub(HS.p0).multiplyScalar(1.4);
       HS.m1a.copy(_b).multiplyScalar(T1); HS.m1b.copy(_b).multiplyScalar(T2);
       HS.m2.copy(HS.p2).sub(HS.p1).multiplyScalar(1.6);
-      // 大きさ: 横切る所で画面の幅の約 7 割（横長の画面は高さの約 7 割まで。窓ガラスの破片として 0.6 m まで）
-      HS.width = Math.min(0.6, 0.7 * 2 * halfHt(zEye) / 0.62, 0.7 * 2 * halfW(zEye));
-      const pushM = 0.08 + 0.24 * easeInOut((HS.tM - tl.contact) / (tl.beatEnd - tl.contact));
-      mirrorQuat(HS.q0, HS.p1, _c.copy(P.cam).addScaledVector(B.F, pushM));
+      // 大きさ: 寄ったカメラから見て画面の幅の約 7 割（横長の画面は高さの約 7 割まで。窓ガラスの破片として 0.6 m まで）
+      const zEye = P.glass.distanceTo(P.near);
+      HS.width = Math.min(0.6, 0.7 * 2 * halfHt(zEye) / 0.62, 0.72 * 2 * halfW(zEye));
+      const bU = B.U.clone();
+      B.U.copy(upNear);
+      mirrorQuat(HS.q0, HS.p1, P.near, RD.eye);
+      B.U.copy(bU);
       const pc = perceivedTime(tl.contact);
       props.setup({ pos: p.camPos, fwd: B.F.toArray(), right: B.R.toArray(), up: B.U.toArray(), tanV, tanH: tanV * cam.aspect }, {
         wallDepth: hc.z + FINALE.riderGap,

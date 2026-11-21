@@ -13,8 +13,17 @@ export const PLAN = {
   riderFrac: 0.72,       // かつ、その一発の半径のこの割合まで（かならず光の壁に飲まれる）
   riderHover: 2.6,       // バイクの底の、地面からの高さ（m）
   riderClear: 1.6,       // 乗り手（バイク）はビルからこの距離より離れる
-  camBack: 4.4,          // カメラは乗り手の背後（乗り手の向きの後ろ）にこの距離（m）。バイクの尾の推進の光が手前に入る
+  camBack: 4.4,          // 始めのカメラは乗り手の背後（乗り手の向きの後ろ）にこの距離（m）。バイクの尾の推進の光が手前に入る
   camSide: 0.4,          // 横（肩越し。乗り手の頭と肩が画面の片側に入る）
+  // 乗り手の頭（演出の一人の体 riderBody の前かがみの姿で、バイクの底から上・前へ m）
+  head: { up: 1.43, fwd: 0.02 },
+  // 目が映るガラス片の止まる所: 乗り手の顔の前（光の壁の側）、カメラの肩の側へ少しずれて頭より上（カメラから見て頭に隠れない）
+  glass: { fwd: 1.25, side: 0.3, up: 0.28 },
+  // ガラス片が来るとカメラが寄る所: 乗り手の頭の後ろ・肩の上（同じ側）。ここで止まり、時間が戻って飲まれる
+  near: { back: 1.35, side: 0.24, up: 0.1, aim: 0.22 },
+  // 目が合ったあと、最後の鼓動の間にカメラは始めの方へこの割合だけ戻る（camEnd）。時間が戻ると、乗り手が飲まれて
+  // バイクごとレンズの横をかすめるのが見え、そのあとカメラが飲まれる
+  backOut: 0.55,
   camY: 1.6,             // バイクの底からの高さ（乗り手の頭は約 1.55）
   camClear: 1.6,         // カメラはビルからこの距離より離れる
   othersClear: 3.0,      // ほかの軍勢はカメラ・乗り手からこの距離より離れている
@@ -86,7 +95,7 @@ function pickRider(enemies, rng) {
 const STEP = 0.75;
 function findRetreat(origin, base, buildings, ground, radius, lead) {
   const radial = Math.atan2(origin[2], origin[0]);
-  const len = Math.max(60, radius + lead + 20 - len2(origin)) + 10;
+  const len = Math.max(60, radius + lead + 20 - len2(origin), radius + lead + 2) + 10; // 道の長さ: 爆心から見た前線の先まで、かつ始まりから radius + lead まで
   const n = Math.ceil((len - 0.5) / STEP) + 1;
   const xs = Array.from({ length: n }, (_, i) => 0.5 + i * STEP);
   let best = null;
@@ -167,7 +176,14 @@ function shoulderAt(az, d, side, ground, lift = 0) {
   const cam = [pos[0] - fwd[0] * PLAN.camBack + right[0] * PLAN.camSide * side, pos[1] + PLAN.camY, pos[2] - fwd[2] * PLAN.camBack + right[2] * PLAN.camSide * side];
   const head = [pos[0], pos[1] + 1.55, pos[2]];
   const look = [head[0] + fwd[0] * PLAN.lookAhead, head[1] + PLAN.lookUp, head[2] + fwd[2] * PLAN.lookAhead];
-  return { pos, cam, head, look, out, fwd, yaw: Math.atan2(fwd[0], fwd[2]) };
+  // 寄ったカメラ・ガラス片・本当の頭（前かがみの姿）。寄ったカメラはガラス片を見る（頭の方へ aim だけ寄せて、頭が画面の縁に入る）
+  const at = (b, f, r, u) => [b[0] + fwd[0] * f + right[0] * r * side, b[1] + u, b[2] + fwd[2] * f + right[2] * r * side];
+  const headC = at(pos, PLAN.head.fwd, 0, PLAN.head.up);
+  const glass = at(headC, PLAN.glass.fwd, PLAN.glass.side, PLAN.glass.up);
+  const camNear = at(headC, -PLAN.near.back, PLAN.near.side, PLAN.near.up);
+  const lookNear = glass.map((v, i) => v + (headC[i] - v) * PLAN.near.aim);
+  const camEnd = camNear.map((v, i) => v + (cam[i] - v) * PLAN.backOut);
+  return { pos, cam, head, look, out, fwd, yaw: Math.atan2(fwd[0], fwd[2]), headC, glass, camNear, lookNear, camEnd };
 }
 
 // カメラから見る向きに並べた光線が光の壁（半径 wall の球）に届く点（届かなければ 40 m 先）
@@ -194,19 +210,22 @@ function rayToWall(c, d, w) {
 // ビルがふさがない。画面の向きに並べた光線のうち、光の壁（一拍の前線 wall）まで届かずビルに当たるものが blocked 以下で、
 // 真ん中の列（乗り手の頭とガラス片の背）はふさがれない（乗り手の影が光の壁を背に浮かぶ）。戻り値: ふさがれた数（撮れなければ −1）
 function shoulderClear(s, near, ground, others, wall) {
-  if (near.some((o) => inBox(s.pos, o, PLAN.riderClear) || inBox(s.cam, o, PLAN.camClear))) return -1;
+  if (near.some((o) => inBox(s.pos, o, PLAN.riderClear) || inBox(s.cam, o, PLAN.camClear) || inBox(s.camNear, o, PLAN.camClear) || inBox(s.glass, o, 0.5))) return -1;
   if (s.cam[1] <= ground(s.cam) + 1) return -1;
   for (const p of others) {
-    if (Math.hypot(p[0] - s.cam[0], p[2] - s.cam[2]) <= PLAN.othersClear || Math.hypot(p[0] - s.pos[0], p[2] - s.pos[2]) <= PLAN.othersClear) return -1;
+    if ([s.cam, s.camNear, s.pos].some((q) => Math.hypot(p[0] - q[0], p[2] - q[2]) <= PLAN.othersClear)) return -1;
   }
-  const camD = Math.hypot(...s.cam);
-  for (const o of near) {
-    if (nearDist(o) >= camD + FINALE.passBeyond) continue;
-    if (Math.hypot(Math.max(0, Math.abs(s.cam[0] - o.x) - o.w / 2), Math.max(0, Math.abs(s.cam[2] - o.z) - o.d / 2)) < PLAN.sweptClear) return -1;
-    if (segHitsBox(s.cam, s.head, o, PLAN.sweptLine)) return -1;
+  // 始めのカメラ・寄ったカメラ・飲まれるカメラのどれからも、押されてゆがむビルが離れている
+  for (const c of [s.cam, s.camNear, s.camEnd]) {
+    const camD = Math.hypot(...c);
+    for (const o of near) {
+      if (nearDist(o) >= camD + FINALE.passBeyond) continue;
+      if (Math.hypot(Math.max(0, Math.abs(c[0] - o.x) - o.w / 2), Math.max(0, Math.abs(c[2] - o.z) - o.d / 2)) < PLAN.sweptClear) return -1;
+      if (segHitsBox(c, s.head, o, PLAN.sweptLine)) return -1;
+    }
   }
   const live = near.filter((o) => farDist(o) > wall - 0.5);
-  if (live.some((o) => segHitsBox(s.cam, s.head, o, 0.2) || segHitsBox(s.cam, s.look, o, 0.2))) return -1;
+  if (live.some((o) => segHitsBox(s.cam, s.head, o, 0.2) || segHitsBox(s.cam, s.look, o, 0.2) || segHitsBox(s.camNear, s.glass, o, 0.2))) return -1;
   let blocked = 0;
   for (const r of viewRays(s)) {
     const q = rayToWall(s.cam, r.d, wall - 1);
@@ -270,12 +289,18 @@ export function planFinale({ shot, buildings, enemies = [], rng, crater = 0, lea
   const hitDist = best.d - FINALE.riderGap - FINALE.crawl;
   const plan = {
     riderId: best.who ? best.who.id : null,
-    rider: { pos: best.pos, yaw: best.yaw, out: best.out, fwd: best.fwd, side: best.side },
+    rider: { pos: best.pos, yaw: best.yaw, out: best.out, fwd: best.fwd, side: best.side, head: best.headC },
     hitDist,
     riderDist: Math.hypot(best.d, best.pos[1] + 1),
     camPos: best.cam,
-    camDist: Math.hypot(...best.cam),
     look: best.look,
+    // ガラス片が来ると寄る肩越しのカメラ（camNear、見る先 lookNear）と、目が映るガラス片の止まる所（乗り手の顔の前）。
+    // 目が合ったあと少し戻った所（camEnd）で飲まれるので、時刻表の camDist はそこまで
+    camNear: best.camNear,
+    lookNear: best.lookNear,
+    glass: best.glass,
+    camEnd: best.camEnd,
+    camDist: Math.hypot(...best.camEnd),
     retreat: null,
   };
   if (retreat) plan.retreat = planRetreat(plan, { buildings, crater, radius: shot.radius, lead });

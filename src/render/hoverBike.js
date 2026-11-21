@@ -17,7 +17,8 @@ export const RIDER = {
 export const SUIT = '#2c3133', PLATE = '#3b4240', DARK = '#191c1f', HELM = '#30363c', BOOT = '#141617';
 export const HULL = '#8e9389', DECK = '#b5b8ab', BELLY = '#23272a', HOUSING = '#2a2f31', GLOW = '#ffffff';
 
-// focus: 演出で大きく映る一人のバイク（riderBody.js）。座席は距離の場で丸く組み直すので省き、尾の輪は細かく丸く
+// focus: 演出で大きく映る一人のバイク（riderBody.js）。ここでは輪と推進の光だけを返し（尾の輪は細かく丸く、脇の光の線は丸い棒）、
+// 車体・座席・安定板・握り・足の板は riderBody.js が距離の場と丸い形で組み直す
 export function bikeParts({ focus = false } = {}) {
   const B = (g) => part(g, 7, [0, 0, 0], HULL);
   const hex = (sx, h, sz) => new THREE.CylinderGeometry(1, 1, h, 6).scale(sx, 1, sz);
@@ -28,15 +29,23 @@ export function bikeParts({ focus = false } = {}) {
     new THREE.CircleGeometry(r, 12).rotateX(Math.PI / 2).translate(0, -0.015, 0),
   ]);
   const glow = (g) => part(g, 8, [0, 0, 0], GLOW);
+  const rings = [
+    // 鼻先と尾の輪（外枠）と、その中の光る円板
+    part(at(focus ? new THREE.TorusGeometry(0.22, 0.045, 10, 28).rotateX(Math.PI / 2) : ring(0.22, 0.045), 0, 0.3, 1.2), 7, [0, 0, 0], HOUSING),
+    part(at(focus ? new THREE.TorusGeometry(0.3, 0.055, 12, 36).rotateX(Math.PI / 2) : ring(0.3, 0.055), 0, 0.3, -1.32), 7, [0, 0, 0], HOUSING),
+    glow(at(disc(0.19), 0, 0.3, 1.2)),
+    glow(at(disc(0.26), 0, 0.3, -1.32)),
+  ];
+  if (focus) {
+    // 両脇の細い光の線（丸い棒）
+    const line = (x) => glow(at(new THREE.CapsuleGeometry(0.016, 0.88, 3, 8).rotateX(Math.PI / 2), x, 0.3, 0));
+    return [...rings, line(0.335), line(-0.335)];
+  }
   return [
     B(at(hex(0.38, 0.26, 1.05), 0, 0.3, 0)),
     part(at(hex(0.3, 0.12, 0.85), 0, 0.12, 0), 7, [0, 0, 0], BELLY),
     part(at(hex(0.27, 0.04, 0.74), 0, 0.45, 0.05), 7, [0, 0, 0], DECK),
-    // 鼻先と尾の輪（外枠）と、その中の光る円板
-    part(at(ring(0.22, 0.045), 0, 0.3, 1.2), 7, [0, 0, 0], HOUSING),
-    part(at(focus ? new THREE.TorusGeometry(0.3, 0.055, 10, 32).rotateX(Math.PI / 2) : ring(0.3, 0.055), 0, 0.3, -1.32), 7, [0, 0, 0], HOUSING),
-    glow(at(disc(0.19), 0, 0.3, 1.2)),
-    glow(at(disc(0.26), 0, 0.3, -1.32)),
+    ...rings,
     part(at(box(0.1, 0.06, 0.3), 0, 0.3, 1.0), 7, [0, 0, 0], HOUSING), // 輪をつなぐ腕
     part(at(box(0.12, 0.07, 0.36), 0, 0.3, -1.05), 7, [0, 0, 0], HOUSING),
     // 両脇の細い光の線
@@ -46,10 +55,8 @@ export function bikeParts({ focus = false } = {}) {
     B(at(box(0.03, 0.24, 0.36).rotateZ(-0.45), 0.25, 0.5, -0.82)),
     B(at(box(0.03, 0.24, 0.36).rotateZ(0.45), -0.25, 0.5, -0.82)),
     // 座席: 柱の上の鞍
-    ...(focus ? [] : [
-      part(at(box(0.16, 0.26, 0.3), 0, 0.56, -0.32), 7, [0, 0, 0], HOUSING),
-      part(at(box(0.3, 0.1, 0.5), 0, 0.71, -0.32), 7, [0, 0, 0], BELLY),
-    ]),
+    part(at(box(0.16, 0.26, 0.3), 0, 0.56, -0.32), 7, [0, 0, 0], HOUSING),
+    part(at(box(0.3, 0.1, 0.5), 0, 0.71, -0.32), 7, [0, 0, 0], BELLY),
     // 握り: 短い柱と横一本の棒
     part(at(box(0.07, 0.56, 0.07).rotateX(-0.25), 0, 0.72, 0.48), 7, [0, 0, 0], HOUSING),
     part(at(box(0.62, 0.05, 0.06), 0, 0.98, 0.42), 7, [0, 0, 0], BELLY),

@@ -48,7 +48,7 @@ test('乗り手の場所: 光の壁が届く範囲（半径の riderFrac 以内�
   }
 });
 
-test('カメラは乗り手の背後・肩越し（乗り手の向きの後ろに camBack m、横に camSide m、頭より少し上）で、ビルの外。乗り手の頭と、その向こうの光の壁を見通せる', () => {
+test('カメラは乗り手の背後・肩越し（乗り手の向きの後ろに camBack m、横に camSide m、頭より少し上）で、ビルの外。乗り手の頭と、その向こうの光の壁を見通せる。ガラス片が来ると同じ肩の側の頭の後ろへ寄り（そこで飲まれる）、ガラス片は顔の前で頭より遠い', () => {
   for (const { city, plan } of cases()) {
     const r = plan.rider, c = plan.camPos, d = horiz(r.pos);
     const out = [r.pos[0] / d, r.pos[2] / d], back = [-r.fwd[0], -r.fwd[2]], right = [-r.fwd[2], r.fwd[0]];
@@ -56,8 +56,22 @@ test('カメラは乗り手の背後・肩越し（乗り手の向きの後ろ�
     expect(rel[0] * back[0] + rel[1] * back[1]).toBeCloseTo(PLAN.camBack, 6);
     expect(Math.abs(rel[0] * right[0] + rel[1] * right[1])).toBeCloseTo(PLAN.camSide, 6);
     expect(c[1] - r.pos[1]).toBeCloseTo(PLAN.camY, 6);
-    expect(plan.camDist).toBeCloseTo(Math.hypot(...c), 6);
     expect(city.buildings.filter((o) => inside(c, o, PLAN.camClear - 0.01)).map((o) => o.id)).toEqual([]);
+    // ガラス片が来ると寄る肩越し（頭の後ろ・肩の上、同じ側）。カメラはそこで止まって飲まれるので、camDist はそこまで
+    const cn = plan.camNear, g = plan.glass, h = plan.rider.head;
+    const relN = [cn[0] - h[0], cn[2] - h[2]], relG = [g[0] - h[0], g[2] - h[2]];
+    expect(relN[0] * back[0] + relN[1] * back[1]).toBeCloseTo(PLAN.near.back, 6);
+    expect(relN[0] * right[0] + relN[1] * right[1]).toBeCloseTo(PLAN.near.side * plan.rider.side, 6);
+    expect(Math.sign(rel[0] * right[0] + rel[1] * right[1])).toBe(plan.rider.side); // 始めと同じ肩の側
+    // 目が合ったあと、始めの方へ backOut だけ戻った所（camEnd）で飲まれる: camDist はそこまで
+    expect(plan.camEnd.map((v, i) => +(v - (cn[i] + (c[i] - cn[i]) * PLAN.backOut)).toFixed(9))).toEqual([0, 0, 0]);
+    expect(plan.camDist).toBeCloseTo(Math.hypot(...plan.camEnd), 6);
+    expect(plan.camDist).toBeLessThan(Math.hypot(...c));
+    expect(city.buildings.filter((o) => inside(cn, o, PLAN.camClear - 0.01)).map((o) => o.id)).toEqual([]);
+    // 目が映るガラス片は乗り手の顔の前（光の壁の側）で、寄ったカメラから見て頭より遠い。ビルの外で、カメラから見通せる
+    expect(-(relG[0] * back[0] + relG[1] * back[1])).toBeCloseTo(PLAN.glass.fwd, 6);
+    expect(Math.hypot(g[0] - cn[0], g[1] - cn[1], g[2] - cn[2])).toBeGreaterThan(Math.hypot(h[0] - cn[0], h[1] - cn[1], h[2] - cn[2]) + 0.8);
+    expect(city.buildings.filter((o) => inside(g, o, 0.49) || segHitsBox(cn, g, o, 0.19)).map((o) => o.id)).toEqual([]);
     // 見通し: 乗り手の頭・見る先・その向こうの光の壁（一拍の前線）を、まだ飲まれていないビルがふさがない
     const head = [r.pos[0], r.pos[1] + 1.55, r.pos[2]];
     const wall = plan.hitDist + FINALE.crawl;
@@ -75,10 +89,13 @@ test('カメラは乗り手の背後・肩越し（乗り手の向きの後ろ�
 test('時間が戻ってから追うカットまでに光の壁が触れるビルは、カメラから sweptClear m、カメラから乗り手の頭への線から sweptLine m より離れている（押されてゆがむ壁がレンズの前をふさがない）', () => {
   const near = (b) => Math.hypot(Math.max(0, Math.abs(b.x) - b.w / 2), Math.max(0, Math.abs(b.z) - b.d / 2));
   for (const { city, plan } of cases()) {
-    const c = plan.camPos, head = [plan.rider.pos[0], plan.rider.pos[1] + 1.55, plan.rider.pos[2]];
-    for (const o of city.buildings.filter((b) => near(b) < plan.camDist + FINALE.passBeyond)) {
-      expect(Math.hypot(Math.max(0, Math.abs(c[0] - o.x) - o.w / 2), Math.max(0, Math.abs(c[2] - o.z) - o.d / 2)), `building ${o.id}`).toBeGreaterThanOrEqual(PLAN.sweptClear);
-      expect(segHitsBox(c, head, o, PLAN.sweptLine), `building ${o.id}`).toBe(false);
+    const head = [plan.rider.pos[0], plan.rider.pos[1] + 1.55, plan.rider.pos[2]];
+    // 始めのカメラと、寄って飲まれるカメラのどちらからも
+    for (const c of [plan.camPos, plan.camNear, plan.camEnd]) {
+      for (const o of city.buildings.filter((b) => near(b) < Math.hypot(...c) + FINALE.passBeyond)) {
+        expect(Math.hypot(Math.max(0, Math.abs(c[0] - o.x) - o.w / 2), Math.max(0, Math.abs(c[2] - o.z) - o.d / 2)), `building ${o.id}`).toBeGreaterThanOrEqual(PLAN.sweptClear);
+        expect(segHitsBox(c, head, o, PLAN.sweptLine), `building ${o.id}`).toBe(false);
+      }
     }
   }
 });

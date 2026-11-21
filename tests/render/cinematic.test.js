@@ -293,7 +293,7 @@ test('乗り手: 画面全体になってから決めた場所に、爆心を向
   expect(focus.at(-1)).toBeNull();
 });
 
-test('目が合う一瞬: 映り込みは tl.eye の間だけ（0.4〜0.7 秒）。その真ん中ではガラス片が手前（3 m 以内）を横切りながら鏡の面をカメラの正面に向け（像のずれ ≈ 0）、目はまっすぐ前を見て、ガラス片は画面の中で幅の 6 割以上', () => {
+test('目が合う一瞬: 映り込みは tl.eye の間だけ（0.4〜0.7 秒）。その真ん中ではガラス片は乗り手の顔の前（カメラから見て頭より遠く、頭に隠れない）で、鏡の面はカメラと乗り手の目の間を向き（像のずれ ≈ 0）、目はまっすぐ前を見て、寄ったカメラの画面の中で幅の 6 割以上。ヘルメットは画面の縁', () => {
   for (const size of [{ w: 390, h: 844 }, { w: 1280, h: 720 }]) {
     const { cin, plan, shot } = makeShoulder(SHOTS[1], size);
     cin.play(plan, shot);
@@ -316,16 +316,27 @@ test('目が合う一瞬: 映り込みは tl.eye の間だけ（0.4〜0.7 秒）
     const g = c2.cin.beat.glass;
     expect(g.reflect).toBe(1);
     const camPos = c2.cin.camera.position;
+    const head = new THREE.Vector3(...c2.plan.rider.head), eyeP = c2.cin.beat.eyePos;
+    // 鏡の面は後ろ（カメラと乗り手の目の間）を向く: カメラの視線がそこで返ると乗り手の目に届く（像のずれ ≈ 0）
     const n = new THREE.Vector3(0, 0, 1).applyQuaternion(g.quat);
-    const toC = camPos.clone().sub(g.pos).normalize();
-    expect(n.dot(toC)).toBeGreaterThan(0.995);
-    expect(g.pos.distanceTo(camPos)).toBeLessThan(3);
-    // 乗り手より手前
-    expect(g.pos.distanceTo(camPos)).toBeLessThan(new THREE.Vector3(...c2.plan.rider.pos).distanceTo(camPos));
+    const toC = camPos.clone().sub(g.pos).normalize(), toE = eyeP.clone().sub(g.pos).normalize();
+    expect(n.dot(toC)).toBeGreaterThan(0.95);
+    expect(Math.abs(n.dot(toC) - n.dot(toE))).toBeLessThan(0.01);
     expect(Math.hypot(...g.slide)).toBeLessThan(0.08);
+    // ガラス片は乗り手の顔の前（光の壁の側）: カメラから見て乗り手の頭より遠く、頭と目より前にある
+    expect(g.pos.distanceTo(camPos)).toBeGreaterThan(head.distanceTo(camPos) + 0.8);
+    expect(g.pos.distanceTo(camPos)).toBeLessThan(3.5);
+    const fwd = new THREE.Vector3(...c2.plan.rider.fwd);
+    expect(g.pos.clone().sub(eyeP).dot(fwd)).toBeGreaterThan(0.8);
+    // 頭とヘルメットに隠れない: カメラからガラス片の真ん中と左右の縁への線は、頭（半径 0.16 m）を通らない
+    for (const k of [-0.5, 0, 0.5]) for (const v of [-0.25, 0, 0.25]) {
+      const q = g.pos.clone().add(new THREE.Vector3(k * g.width, v * g.width, 0).applyQuaternion(g.quat));
+      const ray = new THREE.Ray(camPos.clone(), q.clone().sub(camPos).normalize());
+      expect(ray.distanceToPoint(head), `${k},${v}`).toBeGreaterThan(0.16);
+    }
     expect(c2.cin.beat.eye.uLook.value).toBeCloseTo(-0.55, 2); // 黒目がまっすぐ（こちらを見る）
     expect(c2.cin.beat.eye.uOpen.value).toBeGreaterThan(0.4);
-    // 画面の中、幅の 4 割以上
+    // 画面の中、縦長では幅の 6 割以上
     const cam = c2.cin.camera;
     const ndc = g.pos.clone().project(cam);
     expect(Math.abs(ndc.x)).toBeLessThan(0.7);
@@ -333,10 +344,11 @@ test('目が合う一瞬: 映り込みは tl.eye の間だけ（0.4〜0.7 秒）
     const edge = g.pos.clone().add(new THREE.Vector3(g.width / 2, 0, 0).applyQuaternion(g.quat)).project(cam);
     const e2 = g.pos.clone().add(new THREE.Vector3(-g.width / 2, 0, 0).applyQuaternion(g.quat)).project(cam);
     if (size.w < size.h) expect(Math.abs(edge.x - e2.x) / 2).toBeGreaterThan(0.6);
-    // 乗り手の頭は画面の中（ガラス片の向こうに乗り手がいる）
-    const head = new THREE.Vector3(...c2.plan.rider.pos).add(new THREE.Vector3(0, 1.55, 0)).project(cam);
-    expect(Math.abs(head.x)).toBeLessThan(0.9);
-    expect(Math.abs(head.y)).toBeLessThan(0.8);
+    // 乗り手のヘルメットは画面の縁に入る（肩越し）
+    const hp = head.clone().project(cam);
+
+    expect(Math.abs(hp.x)).toBeLessThan(1.05);
+    expect(Math.abs(hp.y)).toBeLessThan(0.9);
   }
 });
 
