@@ -30,7 +30,9 @@ const STANCE_LIFT = new THREE.Vector3(0, -0.3, 0);
 const JOIN_N = new THREE.Vector3(-0.8, -0.75, -0.3);
 const JOIN_F = new THREE.Vector3(-1, 0.35, 0.05);
 const JOIN_D = 0.6;
-const JOIN_CROSS = new THREE.Vector3(0, 0.06, -0.13);
+// 持ち主 18:27「溜めてる状態からそのまま指を組む」: 左右の指を同じ面に置き、指の並びの向きに半本ずらして交互に組む
+// （S10 の重ねる交差 (0, 0.06, -0.13) から、指の面の高さをそろえる (0, -0.06, 0.08) へ。tests/render/handView.test.js の組み方の測り方）
+const JOIN_CROSS = new THREE.Vector3(0, -0.06, 0.08);
 const JOIN_LIFT = new THREE.Vector3(0, -0.3, 0); // 指先が球の上にかぶさる高さ
 // 払う: 手のひらを街のほう（前・少し上）へ向け、両手を前へ・少し外へ突き出す。右手で書く
 const PUSH_N = new THREE.Vector3(-0.35, 0.25, -1);
@@ -59,8 +61,8 @@ const FLASH_SEC = 0.14;
 // 鷲掴みの寄り方: 先に大きく進む（指が早く交差して光を埋め、途中で光る内側を手が囲む形を作らない）
 const JOIN_EASE_P = 3;
 const joinEase = (k) => 1 - Math.pow(1 - k, JOIN_EASE_P);
-// 左右へ寄る動きの速さ: 1/60 秒で 94%（JOIN_SEC の 1/15 で 1 − (14/15)^40）
-export const LAT_EASE_P = 40;
+// 左右へ寄る動きの速さ: 1/60 秒でほぼ済む（JOIN_SEC の 1/15 で 1 − (14/15)^90 ≒ 99.8%）
+export const LAT_EASE_P = 90;
 const latEase = (k) => 1 - Math.pow(1 - Math.min(1, Math.max(0, k)), LAT_EASE_P);
 const joinEaseInv = (j) => 1 - Math.pow(1 - Math.min(1, Math.max(0, j)), 1 / JOIN_EASE_P);
 
@@ -473,10 +475,13 @@ export function createHandView(models, tierName) {
         // 構えの位置（球の中心から手のひらの向きの逆へ D）と、合わせた位置の間
         _c.copy(ORB_C).addScaledVector(h.n, -D).add(h.lift);
         _jd.copy(h.joinAt).sub(_c);
-        const lat = _jd.x;
+        const lat = _jd.x, fast = Math.max(joined, joinLat);
         _jd.x = 0;
+        // 指を組むずらし（JOIN_CROSS）も左右へ寄る動きと一緒に最初のフレームで済ませる（指が互い違いの所へすべり込む）
+        _jd.y -= JOIN_CROSS.y * h.mirror; _jd.z -= JOIN_CROSS.z * h.mirror;
         _c.addScaledVector(_jd, joined);
-        _c.x += lat * Math.max(joined, joinLat);
+        _c.x += lat * fast;
+        _c.y += JOIN_CROSS.y * h.mirror * fast; _c.z += JOIN_CROSS.z * h.mirror * fast;
         _c.addScaledVector(h.pushMove, pushed).add(h.trem);
         _c.x += h.mirror * recoil; // 合わさった反動で、わずかに弾かれる
         // 引き込まれる: 球（黒い球）のほうへ寄りながら、渦の向きへねじれる

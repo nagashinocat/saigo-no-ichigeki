@@ -4,7 +4,7 @@ import { CONFIG } from '../../src/config.js';
 import * as THREE from 'three';
 import { buildHandModel } from '../../src/render/handModel.js';
 import { HAND_JOINTS } from '../../src/render/handPose.js';
-import { heartFrames } from './heartProxy.js';
+import { heartFrames, interlace } from './heartProxy.js';
 
 const DT = 1 / 60;
 const run = (view, sec, ...args) => { for (let t = 0; t < sec - 1e-9; t += DT) view.update(DT, ...args); };
@@ -476,5 +476,24 @@ test('S6 fix1: 放った直後の 0〜0.25 秒、1/60 秒ごとのどの瞬間�
       expect(f.apex, `${label} apex`).toBeGreaterThan(0.38);
       expect(f.thumb, `${label} thumb`).toBeLessThan(-0.03);
     }
+  }
+});
+
+test('持ち主 18:27: 放つと、溜めていた構えからそのまま指を組む: 0〜0.25 秒の 1/60 秒ごとに、指先は左右交互に並ぶか相手の付け根を越えて届き、締めきると同じ面で交互に組む', () => {
+  for (const detail of ['low', 'high']) {
+    const m = hands(detail);
+    const view = createHandView(m, detail);
+    view.resize(390 / 295);
+    run(view, 1, 0.9, true, 1);
+    view.release({ amount: CONFIG.power.max, isBig: true });
+    for (let i = 1; i <= 15; i++) {
+      view.update(DT, 0, false, 1);
+      const f = interlace(m), label = `${detail} +${i}/60`;
+      expect(f.alternations >= 6 || f.reach, label).toBe(true);
+    }
+    run(view, 0.3, 0, false, 1);
+    const f = interlace(m);
+    expect(f.alternations, detail).toBe(7); // 右左右左…（指が交互）
+    expect(Math.abs(f.depthGap), detail).toBeLessThan(0.08); // 同じ面で組む（重ねた二段ではない）
   }
 });

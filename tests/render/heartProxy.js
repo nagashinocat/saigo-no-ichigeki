@@ -22,3 +22,24 @@ export function heartFrames(m, view, aspect, joints) {
   return { overlap, near, apex, thumb, H, W, shape: (H / W) / aspect };
 }
 
+
+// 指を組む（持ち主 18:27）: 指の並びの向き（右手の人差し指の付け根 → 小指の付け根）に 8 本の指先を並べたとき、左右が交互になる回数
+// alternations（7 で完全に交互）、右手の指先の群れと左手の指先の群れの、指の面に直角な向きのずれ depthGap（手の大きさに対する割合。
+// 0 に近いほど同じ面で組んでいる）、どちらかの手の指先がもう一方の手の付け根を越えて届いているか reach
+const KNUCKLES = ['index-finger-phalanx-proximal', 'middle-finger-phalanx-proximal', 'ring-finger-phalanx-proximal', 'pinky-finger-phalanx-proximal'];
+export function interlace(m) {
+  const wp = (s, n) => m[s].bones[n].getWorldPosition(new THREE.Vector3());
+  const ax = wp('right', KNUCKLES[3]).sub(wp('right', KNUCKLES[0])).normalize();
+  const tips = [];
+  for (const s of ['right', 'left']) for (const n of FINGER_TIPS) tips.push({ s, c: wp(s, n).dot(ax) });
+  tips.sort((a, b) => a.c - b.c);
+  let alternations = 0;
+  for (let k = 1; k < tips.length; k++) if (tips[k].s !== tips[k - 1].s) alternations++;
+  const dir = wp('right', 'middle-finger-tip').sub(wp('right', KNUCKLES[1])).normalize();
+  const nrm = new THREE.Vector3().crossVectors(ax, dir).normalize();
+  const mean = (s) => FINGER_TIPS.reduce((a, n) => a + wp(s, n).dot(nrm), 0) / 4;
+  const size = wp('right', 'middle-finger-tip').distanceTo(wp('right', 'wrist'));
+  const reach = Math.min(...FINGER_TIPS.map((n) => wp('right', n).x)) < Math.max(...KNUCKLES.map((n) => wp('left', n).x))
+    || Math.max(...FINGER_TIPS.map((n) => wp('left', n).x)) > Math.min(...KNUCKLES.map((n) => wp('right', n).x));
+  return { alternations, depthGap: (mean('right') - mean('left')) / size, reach };
+}
