@@ -237,3 +237,19 @@ test('fix2: 柱が 1 本の橋脚の横梁は橋桁の中心の線の上にあ�
   }
   expect(moved).toBeGreaterThan(0);
 });
+
+test('音源（sources）は毎フレーム同じ物を使い回し、中身だけが今のカメラの位置からの一番近い電車と高速の点になる', () => {
+  const view = createCityView(city, createStyle('mid'), 'mid');
+  const a = view.transit.sources(new THREE.Vector3(0, 30, 0));
+  const ta = a.train && { ...a.train }, ha = a.highway && { ...a.highway };
+  expect(ha).not.toBeNull();
+  const b = view.transit.sources(new THREE.Vector3(200, 30, -150));
+  expect(b).toBe(a);
+  if (ta) expect(b.train).toBe(a.train);
+  expect(b.highway).toBe(a.highway);
+  expect(b.highway.dist).not.toBe(ha.dist);
+  // 同じ所から読み直すと、同じ値
+  const c = view.transit.sources(new THREE.Vector3(0, 30, 0));
+  expect({ ...c.highway }).toEqual(ha);
+  if (ta) expect({ ...c.train }).toEqual(ta);
+});

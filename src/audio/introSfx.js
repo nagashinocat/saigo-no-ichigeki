@@ -133,8 +133,6 @@ export function scheduleIntroSfx(ctx, dest, t0, tl, { from = 0 } = {}) {
     s.connect(lp); lp.connect(g); g.connect(bus);
   }
 
-  // ---- 3: スポットライトには音をつけない（持ち主 19:05。BGM だけ）----
-
   // ---- 5: すき間の光の筋 ----
   const hide = tl.beat('hide');
   if (hide) {

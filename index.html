@@ -40,6 +40,18 @@
       background: linear-gradient(to bottom, rgba(12, 8, 24, 0.82) 0%, rgba(12, 8, 24, 0.7) 30%, rgba(12, 8, 24, 0) 40%, rgba(12, 8, 24, 0) 74%, rgba(12, 8, 24, 0.7) 82%); }
     #result.fail .result-row:not(.sub) { margin-top: auto; }
     #result.fail .result-label { margin-top: 0.7em; }
+    /* 横画面: 生き残りの輪は画面の真ん中に大きく出るので、文字は左、ボタンは右の列へ寄せ、真ん中の列（輪）を空けて暗くしない */
+    @media (min-aspect-ratio: 1/1) {
+      #result.fail { display: grid; grid-template-columns: 1fr 38vw 1fr; grid-template-rows: repeat(4, auto); align-content: center; justify-items: center; align-items: center; column-gap: 0; row-gap: 0.4em; padding: 0 2vw;
+        background: linear-gradient(to right, rgba(12, 8, 24, 0.84) 0%, rgba(12, 8, 24, 0.72) 24%, rgba(12, 8, 24, 0) 33%, rgba(12, 8, 24, 0) 67%, rgba(12, 8, 24, 0.72) 76%, rgba(12, 8, 24, 0.84) 100%); }
+      #result.fail .result-title { grid-area: 1 / 1; }
+      #result.fail .result-headline { grid-area: 2 / 1; font-size: clamp(24px, 4.2vw, 56px); white-space: normal; word-break: keep-all; line-height: 1.15; }
+      #result.fail .result-label { grid-area: 3 / 1; margin-top: 0.4em; }
+      #result.fail .result-amount { grid-area: 4 / 1; }
+      #result.fail .result-row { grid-column: 3; margin: 0; flex-direction: column; align-items: stretch; gap: 0.6em; }
+      #result.fail .result-row:not(.sub) { grid-row: 1 / 4; align-self: end; }
+      #result.fail .result-row.sub { grid-row: 4; align-self: start; margin-top: 0.6em; }
+    }
     .result-title { font-size: clamp(13px, 3.6vw, 18px); font-weight: 700; letter-spacing: 0.5em; padding-left: 0.5em; opacity: 0.6; }
     .result-headline { font-size: clamp(36px, 11vw, 72px); font-weight: 900; letter-spacing: 0.06em; margin-top: 0.15em; white-space: nowrap; }
     #result.clear .result-headline { color: #fff6dc; text-shadow: 0 0 28px rgba(255, 200, 110, 0.75), 0 0 6px rgba(255, 230, 170, 0.8); }

@@ -69,6 +69,20 @@ function hideRot(breath, k) {
     'thigh.L': [-0.35 * k, 0, 0.1 * k], 'shin.L': [0.6 * k, 0, 0], 'thigh.R': [-0.2 * k, 0, -0.08 * k], 'shin.R': [0.4 * k, 0, 0],
   };
 }
+// 骨の回転の一覧どうしが同じか（同じ骨・同じ値。物を作らずに比べる）
+export function sameRot(a, b) {
+  if (!a || !b) return false;
+  if (a === b) return true;
+  let n = 0;
+  for (const k in a) {
+    n++;
+    const x = a[k], y = b[k];
+    if (x === y) continue;
+    if (!x || !y || x[0] !== y[0] || x[1] !== y[1] || x[2] !== y[2]) return false;
+  }
+  for (const k in b) n--;
+  return n === 0;
+}
 function addRot(a, b) {
   const o = { ...a };
   for (const [k, v] of Object.entries(b)) o[k] = o[k] ? [o[k][0] + v[0], o[k][1] + v[1], o[k][2] + v[2]] : v;
@@ -410,18 +424,18 @@ void main() {
     return heroMesh;
   }
   const _m = new THREE.Matrix4(), _e = new THREE.Euler(), _one = new THREE.Vector3(1, 1, 1);
-  let lastRotKey = null;
+  let lastRot = null;
   function placeHero(s, x, z, yaw, rot, y = 0) {
     ensureHero();
     heroMesh.visible = true;
     toWorld(s, x, y, z, _a);
     heroMesh.setMatrixAt(0, _m.compose(_a, _q.setFromEuler(_e.set(0, s.yaw + yaw, 0)), _one));
     heroMesh.instanceMatrix.needsUpdate = true;
-    const key = JSON.stringify(rot);
-    if (key !== lastRotKey) {
+    // 骨の回転が前のフレームと同じなら頂点を組み直さない（毎フレーム文字列にして比べない）
+    if (!sameRot(rot, lastRot)) {
       skinPose(heroBody, rot, heroPos.array);
       heroPos.needsUpdate = true;
-      lastRotKey = key;
+      lastRot = rot;
     }
     return _a;
   }
@@ -675,6 +689,20 @@ void main() {
     get prepared() { return heroBuilder.done; },
     // TAP の直後（導入の 0 秒を決める前）に残りを一度に組み立てる（ライトの拍の最初のフレームで止まらない）
     finishPrepare() { heroBuilder.finish(); },
+    // 導入の材質と形を前もって GPU へ（TAP を待つ画面か TAP の直後。導入の最初のフレームで止まらない）:
+    // 導入の物をいったん全部見せ、主人公の導入の体と壁の影も作ってから fn(scene, camera, fx) を呼ぶ（main が描き先ごとに
+    // compile し、画面全体で一度描く）。終わったら見え方を元に戻す。主人公の導入の体を組み立て終えてから呼ぶ
+    warmup(fn) {
+      ensureHero();
+      ensureShadows();
+      const saved = [];
+      group.traverse((o) => { saved.push(o.visible); o.visible = true; });
+      setCam(site.bikes, BIKE_CAM.pos, BIKE_CAM.look, BIKE_CAM.fov);
+      try { fn(scene, cam, fx); } finally {
+        let i = 0;
+        group.traverse((o) => { o.visible = saved[i++]; });
+      }
+    },
     // 時刻 t（導入の秒）の絵を決める。beat: introTimeline の beatAt の戻り値
     update(t, b) {
       const dt = Math.min(0.1, Math.max(0, t - lastT));

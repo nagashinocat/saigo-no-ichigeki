@@ -56,6 +56,8 @@ export function segmentAt(list, path, s) {
 export function createTransitView(transit, style, tier, { markRange } = {}) {
   const group = new THREE.Group();
   group.name = 'transitView';
+  // sources() が返す物（毎フレーム使い回す）
+  const _src = { out: { train: null, highway: null }, trainAt: { x: 0, y: 0, z: 0, dist: 0, speed: 0 }, highwayAt: { x: 0, y: 0, z: 0, dist: 0 } };
   const { segments, pillars, paths, config: T } = transit;
   const rng = createRng(0x7a11 + segments.length);
   const dyn = createRng(0x7a12 + segments.length); // 動きの乱数（脱線・火花）。setState で巻き戻す
@@ -383,22 +385,27 @@ export function createTransitView(transit, style, tier, { markRange } = {}) {
       return events;
     },
     // 音のための近くの音源（今のカメラの位置から）: 走っている一番近い車両と、こわれていない高速の一番近い点
+    // 毎フレーム呼ぶので、返す物は使い回す（次に呼ぶと中身が変わる。読むだけにする）
     sources(cam) {
       let tr = null, td = Infinity;
       for (const c of train.cars) {
         if (c.state !== 'run') continue;
         const d = Math.hypot(c.x - cam.x, c.y - cam.y, c.z - cam.z);
-        if (d < td) { td = d; tr = { x: c.x, y: c.y, z: c.z, dist: d, speed: train.v }; }
+        if (d < td) { td = d; tr = c; }
       }
-      let hw = null, hd = Infinity;
+      if (tr) { const o = _src.trainAt; o.x = tr.x; o.y = tr.y; o.z = tr.z; o.dist = td; o.speed = train.v; }
+      let hw = false, hd = Infinity;
+      const h = _src.highwayAt;
       for (const s of xSegs) {
         if (broken.has(s.id)) continue;
         const dx = s.b[0] - s.a[0], dz = s.b[1] - s.a[1], L2 = dx * dx + dz * dz || 1;
         const u = Math.min(1, Math.max(0, ((cam.x - s.a[0]) * dx + (cam.z - s.a[1]) * dz) / L2));
         const x = s.a[0] + dx * u, z = s.a[1] + dz * u, d = Math.hypot(x - cam.x, E.deckY - cam.y, z - cam.z);
-        if (d < hd) { hd = d; hw = { x, y: E.deckY, z, dist: d }; }
+        if (d < hd) { hd = d; hw = true; h.x = x; h.y = E.deckY; h.z = z; h.dist = d; }
       }
-      return { train: tr, highway: hw };
+      _src.out.train = tr ? _src.trainAt : null;
+      _src.out.highway = hw ? h : null;
+      return _src.out;
     },
     // リプレイ: 放つ直前の時刻と電車の姿を写す・戻す（骨組みのつぶれ・隠しは cityView の snapshot が写す）
     state() { return { time, s: train.s, spark: { ...train.spark } }; },

@@ -54,3 +54,16 @@ test('不正な dt は無視する', () => {
   expect(g.sample(NaN)).toBe(null);
   expect(g.sample(Infinity)).toBe(null);
 });
+
+test('遊ぶ前（TAP の画面・導入・題字）は数えない: active が false の間の重いフレームは捨てられ、遊びが始まってから 2 秒たつまで down を返さない', () => {
+  const g = createFpsGovernor({ target: 30, holdSec: 2 });
+  for (let i = 0; i < 15 * 10; i++) expect(g.sample(1 / 15, false)).toBe(null); // 10 秒ぶんの重い導入
+  // 遊びが始まった: 軽いフレームなら一度も下げない
+  for (let i = 0; i < 60 * 5; i++) expect(g.sample(1 / 60)).toBe(null);
+  // 重い導入のあとに重い遊び: 遊びの 2 秒がたつまでは下げない
+  const h = createFpsGovernor({ target: 30, holdSec: 2 });
+  for (let i = 0; i < 15 * 10; i++) h.sample(1 / 15, false);
+  let first = null, t = 0;
+  for (let i = 0; i < 15 * 4 && first === null; i++) { t += 1 / 15; if (h.sample(1 / 15) === 'down') first = t; }
+  expect(first).toBeGreaterThanOrEqual(2 - 1e-6);
+});

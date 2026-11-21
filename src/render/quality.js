@@ -25,9 +25,14 @@ export function createFpsGovernor({ target, holdSec = 2 }) {
   let head = 0;
   let sum = 0;
   let below = 0;
+  const reset = () => { frames.length = 0; head = 0; sum = 0; below = 0; };
 
   return {
-    sample(dt) {
+    reset,
+    // active: false のフレーム（遊ぶ前の TAP の画面・導入・題字）は数えず、それまでの記録も捨てる。
+    // 段は下がるだけなので、遊ぶ前の重いフレームで下げると、遊びの間ずっと光のにじみ・ネオン・夕方の色を失う
+    sample(dt, active = true) {
+      if (!active) { if (frames.length || below) reset(); return null; }
       if (!Number.isFinite(dt) || dt <= 0) return null;
       frames.push(dt);
       sum += dt;

@@ -16,6 +16,7 @@ import { createHeroAura } from './render/heroAura.js';
 import { createEnemyView } from './render/enemyView.js';
 import { buildHeroBody, createHeroBodyBuilder } from './render/heroBody.js';
 import { createRiderBodyBuilder } from './render/riderBody.js';
+import { createBodyPrep } from './render/bodyPrep.js';
 import { createCinematic, leadFor } from './render/cinematic.js';
 import { FINALE } from './render/finaleTimeline.js';
 import { planFinale, planRetreat } from './render/finalePlan.js';
@@ -228,14 +229,17 @@ game.on('puff', (shot) => { explosionView.begin(shot); hand.release(shot); });
 const enemyView = createEnemyView(cityScene, tier, { sunDir: style.sunDir, heroBody });
 // 軍勢・主人公の陰影と推進の光を、暗めの夕方の光に合わせる（材質どうしで共有している uniform の値を書き換える）
 style.tintFigures(enemyView.mesh.material.uniforms);
-// 細かい主人公の体は、遅くとも最後の一発を放つとき（と時間切れのとき）までに差し替える（まだなら残りをここで一度に組み立てる）。
-// 演出・リプレイ・時間切れの結末で近くに映る主人公は、かならず画質の段の体になる
-function ensureHeroBody() {
-  if (heroBuilder && enemyView.heroBody !== heroBuilder.finish()) enemyView.setHeroBody(heroBuilder.body);
-}
-game.on('shot', ensureHeroBody);
-game.on('shot', () => { if (enemyView.focusMesh?.geometry !== riderBuilder.finish().geometry) enemyView.setRiderBody(riderBuilder.body); });
-game.on('over', ensureHeroBody);
+// 細かい主人公の体と肩越しの一人の体の組み立て（bodyPrep.js）: 最初のフレームのあとの手の空いた時間と TAP を待つ画面で少しずつ、
+// TAP の直後（画面は黒）に残りを一度に。導入の再生中は手の空いた時間の組み立てを止める（音の時計に合わせた絵が飛ばない）。
+// 導入のバイクの拍の近いバイクも、演出・リプレイ・時間切れの結末で近くに映る主人公も、かならず画質の段の体になる
+const bodyPrep = createBodyPrep({
+  heroBuilder, riderBuilder, enemyView,
+  idle: (fn) => (window.requestIdleCallback ? window.requestIdleCallback(fn, { timeout: 500 }) : setTimeout(fn, 16)),
+  paused: () => introFlow.state === 'intro',
+});
+// リトライ（短い題字から）のように TAP の画面を通らないときも、遅くとも最後の一発を放つとき（と時間切れのとき）までに
+game.on('shot', () => bodyPrep.finish());
+game.on('over', () => bodyPrep.finish());
 // 街を見回る軍勢の光の点と、光の壁に飲まれた瞬間の火花（fix1。遠くの地区の軍勢も読める）
 // S9: 撃退失敗の生き残りは、探す者も同じ点で目印にする（その分の余り）
 const patrolGlow = createPatrolGlow(CONFIG.enemy.patrol.count, tier, { extra: 256 });
@@ -251,7 +255,7 @@ cityScene.add(heroAura.group);
 const intro = createIntro({ views, scene: cityScene, cityView, enemyView, heroAura, patrolGlow, hand, city: game.city, tier, getTier: () => tier, seed });
 // 2D の層の画素比は画質の段の上限まで（録画の ?pr はそれを上書き）。文字の光のにじみは段ごとに軽く
 const overlay = createIntroOverlay(document.body, { dprMax: Number.isFinite(prParam) ? prParam : TIERS[tier].pixelRatioMax, glow: tier === 'high' ? 'full' : tier === 'mid' ? 'cheap' : 'none' });
-let introSfx = null, introT0 = null, introWait = 0, liftT = 0;
+let introSfx = null, introT0 = null, introWait = 0, liftT = 0, introWarmed = false;
 const INTRO_AUDIO_LEAD = 0.12; // 導入の 0 秒を、音の時計のこれだけ先に置く（最初の音が欠けない）
 // TAP START: 主人公がふわりと浮き上がって（最大 up m）、いつもの宙の高さへ戻る。足は地面より下へ沈まない（y ≥ 0）
 const HERO_LIFT = { up: 0.45, sec: 0.9 };
@@ -264,6 +268,9 @@ const introFlow = createIntroFlow({
     // 楽器の音がまだ全部できていなければ、ここで作り終えてから導入の 0 秒を決める（最初の拍を過去の時刻に予約しない）
     while (!prepareIntroMusic()) { /* 残りの楽器を作る */ }
     intro.finishPrepare(); // 主人公の導入の体も（ライトの拍で組み立てて止まらない）
+    // 画質の段の主人公の体と乗り手の体も（バイクの拍の近いバイクが最初のフレームから乗り手の体。導入の再生中に組み立てない）
+    bodyPrep.finish();
+    warmIntro(); // 導入の材質と形も（導入の最初のフレームで止まらない）
     if (out) { introT0 = out.ctx.currentTime + INTRO_AUDIO_LEAD; introSfx = scheduleIntroSfx(out.ctx, out.dest, introT0, introFlow.timeline); }
     else introClock = 'dt'; // 音を鳴らせない（Web Audio がない）: 絵はフレームの dt で
   },
@@ -286,8 +293,9 @@ else startHint.hidden = true;
 // 浮き上がり: 0 から上がって（前半）ゆっくり宙の高さ 0 へ降りる。どの時刻も ≥ 0
 const heroLiftAt = (u) => HERO_LIFT.up * Math.sin(Math.PI * Math.min(1, Math.max(0, u))) ** 2;
 let overlayT = -1;
-// 音の時計: 'audio'（音の時計に合わせる）か 'dt'（音が鳴らせないあいだ、フレームの dt で進めた）
-let introClock = 'audio';
+// 音の時計: 'audio'（音の時計に合わせる）か 'dt'（音が鳴らせないあいだ、フレームの dt で進めた）。
+// リトライの短い題字は TAP を通らず導入の 0 秒を音の時計に置かない（onBegin がない）ので、はじめから dt で進める（待たずに出る）
+let introClock = startMode === 'short' ? 'dt' : 'audio';
 // 導入の時刻 t の絵（3D の拍は画面全体、カード・白・題字は 2D が覆う）
 // alive: 題字が出きったあとも動き続けるもの（「の」の後ろのブラックホールの渦）の時刻。撮影は t をそのまま渡す
 let introAlive = 0;
@@ -299,10 +307,47 @@ function renderIntroAt(t, { force = false, alive = t } = {}) {
   if (force || t !== overlayT || b.name === 'title') { overlay.draw(tl, t, b, { speed: intro.speed, vanish: intro.vanish }, alive); overlayT = t; }
   return b;
 }
+// 導入の材質と形を前もって作る（一度だけ）: 画面へ直接描く段とレンダーターゲットへ描く段の両方で compile し、
+// 拍ごとに一度描いて、黒で塗り直す（TAP の画面は黒のまま）
+function warmIntro() {
+  if (introWarmed) return;
+  introWarmed = true;
+  const tgt = new THREE.WebGLRenderTarget(4, 4, { type: THREE.HalfFloatType });
+  const focus = enemyView.focusMesh, focusVis = focus?.visible;
+  if (focus) focus.visible = true; // 乗り手の体の形も送っておく
+  cityView.setCloseView(true); // 導入の 3D の拍は近いカメラ（壁の飾りを出す）
+  intro.warmup((scene, cam) => {
+    for (const t of [null, tgt]) { renderer.setRenderTarget(t); renderer.compile(scene, cam); }
+  });
+  if (focus) focus.visible = focusVis;
+  tgt.dispose();
+  // 3D の拍と手の拍の最初の絵を、本番と同じ道すじで一度ずつ描く（画面効果の大きさ・形と画像の GPU への送り・
+  // その拍で初めて出る物）。最後はバイクの拍（導入の最初のフレームと同じ姿）
+  const tl = introFlow.timeline;
+  for (const name of ['light', 'hide', 'hands', 'bikes']) {
+    const B = tl.beat(name);
+    if (!B) continue;
+    const t = B.start + 0.05;
+    intro.update(t, tl.beatAt(t));
+    intro.draw();
+  }
+  renderer.setRenderTarget(null);
+  renderer.setScissorTest(false);
+  renderer.setViewport(0, 0, views.size.w, views.size.h);
+  renderer.clear(true, true, true);
+  // GPU の仕事が終わるまで待つ（1 画素を読む）: 前もって描いた分が、導入の 0 秒を決めたあとのフレームへずれこまない
+  const gl = renderer.getContext();
+  gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(4));
+}
 function introTick(dt) {
-  // TAP を待つ間に、主人公の導入の体と、導入の音楽の楽器の音を少しずつ作っておく
-  // （主人公の体と楽器の音は並べて作る。TAP が先に来ても、楽器の音は TAP の直後、音の時計を決める前に作り終える）
-  if (introFlow.state === 'gate') { if (!intro.prepared) intro.prepareStep(); prepareIntroMusic(); return; }
+  // TAP を待つ間に、主人公の導入の体と、導入の音楽の楽器の音を少しずつ作っておく。両方できたら、画質の段の主人公の体と
+  // 乗り手の体を区切り 1 つずつ、最後に導入の材質を前もって作る
+  // （TAP が先に来ても、残りは TAP の直後、音の時計を決める前に作り終える）
+  if (introFlow.state === 'gate') {
+    if (!intro.prepared) intro.prepareStep();
+    if (prepareIntroMusic() && intro.prepared) { if (!bodyPrep.done) bodyPrep.step(); else warmIntro(); }
+    return;
+  }
   const out = audio.introOutput;
   const running = out?.ctx.state === 'running';
   if (introFlow.state === 'intro' && running && introClock === 'dt') {
@@ -419,6 +464,7 @@ function onTransit(events) {
 // 街の姿（ビルと props の置き場所・つぶれ）は、最後の一発より前には変わらない（小爆発は軍勢だけを払う）ので、
 // 起動したときに写しておく（放つ瞬間に写すと、両手が玉を握り込む間に止まる）。念のため、変わっていたら放つ瞬間に写し直す。
 let citySnap = cityView.snapshot();
+const _focusAt = [0, 0, 0]; // 手前の物理の焦点（毎フレーム使い回す。destruction は値を写して持つ）
 let replaySnap = null; // { shot, targets, enemies, buildings }
 let replaySim = null;
 function takeReplaySnapshot(shot) {
@@ -451,7 +497,7 @@ const replay = createReplay(views, {
   // 爆発を dt 秒進め、命中を描く側へ渡し、世界をそのカメラで進める
   onTick(dt, cam) {
     for (const e of replaySim.step(dt)) { showHit(e); hitFeed.replayHit(e); } // リプレイでも同じ崩落に音
-    stepWorld(dt, replaySim.blasts, replaySim.enemies, cam, cam.position.toArray(), 1 - replay.silhouette);
+    stepWorld(dt, replaySim.blasts, replaySim.enemies, cam, cam.position.toArray(_focusAt), 1 - replay.silhouette);
   },
 });
 replay.warmup(renderer, views.cityCamera);
@@ -562,7 +608,7 @@ function simulate(dt) {
   const cam = cityCam();
   const live = game.blasts;
   // 手前の物理は、演出の間は演出のカメラの近くの破片だけ（ふだんは null で全部プール）
-  stepWorld(wdt, live, game.enemies.list, cam, cinematic.active ? cam.position.toArray() : null);
+  stepWorld(wdt, live, game.enemies.list, cam, cinematic.active ? cam.position.toArray(_focusAt) : null);
   // 上空カメラは、ゲームが動いている間はいつも進める（演出の終わりにこの姿勢へなじむ）
   // 大きな一発の演出の間は、終わった一発の「保つ」時間を進めない（演出が全体の構図で止まったあと、2画面でも保ってから戻る）
   if (!cinematic.frozen) views.updateCamera(dt, explosionView.cameraInfo, live, cinematic.active);
@@ -582,7 +628,10 @@ function finishFrame(dt, live) {
 }
 
 // 音: 貯めの唸り、じわじわ期の脈動、弾けた瞬間の爆発、崩落
-const _camV = new THREE.Vector3();
+const _camV = new THREE.Vector3(), _camXZ = { x: 0, z: 0 };
+let _transitCam = null;
+// 音源の位置を今のカメラの空間へ（毎フレーム同じ関数と同じ物を使う。transitMix は値を読むだけ）
+const transitToCam = (p) => { _camV.set(p.x, p.y ?? 0, p.z).applyMatrix4(_transitCam.matrixWorldInverse); _camXZ.x = _camV.x; _camXZ.z = _camV.z; return _camXZ; };
 function updateAudio(live, dt = 0) {
   audio.chargeHum(game.charge.active ? game.power.level : 0);
   // 電車と高速（S8）: 今の画面のカメラから見た一番近い車両・高速の点の距離と左右。演出・リプレイ・結末の間は鳴らさない
@@ -590,7 +639,8 @@ function updateAudio(live, dt = 0) {
     const cam = cityCam();
     cam.updateMatrixWorld();
     const src = cityView.transit.sources(cam.position);
-    audio.transit(transitMix(src, (p) => { _camV.set(p.x, p.y ?? 0, p.z).applyMatrix4(cam.matrixWorldInverse); return { x: _camV.x, z: _camV.z }; }), dt);
+    _transitCam = cam;
+    audio.transit(transitMix(src, transitToCam), dt);
   } else audio.transit(null, dt);
   // BGM: 最初のタップで鳴らせるようになり、遊びが始まったら鳴らしはじめる（一度だけ）。その前のフレームで楽器の音を作っておく
   if (bgm.state === 'off') bgm.prepare();
@@ -653,26 +703,14 @@ function draw() {
 let last = performance.now();
 let paused = false;
 let firstFrameMs = null; // ページを開いてから最初のフレームを描き終えるまで（ms。計測用）
-// 最初のフレームのあと: 細かい主人公の体を、手の空いた時間に区切り 1 つずつ組み立てる
-const idle = (fn) => (window.requestIdleCallback ? window.requestIdleCallback(fn, { timeout: 500 }) : setTimeout(fn, 16));
-function onFirstFrame() {
-  // 主人公の細かい体 → 肩越しの一人の体の順に、区切りごとに手の空いた時間で
-  const tick = () => {
-    if (heroBuilder && !heroBuilder.done) {
-      if (heroBuilder.step()) enemyView.setHeroBody(heroBuilder.body);
-      idle(tick);
-      return;
-    }
-    if (riderBuilder.done) return;
-    if (riderBuilder.step()) enemyView.setRiderBody(riderBuilder.body); else idle(tick);
-  };
-  idle(tick);
-}
+// 最初のフレームのあと: 主人公の細かい体 → 肩越しの一人の体の順に、手の空いた時間に区切り 1 つずつ組み立てる（bodyPrep）
+function onFirstFrame() { bodyPrep.startIdle(); }
 function frame(now) {
   const dt = Math.min(Math.max((now - last) / 1000, 0), MAX_FRAME_DT);
   last = now;
   if (!paused) {
-    if (governor.sample(dt) === 'down') lowerTier();
+    // 画質の自動調整は遊んでいる間だけ（TAP の画面・導入・題字の重いフレームで段を下げない。段は下がるだけ）
+    if (governor.sample(dt, !introFlow.blocksInput) === 'down') lowerTier();
     if (introFlow.blocksInput) introTick(dt);
     simulate(dt);
     draw();
