@@ -170,3 +170,43 @@ test('M1: PC: 矢印キーか WASD で動く（斜めも長さ 1）', () => {
   expect(keyVector(new Set(['ArrowLeft', 'ArrowRight']))).toEqual({ x: 0, y: 0 });
   expect(keyVector(new Set())).toEqual({ x: 0, y: 0 });
 });
+
+// R1c（M1 の見直し Minor 3）: 使われなくなった press.js のテストを、本番の createControls へ移した（同じ決まりを守る）
+test('R1c: 溜めの指の up のあとに来る cancel（lostpointercapture）は何もしない。押していない指の up / cancel も何もしない', () => {
+  const { c, log } = rig();
+  c.up(9, 0, 0, 0); c.cancel(9);
+  expect(log).toEqual([]);
+  c.down(1, 10, 10, 0);
+  c.up(1, 10, 10, 0.5);
+  c.cancel(1);
+  expect(log).toEqual(['start', 'fire']);
+});
+
+test('R1c: cancel は放たずに打ち切る（一度だけ）。その後は押し直せる', () => {
+  const { c, log } = rig();
+  c.down(1, 10, 10, 0);
+  c.cancel(1);
+  c.cancel(1);
+  c.up(1, 10, 10, 0.3);
+  expect(log).toEqual(['start', 'cancel']);
+  c.down(1, 10, 10, 1);
+  c.up(1, 10, 10, 1.4);
+  expect(log).toEqual(['start', 'cancel', 'start', 'fire']);
+});
+
+test('R1c: reset は押している指を放たずに打ち切り（一度）、その後は別の id の指で押せる。押していなければ何も知らせない', () => {
+  const { c, log } = rig();
+  c.reset();
+  expect(log).toEqual([]);
+  c.down(1, 10, 10, 0);
+  c.down(2, 50, 50, 0.01);
+  c.reset();
+  expect(log).toEqual(['start', 'cancel']);
+  expect(c.charging).toBe(false);
+  expect(c.stick).toBe(null);
+  c.up(1, 10, 10, 0.5); c.up(2, 50, 50, 0.5); // 来なかったかもしれない up が遅れて来ても何もしない
+  expect(log).toEqual(['start', 'cancel']);
+  c.down(5, 10, 10, 1);
+  c.up(5, 10, 10, 1.5);
+  expect(log).toEqual(['start', 'cancel', 'start', 'fire']);
+});

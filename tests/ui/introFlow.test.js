@@ -1,27 +1,37 @@
 import { test, expect } from 'vitest';
 import { createIntroFlow, introMode, RETRY_KEY } from '../../src/ui/introFlow.js';
 import { createGame } from '../../src/game/game.js';
-import { createPressTracker } from '../../src/input/press.js';
+import { createControls } from '../../src/input/controls.js';
+import { bindPointerInput } from '../../src/input/bindDom.js';
+import { createIntroGesture } from '../../src/ui/introGesture.js';
+import { fakeDom } from '../input/fakeDom.js';
 import { CONFIG } from '../../src/config.js';
 
-// main.js と同じつなぎ方: 画面のタップは、導入が受け取る間は導入へ（長押しにならない）、ゲームが始まってからは長押しへ
-function rig(mode = 'full') {
+// main.js と同じつなぎ方（R1c: 本番の経路。M1 の見直し Minor 3）: 画面の指は bindPointerInput（input/bindDom.js）から
+// createControls へ。pointerdown は、導入が受け取る間は導入へ（intercept。長押しにならない）、ゲームが始まってからは溜めへ。
+// TAP の画面を離した操作（pointerup）で導入を始めるのは introGesture（main.js と同じく、配線のあとにつなぐ）
+// prep: TAP の直後の準備（onBegin）にかかる秒（その間は時計だけ進み、終わりに markReady。main.js と同じ）
+function rig(mode = 'full', { prep = 0 } = {}) {
   const game = createGame({ seed: 3 });
   const events = { shot: 0, fizzle: 0, start: 0, skip: 0, begin: 0 };
   game.on('shot', () => events.shot++);
   game.on('fizzle', () => events.fizzle++);
-  const press = createPressTracker({ onStart: () => game.pressStart(), onEnd: () => game.pressEnd(), onCancel: () => game.pressCancel() });
+  const dom = fakeDom();
+  const controls = createControls({ onChargeStart: () => game.pressStart(), onChargeEnd: () => game.pressEnd(), onChargeCancel: () => game.pressCancel(), onPuff: () => game.puff() });
   const flow = createIntroFlow({
     mode,
-    onBegin: () => events.begin++,
+    onBegin: () => { events.begin++; dom.advance(prep); flow.markReady(dom.perf.now()); },
     onSkip: () => events.skip++,
     onStart: () => { events.start++; game.begin(); },
   });
-  const down = (id = 1) => { if (flow.consumePointer()) return; press.down(id); };
-  // 離す: TAP の画面では、離した操作（pointerup。タッチで音を鳴らせるようになる操作）で導入が始まる
-  const up = (id = 1) => { flow.release(); press.up(id); };
-  const tick = (sec, dt = 1 / 60) => { for (let t = 0; t < sec - 1e-9; t += dt) { flow.update(dt); game.update(dt); } };
-  return { game, flow, press, events, down, up, tick };
+  const bind = bindPointerInput(dom.target, { controls, puff: () => {}, perf: dom.perf, intercept: (e, ms) => flow.consumePointer(ms) });
+  const gesture = createIntroGesture({ audio: { running: true, sessionPending: false, unlock() {} }, flow });
+  gesture.attach({ addEventListener() {} }, dom.target);
+  // stamp: その入力の timeStamp（省けば今。準備の間に押してあとから届く入力は、前の時刻）
+  const down = (id = 1, stamp) => dom.fire('pointerdown', { pointerId: id, timeStamp: stamp ?? dom.ms });
+  const up = (id = 1) => dom.fire('pointerup', { pointerId: id });
+  const tick = (sec, dt = 1 / 60) => { for (let t = 0; t < sec - 1e-9; t += dt) { dom.advance(dt); controls.update(bind.now()); flow.update(dt); game.update(dt); } };
+  return { game, flow, controls, events, down, up, tick, dom };
 }
 
 test('最初の読み込み: 小さな TAP の画面 → タップで導入が始まる（音を鳴らせるようになる操作）。押しただけでは始めず、離したときに始める', () => {
@@ -51,7 +61,7 @@ test('TAP START まではタイマーが止まり、ゲームは手つかず（�
 
 test('1〜7 拍のタップは題字の終わりへ飛ぶだけ: 貯めない・放たない・押したままにならない', () => {
   for (const at of [0.3, 2.5, 4, 6, 7.5, 9.5, 11.2, 11.5]) {
-    const { game, flow, press, events, down, up, tick } = rig();
+    const { game, flow, controls, events, down, up, tick } = rig();
     down(); up();
     tick(at);
     down(7); // 長く押したまま
@@ -69,7 +79,7 @@ test('1〜7 拍のタップは題字の終わりへ飛ぶだけ: 貯めない・
     down(8);
     expect(game.charge.active).toBe(true);
     up(8);
-    void press;
+    expect(controls.charging).toBe(false); // 押したままにならない
   }
 });
 
@@ -145,4 +155,40 @@ test('TAP の直後の準備の間にたまったタップ（timeStamp が ready
   f2.markReady(5000);
   f2.consumePointer();
   expect(f2.state).toBe('title');
+});
+
+// R1c（M1 の見直し Minor 3）: たまったタップの防ぎを、本番の経路（bindPointerInput → introFlow.consumePointer、一つの時計）で
+test('R1c: 本番の経路: TAP の直後の準備の間に押した（あとから届く）タップは導入を飛ばさず、溜めにもならない。準備のあとのタップは飛ばす', () => {
+  const { flow, events, controls, game, down, up, dom } = rig('full', { prep: 1.2 });
+  down(1); up(1); // TAP の画面: 離して導入へ（準備に 1.2 秒）
+  expect(flow.state).toBe('intro');
+  const readyMs = dom.ms;
+  down(2, readyMs - 400); // 準備の間に押した（timeStamp は準備の終わりより前）
+  up(2);
+  expect(flow.state).toBe('intro');
+  expect(events.skip).toBe(0);
+  expect(controls.charging).toBe(false);
+  expect(game.charge.active).toBe(false);
+  dom.advance(0.05);
+  down(3); up(3); // 準備のあと: 題字の終わりへ
+  expect(flow.state).toBe('title');
+  expect(events.skip).toBe(1);
+  expect(controls.charging).toBe(false);
+});
+
+test('R1c: 本番の経路: 古い WebKit（timeStamp がエポックの ms）でも、たまったタップの防ぎと TAP START・溜めは同じ', () => {
+  const { flow, events, controls, game, down, up, dom } = rig('full', { prep: 1.2 });
+  const epoch = (ms) => dom.perf.timeOrigin + ms;
+  down(1, epoch(dom.ms)); up(1);
+  down(2, epoch(dom.ms - 300)); up(2);
+  expect(events.skip).toBe(0);
+  dom.advance(0.1);
+  down(3, epoch(dom.ms)); up(3);
+  expect(flow.state).toBe('title');
+  expect(flow.start()).toBe(true);
+  down(4, epoch(dom.ms));
+  expect(controls.charging).toBe(true);
+  expect(game.charge.active).toBe(true);
+  up(4);
+  expect(controls.charging).toBe(false);
 });

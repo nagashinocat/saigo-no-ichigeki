@@ -54,6 +54,8 @@ export function createControls({ onChargeStart = () => {}, onChargeEnd = () => {
   }
   return {
     get charging() { return charge !== null; },
+    // 溜めの指の id（無ければ null。DOM の配線 bindDom.js が、溜めの指の離す操作を見分けるのに使う）
+    get chargeId() { return charge; },
     // 浮かぶスティック（無ければ null）
     get stick() { return stick; },
     // 動く向き（画面の x 右・y 下、長さ 0〜1）

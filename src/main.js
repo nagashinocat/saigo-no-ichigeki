@@ -25,6 +25,7 @@ import { createReplaySim, replayTargets } from './game/replaySim.js';
 import { createRng } from './rng.js';
 import { createControls, keyVector, MOVE_KEYS } from './input/controls.js';
 import { createJoystickView } from './ui/joystick.js';
+import { bindPointerInput, eventMs } from './input/bindDom.js';
 import { clearThreshold } from './game/charge.js';
 import { maxEnemyReachFrom } from './game/enemies.js';
 import { createHud } from './ui/hud.js';
@@ -138,25 +139,20 @@ const controls = createControls({
   onPuff(x, y) { tryPuff(x, y); },
 });
 const joystick = createJoystickView(document.getElementById('stick'));
-const nowSec = () => performance.now() / 1000;
-canvas.addEventListener('pointerdown', (e) => {
-  // PC の右クリック: 溜めている間は払う（左ボタンを押したままの右ボタンは pointerdown にならないので、mousedown でも受ける）
-  if (e.pointerType === 'mouse' && e.button === 2) { tryPuff(e.clientX, e.clientY); return; }
-  if (e.pointerType === 'mouse' && e.button !== 0) return;
-  // 導入（S6）: ゲームが始まるまで、画面のタップは導入のもの（飛ばす。TAP の画面は受け取るだけで、始めるのは離したとき）。長押しにはならない
-  if (introFlow.consumePointer(e.timeStamp)) return;
-  // リプレイの間は、画面のタップで飛ばして結果へ
-  if (replay.active && !replay.finished) { skipReplay(); return; }
-  // キャプチャに失敗しても（もう離した指・一部のブラウザ）押下は始める
-  try { canvas.setPointerCapture?.(e.pointerId); } catch { /* キャプチャなしで続ける */ }
-  controls.down(e.pointerId, e.clientX, e.clientY, e.timeStamp / 1000);
+// R1c（M1 の見直し Minor 1・2）: 指・マウスの配線は input/bindDom.js（入力の時刻も毎フレームの update も performance.now() の一つの時計。
+// 溜めの指の離す操作は、どのボタンでも放つ）。PC の右クリックは溜めている間の払う
+const pointerInput = bindPointerInput(canvas, {
+  controls,
+  puff: (x, y) => tryPuff(x, y),
+  intercept(e, ms) {
+    // 導入（S6）: ゲームが始まるまで、画面のタップは導入のもの（飛ばす。TAP の画面は受け取るだけで、始めるのは離したとき）。長押しにはならない
+    if (introFlow.consumePointer(ms)) return true;
+    // リプレイの間は、画面のタップで飛ばして結果へ
+    if (replay.active && !replay.finished) { skipReplay(); return true; }
+    return false;
+  },
 });
-canvas.addEventListener('mousedown', (e) => { if (e.button === 2 && e.buttons & 1) tryPuff(e.clientX, e.clientY); });
-canvas.addEventListener('pointermove', (e) => controls.move(e.pointerId, e.clientX, e.clientY, e.timeStamp / 1000));
-canvas.addEventListener('pointerup', (e) => { if (e.pointerType === 'mouse' && e.button === 2) return; controls.up(e.pointerId, e.clientX, e.clientY, e.timeStamp / 1000); });
-canvas.addEventListener('pointercancel', (e) => controls.cancel(e.pointerId));
-// キャプチャが外れたら押下を打ち切る（離した後に来る分は何もしない。放つのは pointerup だけ）
-canvas.addEventListener('lostpointercapture', (e) => controls.cancel(e.pointerId));
+const nowSec = pointerInput.now;
 // PC: 矢印キーか WASD で動く（溜めている間だけ。押しているキーの集まり）
 const keysDown = new Set();
 window.addEventListener('blur', () => { controls.reset(); keysDown.clear(); });
@@ -168,7 +164,7 @@ window.addEventListener('keydown', (e) => {
     if (['Space', 'Enter'].includes(e.code)) {
       e.preventDefault();
       // キーでも音を鳴らせるように（unlock してから、TAP START・導入を始める・飛ばす）
-      if (e.repeat) introGesture.unlock(); else introGesture.key(e.timeStamp);
+      if (e.repeat) introGesture.unlock(); else introGesture.key(eventMs(e));
     }
     return;
   }
