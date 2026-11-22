@@ -62,6 +62,8 @@ export function createGame({ seed, cfg = CONFIG }) {
   let releaseInfo = null; // R2: 放った瞬間の残り時間・すぐそばの数（ギリギリのボーナス）と払った回数（ランク）
   let outcome = null; // { clear, total, survivors: [{ id, x, z, patrol }] }（最後の一発のときだけ）
   let nextBlastId = 1;
+  let maxCombo = 0; // R3: 一度の払うで払った数のいちばん多い回（称号「一掃」）
+  let draggedIds = null; // R3: 放った瞬間に主人公を掴んでいた大物の id（称号「道連れ」）
 
   // 小爆発は軍勢だけを払う（対象のビル・props はなし）。最後の一発はまだ壊れていないものすべて。距離は爆心（shot.centre）から
   function startBlast(shot) {
@@ -87,7 +89,9 @@ export function createGame({ seed, cfg = CONFIG }) {
       if (!releaseIds.has(e.id) || e.state === 'dead') continue;
       survivors.push({ id: e.id, x: e.x, z: e.z, patrol: !!e.patrol, ...(e.kind ? { kind: e.kind } : {}) });
     }
-    outcome = { clear: survivors.length === 0, total: releaseIds.size, survivors, ...releaseInfo.extra, cityValue };
+    // R3: 掴んでいた大物がその一撃で倒れた（称号「道連れ」）
+    const dragged = draggedIds.size > 0 && enemies.list.some((e) => draggedIds.has(e.id) && e.state === 'dead');
+    outcome = { clear: survivors.length === 0, total: releaseIds.size, survivors, ...releaseInfo.extra, cityValue, dragged };
     // R2: ランク（rank.js）。R3: 点は街の値打ちで割る
     outcome.rank = rankFor({ clear: outcome.clear, timeLeft: releaseInfo.timeLeft, puffs: releaseInfo.puffsUsed, damage: releaseInfo.damage, cityValue });
   }
@@ -106,6 +110,7 @@ export function createGame({ seed, cfg = CONFIG }) {
       // R1: 一度の払うで k ≥ combo.from 体を払ったら「×k」を知らせる（数が増えるたびに。見せるだけで力は戻さない）
       if (b.shot.small && n > 0) {
         b.hits += n;
+        maxCombo = Math.max(maxCombo, b.hits);
         if (b.hits >= (cfg.puff.combo?.from ?? Infinity)) emit('combo', { k: b.hits, blastId: b.id });
       }
     }
@@ -165,6 +170,8 @@ export function createGame({ seed, cfg = CONFIG }) {
     setMove(x, z) { motion.setMove(x, z); },
     // 今、主人公を掴んでいる軍勢の数
     get grabbing() { return grabbing; },
+    // R3: 一度の払うで払った数のいちばん多い回（称号「一掃」）
+    get maxCombo() { return maxCombo; },
     // R1b: 掴まれて実際に吸われた力の合計（増えるだけ。HUD の「−N」と吸われる音が、フレームごとの差を使う）
     get drainedTotal() { return drainedTotal; },
     // 今、街に生きている軍勢の数（見回る者を含む。HUD の「街の軍勢 N」）
@@ -225,6 +232,7 @@ export function createGame({ seed, cfg = CONFIG }) {
       // 足りない: 放たない。手の画面とヒントで「まだ足りない」を知らせる
       if (!shot) { emit('fizzle', { power: power.value, need: cfg.power.minRelease }); return; }
       releaseIds = new Set(enemies.list.filter((e) => e.state !== 'dead').map((e) => e.id));
+      draggedIds = new Set(enemies.list.filter((e) => e.kind === 'boss' && (e.state === 'grab' || e.state === 'cling')).map((e) => e.id));
       // M1: 爆心は放った瞬間の主人公の位置。ここから主人公は止まる
       shot.centre = { x: hero.x, z: hero.z };
       releaseInfo = { timeLeft: timer.remaining, near: nearCount(enemies.list, shot.centre), puffsUsed: Number.isFinite(cfg.puff.uses) ? cfg.puff.uses - puffsLeft : 0 };
