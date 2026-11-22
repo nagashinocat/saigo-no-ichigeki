@@ -79,7 +79,7 @@ const TITLES_NEW = [{ id: 'closeCall', name: 'ギリギリの英雄', isNew: tru
 test('R3: 結果の中身に街の名前・たとえ・称号のバッジ（初めては NEW）・自己ベスト', () => {
   const c = resultContent(2.7e12, 'released', CLEAR_R, { city: CITY, titles: TITLES_NEW, best: { best: { rank: 'S', damage: 2.7e12 }, isNew: true } });
   expect(c.city).toBe('今日の街 11/21');
-  expect(c.compare).toBe('国家予算（一般会計 約112兆円）の約8.8日分');
+  expect(c.compare).toBe('国家予算（一般会計 約122兆円）の約8.1日分');
   expect(c.titles).toEqual(TITLES_NEW);
   expect(c.best).toEqual({ text: '自己ベスト S ¥2.7兆', isNew: true });
   const f = resultContent(2.1e12, 'released', { ...FAIL, bonus: BONUS, puffsUsed: 3, rank: 'C' }, { city: LINK_CITY, titles: [], best: { best: { rank: 'A', damage: 2.4e12 }, isNew: false } });
@@ -105,7 +105,7 @@ test('R3: 共有の文: 題字・ランク・勝ち負け・被害額とたと�
   const t = shareText(2.7e12, CLEAR_R, CITY.link, { reason: 'released', city: CITY, titles: TITLES_NEW });
   expect(t).toBe([
     '「最後の一撃」撃退成功！ ランク S',
-    '被害額 ¥2.7兆（国家予算（一般会計 約112兆円）の約8.8日分）',
+    '被害額 ¥2.7兆（国家予算（一般会計 約122兆円）の約8.1日分）',
     '称号「ギリギリの英雄」「払わぬ者」',
     '今日の街 11/21 に挑戦 → https://example.com/g/?city=20261121',
     '#最後の一撃',
@@ -113,7 +113,7 @@ test('R3: 共有の文: 題字・ランク・勝ち負け・被害額とたと�
   const f = shareText(2.1e12, { ...FAIL, rank: 'C' }, LINK_CITY.link, { reason: 'released', city: LINK_CITY, titles: [] });
   expect(f).toBe([
     '「最後の一撃」撃退失敗…残り 3 体。 ランク C',
-    '被害額 ¥2.1兆（国家予算（一般会計 約112兆円）の約6.8日分）',
+    '被害額 ¥2.1兆（国家予算（一般会計 約122兆円）の約6.3日分）',
     '11/20の街 に挑戦 → https://example.com/g/?city=20261120',
     '#最後の一撃',
   ].join('\n'));
@@ -150,7 +150,7 @@ test('R3 fix1: リンクが無いときの共有の文は街の名前だけ（UR
   const t = shareText(2.7e12, CLEAR_R, null, { reason: 'released', city: { ...CITY, link: null }, titles: [] });
   expect(t).toBe([
     '「最後の一撃」撃退成功！ ランク S',
-    '被害額 ¥2.7兆（国家予算（一般会計 約112兆円）の約8.8日分）',
+    '被害額 ¥2.7兆（国家予算（一般会計 約122兆円）の約8.1日分）',
     '今日の街 11/21 に挑戦',
     '#最後の一撃',
   ].join('\n'));

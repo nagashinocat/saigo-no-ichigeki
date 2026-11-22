@@ -1,19 +1,19 @@
 import { test, expect } from 'vitest';
 import { budgetLine, NATIONAL_BUDGET } from '../../src/ui/format.js';
 
-// R3（spec §15 被害額のたとえ）: 「国家予算（一般会計 約112兆円）の約◯日分」。数が読みやすいよう 日 / 時間 / 年 を選ぶ
+// R3（spec §15 被害額のたとえ）: 「国家予算（一般会計 約122兆円）の約◯日分」。数が読みやすいよう 日 / 時間 / 年 を選ぶ
 const T = 1e12;
-const P = '国家予算（一般会計 約112兆円）の';
+const P = '国家予算（一般会計 約122兆円）の';
 
-test('R3: 基準の値は一つの定数（約 112 兆円）', () => {
-  expect(NATIONAL_BUDGET.yen).toBeGreaterThan(112 * T);
-  expect(NATIONAL_BUDGET.yen).toBeLessThan(113 * T);
-  expect(NATIONAL_BUDGET.label).toBe('一般会計 約112兆円');
+test('R3: 基準の値は一つの定数（約 122 兆円）', () => {
+  expect(NATIONAL_BUDGET.yen).toBeGreaterThan(122 * T);
+  expect(NATIONAL_BUDGET.yen).toBeLessThan(123 * T);
+  expect(NATIONAL_BUDGET.label).toBe('一般会計 約122兆円');
 });
 
 test('R3: 日（1 日分〜1 年分未満）。10 以上は整数、10 未満は小数 1 桁', () => {
   const day = NATIONAL_BUDGET.yen / 365;
-  expect(budgetLine(2.7 * T)).toBe(`${P}約8.8日分`);
+  expect(budgetLine(2.7 * T)).toBe(`${P}約8.1日分`);
   expect(budgetLine(day * 3)).toBe(`${P}約3日分`);
   expect(budgetLine(day * 42.4)).toBe(`${P}約42日分`);
   expect(budgetLine(day * 1)).toBe(`${P}約1日分`);
