@@ -201,3 +201,30 @@ test('R3 fix1: Web Share もクリップボードも使えないとき、文を�
   expect(closed).toBe(1);
   expect(find(box, (e) => e.textContent && /手で/.test(e.textContent))).toBeTruthy();
 });
+
+// fix2（再点検 Minor 2）: 携帯で手で写す箱を長押しで選べること。#result の -webkit-touch-callout: none・user-select: none を箱の中だけ戻し、
+// window の contextmenu の止め（長押しのメニュー）を箱の中では効かせない
+import { readFileSync } from 'node:fs';
+import { allowsNativeMenu } from '../../src/ui/result.js';
+test('fix2: 手で写す箱は長押しで選べる（#result の止めより強い規則で touch-callout・user-select を戻す）', () => {
+  const html = readFileSync(new URL('../../index.html', import.meta.url), 'utf8');
+  const m = html.match(/#result \.result-copybox, #result \.result-copybox \* \{([^}]*)\}/);
+  expect(m, '#result .result-copybox の規則').toBeTruthy();
+  const body = m[1];
+  expect(body).toMatch(/-webkit-touch-callout:\s*default/);
+  expect(body).toMatch(/(^|[;\s])user-select:\s*text/);
+  expect(body).toMatch(/-webkit-user-select:\s*text/);
+  expect(body).toMatch(/touch-action:\s*(auto|manipulation)/);
+  // 止めの規則（#result）はそのまま
+  expect(html).toMatch(/#game, #hud, #start, #result \{[^}]*-webkit-touch-callout: none/);
+});
+test('fix2: contextmenu の止めは、手で写す箱の中では効かせない', () => {
+  const inBox = { closest: (sel) => (sel === '.result-copybox' ? {} : null) };
+  const outside = { closest: () => null };
+  expect(allowsNativeMenu(inBox)).toBe(true);
+  expect(allowsNativeMenu(outside)).toBe(false);
+  expect(allowsNativeMenu(null)).toBe(false);
+  expect(allowsNativeMenu({})).toBe(false); // closest の無いもの（window・テキストの節）
+  const main = readFileSync(new URL('../../src/main.js', import.meta.url), 'utf8');
+  expect(main).toMatch(/addEventListener\('contextmenu', \(e\) => \{ if \(!allowsNativeMenu\(e\.target\)\) e\.preventDefault\(\); \}\)/);
+});

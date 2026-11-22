@@ -2,7 +2,8 @@
 // R2（spec §15 評価のランク）: 最善の操作（src/game/bot.js の steerBot・actBot、払うきっかけは balance-sim の最善「掴まれ 2 人で払う・隠れる」）と
 // 放つ判断（releaseBot: 「今なら全滅できる」の間は残り waitTo 秒まで待つ・掴まれたらすぐ放つ）で seed 1〜SEEDS（既定 60）を遊び、
 // 放ったときの残り時間・払った回数・すぐそばの数・倍率・被害額の分布と、src/game/rank.js のランクの分かれ方を出す。
-// WAIT='8,4,2,0.5' で waitTo の候補を比べる（いちばん被害額の平均が高いものを「最善の放ち方」とし、その分布でランクの線を決めた）
+// WAIT='8,4,2,0.5' で waitTo の候補を比べる（いちばん被害額の平均が高いものを「最善の放ち方」とした。R2 ではその分布でランクの線を決めたが、
+// R3 fix1 で線はやめ、今は条件での分かれ方を見るだけ）
 // R3（今日の街）: 既定は今日の街の DAYS 日分（FROM=YYYYMMDD から、既定 20261101 から 120 日）の種（daily.js の citySeed）。
 // CITIES=ints で前の seed 1〜SEEDS。R3 fix1: ランクは条件（rank.js）なので、条件での S〜C の分かれ方と BLOCK 回ごとの数を出す
 import path from 'node:path';

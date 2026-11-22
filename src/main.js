@@ -38,7 +38,7 @@ import { reachNow } from './game/reach.js';
 import { createReachRing } from './render/reachRing.js';
 import { createHud, OUT_TEXT } from './ui/hud.js';
 import { createTimeTicks } from './ui/timeLeft.js';
-import { createResult } from './ui/result.js';
+import { createResult, allowsNativeMenu } from './ui/result.js';
 import { createAudio, finaleBoomOpts } from './audio/audio.js';
 import { createHitFeed } from './audio/hitFeed.js';
 import { screenPan } from './audio/cues.js';
@@ -223,7 +223,8 @@ window.addEventListener('keydown', (e) => {
   e.preventDefault();
   if (!e.repeat) tryPuff();
 });
-window.addEventListener('contextmenu', (e) => e.preventDefault());
+// fix2: 手で写す箱の中は長押しのメニューを止めない（携帯で選んでコピーできるように）
+window.addEventListener('contextmenu', (e) => { if (!allowsNativeMenu(e.target)) e.preventDefault(); });
 document.addEventListener('visibilitychange', () => {
   // 隠れる前に押下を打ち切る（放たず、貯めた力は残る。戻ってきたとき指が引っかかったままにならない）
   if (document.hidden) { controls.reset(); keysDown.clear(); }

@@ -14,7 +14,7 @@ export const NATIONAL_BUDGET = { yen: 122.3092e12, label: '一般会計 約122�
 // 小数 1 桁（10 以上は整数）。末尾の .0 は落とす
 const readable = (x) => (x >= 10 ? String(Math.round(x)) : trim(x));
 
-// 「国家予算（一般会計 約112兆円）の約◯日分」。数が読みやすいよう、1 年分以上は年、1 日分以上は日、それ未満は時間。0 や無い金額は null
+// 「国家予算（一般会計 約122兆円）の約◯日分」（文言は NATIONAL_BUDGET.label から）。数が読みやすいよう、1 年分以上は年、1 日分以上は日、それ未満は時間。0 や無い金額は null
 export function budgetLine(yen, B = NATIONAL_BUDGET) {
   if (!(yen > 0)) return null;
   const head = `国家予算（${B.label}）の`;

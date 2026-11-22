@@ -106,6 +106,12 @@ export async function shareFlow(text, { share = shareOrCopy, note, fallback }) {
   return r;
 }
 
+// fix2: 長押しのメニュー（contextmenu）を止めないところ: 手で写す箱の中（携帯で長押しして選び、コピーする）
+export function allowsNativeMenu(target) {
+  const node = typeof target?.closest === 'function' ? target : target?.parentElement;
+  return typeof node?.closest === 'function' && !!node.closest('.result-copybox');
+}
+
 // 手で写す箱: 一言・読み取り専用で全部を選んだ textarea・閉じるボタン
 export function buildCopyFallback(doc, text, onClose) {
   const box = doc.createElement('div');
