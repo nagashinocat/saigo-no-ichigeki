@@ -78,9 +78,10 @@ export const CONFIG = {
     // 種類の乱数は探す者の乱数とは別（game.js の typeRng）。探す者の乱数の並びが前と同じなのは種類のある者が初めて湧くまで
     // （重い者は 20 秒から。速さが違い、道を選ぶ時刻がずれる。大物は 49 秒）
     kinds: {
-      heavy: { share: 0.15, after: 20, hp: 2, speedMul: 0.8, drainMul: 1 },
+      // M2（主人公 28 m/s）: 重い者 0.8 → 0.92、大物 0.9 → 0.95（突っ込む 29.4 / 30.4 m/s。主人公より遅いと、見つけても追いつけない）
+      heavy: { share: 0.15, after: 20, hp: 2, speedMul: 0.92, drainMul: 1 },
       drainer: { share: 0.15, after: 30, hp: 1, speedMul: 1, drainMul: 2.5 },
-      boss: { at: 49, hp: 3, speedMul: 0.9, drainMul: 4 },
+      boss: { at: 49, hp: 3, speedMul: 0.95, drainMul: 4 },
     },
     // 払うが当たって倒れなかった者（重い者・大物）のよろめき: sec 秒、外へ push m/s（なめらかに 0 へ）と、回る向きへ spin m/s。
     // 止まって見えない（どの瞬間も spin 以上の速さ）。そのあと突っ込み直す
@@ -93,7 +94,8 @@ export const CONFIG = {
   // 体は進む向きへ turnRate rad/s で向き直り、速さに応じて leanMax rad まで前へ傾く
   // R1d（持ち主 13:36「キャラクターの移動速度をかなり上げよう」）: 11 → 22 m/s（軍勢の突っ込む 32 m/s より遅いまま）。加速 7 → 12（約 0.25 秒で全速の 9 割強）、
   // 向き直り 9 → 16 rad/s、前への傾き 0.3 → 0.42 rad。一歩が radius より長いときは刻んで動かす（薄い足元を飛び越えない）
-  hero: { speed: 22, accelRate: 12, radius: 1.2, edgePad: 30, grabSlow: 0.2, minSpeedFrac: 0.4, turnRate: 16, leanMax: 0.42 },
+  // M2（持ち主 15:20「足の速さはバイクよりほんのちょっと遅いくらいじゃないとすぐ捕まるね」）: 22 → 28 m/s（探す 30・突っ込む 32 より少しだけ遅い）
+  hero: { speed: 28, accelRate: 12, radius: 1.2, edgePad: 30, grabSlow: 0.2, minSpeedFrac: 0.4, turnRate: 16, leanMax: 0.42 },
   // M1 の操作（持ち主 09:15、制作側の判断）: 溜めているあいだの 2 本目の指は、longPressSec 秒以上で浮かぶジョイスティック（押した所に出て、
   // 指を離すと消える。stickRadiusPx の輪いっぱいで全速、deadPx より内は止まる）、それより短く tapMovePx px 未満の動きで離せば払う
   controls: { longPressSec: 0.18, tapMovePx: 10, stickRadiusPx: 56, deadPx: 6 },

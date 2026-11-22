@@ -97,7 +97,8 @@ export function fitCityCamera(cam, aspect) {
 // M1（spec §16）: 上空カメラは主人公（follow の { x, z }）を真ん中に保ったまま、臨界減衰のばね（rate 1/秒）でなめらかについていく。
 // 姿勢と距離感（fitCityCamera が原点のまわりで解いた basePos・baseQuat）はそのまま、ついていく点の分だけ平行に動く
 // R1d（持ち主 13:36、主人公 22 m/s）: rate 6 → 24。一定の速さ v で走り続けたときの遅れは 2v / rate（22 m/s で約 1.8 m）
-export const CITY_FOLLOW = { rate: 24 };
+// M2（持ち主 15:20、主人公 28 m/s）: rate 24 → 30（28 m/s で遅れ約 1.9 m）
+export const CITY_FOLLOW = { rate: 30 };
 
 const WHITE = new THREE.Color(1, 1, 1);
 const _clear = new THREE.Color();

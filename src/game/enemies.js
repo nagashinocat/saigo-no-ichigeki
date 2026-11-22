@@ -279,6 +279,16 @@ export function createEnemies(rng, cfg = CONFIG, { buildings = [], patrolRng = n
     place(e);
   }
 
+  // M2: 道を外れていた者（chase・よろめき）が探す者へ戻るとき、近い交差点と、今の向きに近い道の向きを選び直す（そのあとは道へ寄せながら進む）
+  function resumeRoad(e) {
+    const c = Math.cos(e.heading ?? 0), s = Math.sin(e.heading ?? 0);
+    if (Math.abs(c) >= Math.abs(s)) { e.di = Math.sign(c) || 1; e.dj = 0; } else { e.di = 0; e.dj = Math.sign(s) || 1; }
+    const u = e.x / P - 0.5, v = e.z / P - 0.5;
+    e.ni = e.di > 0 ? Math.floor(u) + 1 : e.di < 0 ? Math.ceil(u) - 1 : Math.round(u);
+    e.nj = e.dj > 0 ? Math.floor(v) + 1 : e.dj < 0 ? Math.ceil(v) - 1 : Math.round(v);
+    e.lane ??= [0, 0];
+  }
+
   // 向きを want へ、毎秒 rate rad までで回す
   function steer(e, want, rate, dt) {
     const d = wrap(want - e.heading);
@@ -425,7 +435,13 @@ export function createEnemies(rng, cfg = CONFIG, { buildings = [], patrolRng = n
     e.heading = wrap(a + Math.atan2(S.spin, out));
     e.turn = S.spin / r;
     place(e);
-    if (u >= 1) { e.state = 'chase'; e.alert = true; e.spotT = 0; delete e.layer; e.unpile = null; }
+    // M2（R1d の持ち越し「よろめきからすぐ突っ込み直す」）: 突っ込み直す速さは探す速さから（よろめきの遅い速さから上げ直さない）。
+    // 主人公が物陰に隠れていれば（hidden）、見失って最後に見えた所を探す
+    if (u >= 1) {
+      delete e.layer; e.unpile = null; e.alert = true;
+      if (H.hidden) { e.state = 'search'; e.heard = { ...(H.lastSeen ?? { x: H.x, z: H.z }), t: time }; e.hops = AL?.hops ?? 0; e.relayAt = null; e.searchTime = 0; resumeRoad(e); }
+      else { e.state = 'chase'; e.spotT = 0; e.speed = Math.max(e.speed, E.searchSpeed * speedMulOf(e, cfg)); }
+    }
   }
 
   // 群がった者を群がった順に（swarmSeq。試しで直に置いた者は前）並べ、段を 0, 1, … と振り直す（数を返す）。

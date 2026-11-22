@@ -3,7 +3,8 @@ import { createGame } from '../../src/game/game.js';
 import { swarmRing } from '../../src/game/enemies.js';
 import { CONFIG } from '../../src/config.js';
 
-// R1d（持ち主 13:36「見つかってから敵キャラがどっかいく」）: 見つけた軍勢は、主人公が 22 m/s で通りを渡り角を曲がっても、
+// R1d（持ち主 13:36「見つかってから敵キャラがどっかいく」）: 見つけた軍勢は、主人公が 28 m/s（M2）で通りを渡り角を曲がっても、
+// 主人公が物陰に隠れない限り（M2、持ち主 15:20: 隠れるでだけ見失う。tests/game/hide.test.js）、
 // 見失わずに今の主人公を追い続ける。見つけた（chase・approach・grab・cling・stagger に一度でも入った）者を全部記録し、
 //  - 二度と search に戻らない
 //  - 主人公からの距離が増え続けるのは短い間だけ（払うのよろめき stagger.sec と、角の一瞬を除く）
@@ -34,7 +35,7 @@ const UNLIMITED = { ...CONFIG, puff: { ...CONFIG.puff, uses: Infinity } };
 function run(seed, sec = 45) {
   const g = createGame({ seed, cfg: UNLIMITED });
   g.begin(); g.pressStart();
-  expect(CONFIG.hero.speed).toBe(22);
+  expect(CONFIG.hero.speed).toBe(28); // M2（持ち主 15:20）
   const rec = new Map(); // id → { back, growSec, maxGrowSec, staggerEnd }
   let backToSearch = 0, maxGrowSec = 0, ringOut = 0, staggerRecovered = 0, staggerBad = 0, meanBumps = 0, maxMeanBump = 0, moved = 0;
   let prevMean = null, prevIds = null;
@@ -47,7 +48,7 @@ function run(seed, sec = 45) {
     if (g.grabbing >= 2) g.puff();
     g.update(DT);
     const H = g.hero;
-    if (Math.hypot(H.x - hx, H.z - hz) > 0.3 * 22 * DT) moved++;
+    if (Math.hypot(H.x - hx, H.z - hz) > 0.3 * CONFIG.hero.speed * DT) moved++;
     const ids = [];
     let sum = 0;
     for (const e of g.enemies.list) {
@@ -97,7 +98,7 @@ function run(seed, sec = 45) {
 }
 
 for (const seed of [1, 2, 3]) {
-  test(`R1d seed ${seed}: 22 m/s で通りを渡り角を曲がる主人公を、見つけた軍勢は見失わない（search に戻らず、距離は増え続けず、掴む者は今の主人公の輪の内）`, () => {
+  test(`R1d / M2 seed ${seed}: 28 m/s で通りを渡り角を曲がる主人公を、見つけた軍勢は見失わない（search に戻らず、距離は増え続けず、掴む者は今の主人公の輪の内）`, () => {
     const r = run(seed);
     expect(r.moved).toBeGreaterThan(300); // 主人公はずっと動いていた（10 秒以上）
     expect(Math.hypot(r.hero.x, r.hero.z)).toBeGreaterThan(30);
@@ -108,9 +109,9 @@ for (const seed of [1, 2, 3]) {
     expect(r.staggerBad).toBe(0);
   if (seed === 1) expect(r.staggerRecovered).toBeGreaterThan(0); // よろめいた者がいた
     // 平均は増えない。例外は、よろめきから立ち直った者が横向きから主人公の方へ向き直り、加速し直す数フレームの小さなふくらみだけ
-    // （主人公の一歩 22 m/s × 1/30 秒 ≈ 0.73 m より小さい）
+    // （主人公の一歩 28 m/s × 1/30 秒 ≈ 0.93 m より小さい）
     if (process.env.R1D_LOG) console.log(seed, r);
-    expect(r.maxMeanBump).toBeLessThan(22 * DT);
+    expect(r.maxMeanBump).toBeLessThan(CONFIG.hero.speed * DT);
     expect(r.meanBumps).toBeLessThanOrEqual(10);
   });
 }

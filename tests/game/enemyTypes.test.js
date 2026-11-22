@@ -44,8 +44,9 @@ for (const n of [2, 3, 5, 9]) {
   });
 }
 
-test('重い者: 1 回目の払うでは倒れず、後ろへよろめいて（離れて）掴む枠から外れ、2 回目の払うで倒れる。遅い（×0.8）', () => {
-  expect(K.heavy).toMatchObject({ hp: 2, speedMul: 0.8 });
+test('重い者: 1 回目の払うでは倒れず、後ろへよろめいて（離れて）掴む枠から外れ、2 回目の払うで倒れる。遅い（×0.92。M2: 主人公 28 m/s より速く突っ込める）', () => {
+  expect(K.heavy).toMatchObject({ hp: 2, speedMul: 0.92 });
+  expect(CONFIG.enemy.speed * K.heavy.speedMul).toBeGreaterThan(CONFIG.hero.speed);
   const g = createGame({ seed: 1, cfg: quiet });
   g.pressStart();
   g.power.add(50);
@@ -79,16 +80,16 @@ test('重い者: 最後の一発（大きな一発）は 1 回で倒す（大物
   expect(g.enemies.list.filter((e) => e.state === 'dead')).toHaveLength(2);
 });
 
-test('重い者の速さ: 探す・突っ込む・回る速さはふつうの者の 0.8 倍', () => {
+test('重い者の速さ: 探す・突っ込む・回る速さはふつうの者の speedMul（0.92）倍', () => {
   const en = createEnemies(createRng(3), { ...CONFIG, enemy: { ...E, spawnPerSec: 0 } });
   const a = { id: 1, angle: 0, dist: 20, state: 'chase', speed: 0 };
   const b = { id: 2, kind: 'heavy', angle: Math.PI, dist: 20, state: 'chase', speed: 0 };
   en.list.push(a, b);
   for (let i = 0; i < 18; i++) en.update(DT); // 全速（突っ込む速さ）に上がりきった
-  expect(b.speed / a.speed).toBeCloseTo(0.8, 2);
+  expect(b.speed / a.speed).toBeCloseTo(K.heavy.speedMul, 2);
   for (let i = 0; i < 60; i++) en.update(DT);
   expect(a.state).toBe('grab'); expect(b.state).toBe('grab');
-  expect(b.speed / a.speed).toBeCloseTo(0.8, 2);
+  expect(b.speed / a.speed).toBeCloseTo(K.heavy.speedMul, 2);
 });
 
 test('吸う者: 掴んでいる間、貯めた力をふつうの者の 2.5 倍の速さで吸う。大物は 4 倍', () => {

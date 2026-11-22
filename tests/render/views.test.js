@@ -1,5 +1,6 @@
 import { test, expect } from 'vitest';
 import { layoutViews } from '../../src/render/views.js';
+import { CONFIG } from '../../src/config.js';
 
 const SIZES = [[390, 844], [1280, 720], [375, 667], [768, 1024], [1024, 768], [1920, 1080], [333, 333], [801, 451], [1, 1], [2, 3]];
 
@@ -95,9 +96,10 @@ test('M1: 上空カメラは主人公についていく: なめらかに（一�
   const target = { x: 60, z: -40 };
   views.follow(target);
   views.updateCamera(1 / 60);
-  // 一歩では跳ばない（主人公より少しだけ遅れて動き出す）
+  // 一歩では跳ばない（主人公より少しだけ遅れて動き出す）。M2: 28 m/s で遅れ 2 m 以下にするばね（rate 30）では、72 m 先へ跳んだ
+  // 主人公への最初の一歩は約 6.4 m（前の 5 m の目安は rate 24 のときのもの）。跳んだ距離の 1 割より小さい
   expect(cam.position.x).toBeGreaterThan(0);
-  expect(cam.position.x).toBeLessThan(5);
+  expect(cam.position.x).toBeLessThan(0.1 * Math.hypot(60, 40));
   for (let i = 0; i < 240; i++) views.updateCamera(1 / 60);
   const at = new THREE.Vector3(target.x, 1, target.z).project(cam);
   expect(at.x).toBeCloseTo(at0.x, 3);
@@ -107,12 +109,12 @@ test('M1: 上空カメラは主人公についていく: なめらかに（一�
   // 全体の見える構図（widePosition）も主人公のまわり
   const w = views.widePosition(300, 390 / 844, new THREE.Vector3());
   expect(w.x).toBeCloseTo(cam.position.x, 3);
-  // R1d（持ち主 13:36）: 速く走っても（22 m/s）主人公は画面の真ん中の近くから外れない。一定の速さで走り続けたときの遅れは 2 m 以下
+  // R1d（持ち主 13:36）/ M2（15:20）: 速く走っても（CONFIG.hero.speed = 28 m/s）主人公は画面の真ん中の近くから外れない。一定の速さで走り続けたときの遅れは 2 m 以下
   const moving = { x: 60, z: -40 };
   views.follow(moving);
   let worst = 0, lag = 0;
   for (let i = 0; i < 180; i++) {
-    moving.x += 22 / 60;
+    moving.x += CONFIG.hero.speed / 60;
     views.updateCamera(1 / 60);
     const p = new THREE.Vector3(moving.x, 1, moving.z).project(cam);
     worst = Math.max(worst, Math.abs(p.x - at0.x));

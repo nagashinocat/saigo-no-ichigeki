@@ -15,8 +15,11 @@ const H = CONFIG.hero;
 const inside = (g, x, z) => g.city.buildings.some((b) => Math.abs(x - b.x) < b.w / 2 + H.radius - 1e-6 && Math.abs(z - b.z) < b.d / 2 + H.radius - 1e-6);
 
 // R1d（持ち主 13:36「キャラクターの移動速度をかなり上げよう」）: 約 2 倍の 22 m/s。軍勢の突っ込む速さ（32 m/s）よりは遅いまま
-test('M1 / R1d: 速さの値は config にある（22 m/s、軍勢の突っ込む速さより遅い。掴まれる 1 人ごとに 20%、下限 40%）。操作の値も（長押し 0.18 秒・タップは 10 px 未満）', () => {
-  expect(H.speed).toBe(22);
+// M2（持ち主 15:20「バイクよりほんのちょっと遅いくらい」）: 28 m/s（探す 30・突っ込む 32 より少しだけ遅い）
+test('M1 / R1d / M2: 速さの値は config にある（28 m/s、軍勢の探す・突っ込む速さより少しだけ遅い。掴まれる 1 人ごとに 20%、下限 40%）。操作の値も（長押し 0.18 秒・タップは 10 px 未満）', () => {
+  expect(H.speed).toBe(28);
+  expect(H.speed).toBeLessThan(CONFIG.enemy.searchSpeed);
+  expect(H.speed).toBeGreaterThan(CONFIG.enemy.searchSpeed * 0.85);
   expect(H.speed).toBeLessThan(CONFIG.enemy.speed); // 軍勢の突っ込む速さより遅い
   expect(H.speed).toBeLessThan(CONFIG.enemy.searchSpeed); // 探す速さよりも遅い
   expect(H.grabSlow).toBe(0.2);
@@ -72,7 +75,7 @@ test('M1: ビルの足元は通り抜けず、壁に沿って滑る。斜めに�
 });
 
 // R1d: 速くなっても、一歩が主人公の半径より長いときは刻んで動かす（薄いビルの足元を一歩で飛び越えない）
-test('R1d: 一歩が長くても（大きな dt・22 m/s）薄いビルの足元を通り抜けない。一歩を主人公の半径以下に刻む', async () => {
+test('R1d: 一歩が長くても（大きな dt・28 m/s）薄いビルの足元を通り抜けない。一歩を主人公の半径以下に刻む', async () => {
   const { createHeroMotion } = await import('../../src/game/hero.js');
   // 主人公の前（+x の 3 m 先）に、厚さ 0.2 m の薄い壁（足元は半径 1.2 m ずつ広がって 2.6 m）
   const city = { radius: 680, buildings: [{ x: 3, z: 0, w: 0.2, d: 400, h: 10 }] };
