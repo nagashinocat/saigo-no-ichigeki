@@ -454,13 +454,15 @@ void main() {
   // （ゆっくり寄る・傾き・カットはそのまま）。R1c（持ち主 11:03）: バイクが頭上を抜ける瞬間だけ、introShake の短い小さな揺れ
   // （introShake はバイクの拍の外では 0。どの拍もここを通る）
   let shakeT = -1;
+  // R1f: 動きを減らす設定（prefers-reduced-motion）なら揺らさない
+  const reduceMotion = (() => { try { return !!globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches; } catch { return false; } })();
   function setCam(s, pos, look, fov, roll = 0) {
     toWorld(s, pos[0], pos[1], pos[2], cam.position);
     toWorld(s, look[0], look[1], look[2], _b);
     cam.up.set(Math.sin(roll), Math.cos(roll), 0).applyAxisAngle(new THREE.Vector3(0, 1, 0), s.yaw);
     cam.lookAt(_b);
-    const j = introShake(shakeT);
-    if (j.x || j.y || j.roll) { cam.translateX(j.x); cam.translateY(j.y); cam.rotateZ(j.roll); }
+    const j = introShake(shakeT, { reduced: reduceMotion });
+    if (j.x || j.y || j.roll || j.pitch) { cam.translateX(j.x); cam.translateY(j.y); cam.rotateX(j.pitch ?? 0); cam.rotateZ(j.roll); }
     cam.fov = fov;
     cam.aspect = views.size.w / Math.max(1, views.size.h);
     cam.updateProjectionMatrix();

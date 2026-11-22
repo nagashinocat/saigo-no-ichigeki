@@ -212,14 +212,19 @@ test('R1b: カードの叩きつけに揺れの秒は無い（大きめから縮
 
 // R1c（持ち主 11:03「バイクのシーン、ちょっとだけ揺らす感じの方が迫力があるね」）: バイクが頭上を抜ける拍だけ、
 // 通過の瞬間に短く減っていく小さな揺れ（ずれ + ごく小さな傾き）。ほかの拍（カード・スポットライト・隠れる・球・手・題字）は揺らさない
-test('R1c: 揺れはバイクの拍の通過の瞬間だけ（1/60 秒ごと）。ほかの拍はどこも 0', async () => {
+test('R1c / R1f: 揺れはバイクの拍の通過の瞬間だけ（1/60 秒ごと）、はっきり分かる短い一撃。ほかの拍はどこも 0。動きを減らす設定では 0', async () => {
   const { introShake, INTRO_SHAKE } = await import('../../src/render/introTimeline.js');
   const tl = createIntroTimeline();
   const bikes = introBikes();
-  const mag = (s) => Math.hypot(s.x, s.y) + Math.abs(s.roll);
-  // 一回の揺れは 0.15〜0.3 秒、小さい（ずれは数 cm、傾きは 1 度未満）
+  const mag = (s) => Math.hypot(s.x, s.y) + Math.abs(s.roll) + Math.abs(s.pitch ?? 0);
+  // 一回の揺れは 0.15〜0.3 秒。R1f（持ち主 18:16「オープニングムービーのバイク揺れてない」）: R1c の約 2.6 cm・0.006 rad は見えなかったので、
+  // はっきり分かる短い一撃に（ずれは R1c の 8〜12 倍、傾きは 0.025〜0.035 rad）
   expect(INTRO_SHAKE.dur).toBeGreaterThanOrEqual(0.15);
   expect(INTRO_SHAKE.dur).toBeLessThanOrEqual(0.3);
+  expect(INTRO_SHAKE.amp / 0.022).toBeGreaterThanOrEqual(8);
+  expect(INTRO_SHAKE.amp / 0.022).toBeLessThanOrEqual(12);
+  expect(INTRO_SHAKE.roll).toBeGreaterThanOrEqual(0.025);
+  expect(INTRO_SHAKE.roll).toBeLessThanOrEqual(0.035);
   let maxT = 0, maxR = 0;
   for (let i = 0; i <= Math.ceil(tl.total * 60); i++) {
     const t = i / 60;
@@ -231,10 +236,11 @@ test('R1c: 揺れはバイクの拍の通過の瞬間だけ（1/60 秒ごと）�
     const inPass = bikes.some((k) => t >= k.tp && t <= k.tp + INTRO_SHAKE.dur);
     if (!inPass) expect(mag(s), `bikes t=${t.toFixed(3)}`).toBe(0);
   }
-  expect(maxT).toBeGreaterThan(0.005);
-  expect(maxT).toBeLessThan(0.06);
-  expect(maxR).toBeGreaterThan(0);
-  expect(maxR).toBeLessThan(0.0175);
+  // R1f: ずれの山は 0.15 m より大きく 0.45 m 未満（見にくくならない）、傾きの山は 0.02〜0.045 rad
+  expect(maxT).toBeGreaterThan(0.15);
+  expect(maxT).toBeLessThan(0.45);
+  expect(maxR).toBeGreaterThan(0.02);
+  expect(maxR).toBeLessThan(0.045);
   // どの通過にも揺れがある（1/60 秒ごとに見て、0 でないコマがある）、その揺れは減っていく（終わりぎわは初めより小さい）
   for (const k of bikes) {
     const samples = [];
@@ -248,4 +254,17 @@ test('R1c: 揺れはバイクの拍の通過の瞬間だけ（1/60 秒ごと）�
   expect(peak(k0.tp + 0.66 * d, k0.tp + d)).toBeLessThan(0.5 * peak(k0.tp, k0.tp + 0.33 * d));
   // 時刻に対して決まる（録画で同じ絵）
   expect(introShake(k0.tp + 0.05)).toEqual(introShake(k0.tp + 0.05));
+  // R1f: 立ち上がりは鋭い（通過から 0.03 秒の内に山の 8 割）
+  expect(peak(k0.tp, k0.tp + 0.03)).toBeGreaterThan(0.8 * peak(k0.tp, k0.tp + d));
+  // R1f: 通過の瞬間の縦の一撃（風切りと同じ時刻に下へ沈む）。山のあたりの y は下向き（負）が多い
+  let down = 0, up = 0;
+  for (let t = k0.tp; t < k0.tp + 0.08; t += 1 / 600) { const y = introShake(t).y; if (y < 0) down++; else if (y > 0) up++; }
+  expect(down).toBeGreaterThan(up);
+  // R1f: 動きを減らす設定（prefers-reduced-motion）では、どこでも 0
+  for (let t = 0; t < tl.total; t += 1 / 60) { const s = introShake(t, { reduced: true }); expect(s.x === 0 && s.y === 0 && s.roll === 0 && s.pitch === 0).toBe(true); }
+  // R1f: うなずく傾き（下へ）は小さい（1 度未満）
+  let maxP = 0;
+  for (let t = 0; t < tl.total; t += 1 / 600) maxP = Math.max(maxP, Math.abs(introShake(t).pitch));
+  expect(maxP).toBeGreaterThan(0.005);
+  expect(maxP).toBeLessThan(0.0175);
 });

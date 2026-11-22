@@ -128,26 +128,34 @@ export function bikeAt(b, t) {
 }
 
 // R1c（持ち主 11:03「バイクのシーン、ちょっとだけ揺らす感じの方が迫力があるね」）: バイクが頭上を抜ける拍だけ、通過の瞬間
-// （tp）に短く減っていく小さな揺れ。dur 秒で消える。ずれ amp m（カメラの右・上）と傾き roll ラジアン。f Hz で震える。
+// （tp）に短く減っていく揺れ。dur 秒で消える。ずれ amp m（カメラの右・上）と傾き roll ラジアン。f Hz で震える。
 // 低く通るほど強い（y0 m の高さで 1 倍）。ほかの拍は 0（R1b の「揺らさない」のまま）
-export const INTRO_SHAKE = { dur: 0.22, amp: 0.022, roll: 0.006, f: 17, y0: 2.25 };
+// R1f（持ち主 18:16「オープニングムービーのバイク揺れてない」）: R1c の 0.022 m・0.006 rad・17 Hz は見えなかった（30 fps の動画では 17 Hz が
+// ほぼ消える）。はっきり分かる短い一撃に: ずれ 0.022 → 0.22 m（10 倍）、傾き 0.006 → 0.03 rad、震え 17 → 9 Hz、
+// 立ち上がりは attack 秒で満ち、そのあと (1 − u)^3 で速く減る（dur 0.22 → 0.25 秒）。風切りの山に合わせて下へ沈む縦の一撃（bump m と、
+// うなずく向きの傾き nod rad。遠くの街は平行に動かしても画面ではほとんど動かないので、画面で分かる揺れは主に傾きから来る）。
+// 戻り値に pitch（うなずき、rad）を足した。opts.reduced（動きを減らす設定）なら 0
+export const INTRO_SHAKE = { dur: 0.25, amp: 0.22, roll: 0.035, f: 9, y0: 2.25, attack: 0.025, bump: 0.1, nod: 0.012 };
 const SHAKE_BIKES = introBikes();
 const BIKES_END = INTRO.beats[0].dur;
 // 導入の時刻 t のカメラの揺れ { x, y（m、カメラの右・上）, roll（ラジアン）}。時刻だけで決まる（録画で同じ絵）
-export function introShake(t) {
-  const out = { x: 0, y: 0, roll: 0 };
-  if (!(t >= 0 && t < BIKES_END)) return out;
+export function introShake(t, { reduced = false } = {}) {
+  const out = { x: 0, y: 0, roll: 0, pitch: 0 };
+  if (reduced || !(t >= 0 && t < BIKES_END)) return out;
   const S = INTRO_SHAKE;
   for (const b of SHAKE_BIKES) {
     const d = t - b.tp;
     if (d <= 0 || d >= S.dur) continue;
     const u = d / S.dur;
-    // 立ち上がりはすぐ（最初の 1/8 で満ちる）、そのあと 2 乗で減る
-    const env = Math.min(1, u * 8) * (1 - u) ** 2 * Math.min(1.2, S.y0 / b.y);
-    const w = 2 * Math.PI * S.f * d;
-    out.x += S.amp * env * Math.sin(w + b.id);
-    out.y += S.amp * env * 0.8 * Math.sin(w * 1.31 + 1.7 + b.id);
-    out.roll += S.roll * env * Math.sin(w * 0.77 + 0.6) * (b.x < 0 ? -1 : 1);
+    // 立ち上がりは attack 秒で満ち、そのあと 3 乗で速く減る（山は 1）
+    const env = (d < S.attack ? d / S.attack : (1 - (d - S.attack) / (S.dur - S.attack)) ** 3) * Math.min(1.2, S.y0 / b.y);
+    // 震えの位相は、山（d = attack）で横のずれがいちばん大きくなるように（一台ごとに向きを左右に変える）
+    const w = 2 * Math.PI * S.f * (d - S.attack) + Math.PI / 2, side = b.id % 2 ? 1 : -1;
+    out.x += side * S.amp * env * Math.sin(w);
+    // 縦: 沈む一撃（下向き）に、小さな震えを重ねる
+    out.y += -S.bump * env + S.amp * env * 0.3 * Math.sin(w * 1.31 + 1.7);
+    out.roll += S.roll * env * Math.sin(w * 0.77 + 0.4) * (b.x < 0 ? -1 : 1);
+    out.pitch += -S.nod * env;
   }
   return out;
 }
