@@ -62,6 +62,67 @@ Files: src/render/cinematic.js, cinematicProps.js, finalePlan.js, finaleTimeline
 - **Pacing everywhere (owner 22:18):** today the finale and the replay read as 「初めから早い → ちょっと止まる → 早い」 (fast at start, a stall, fast again), and that is wrong. Every presentation must follow ONE pacing: slow-mo creep and swell at the start → burst → full speed. This covers the live finale, the replay cuts (the replay timeline and replayPlan) and the clip recorder later. There must be no mid-sequence freeze or stall: remove the old near-stopped beat (slowRate 0.012) and anything that looks like a pause. Add a test that the visual time-scale is monotonic non-decreasing from the start of the blast to the burst, and does not dip after the burst, for both the finale and the replay timelines. Record a frame sequence of the replay to prove it.
 - **Shots:** the new beat at several times, plus the transition into the chase.
 
+
+### M1: 主人公が動く・ジョイスティック・爆心が主人公の位置（持ち主 09:11、§16）
+Files: the input layer (a new src/ui/joystick.js and controls), src/game/game.js (hero position and velocity, collision against building footprints, slowdown while grabbed), src/main.js, src/render/views.js (overhead camera follow), and every place that assumes ground zero at the origin.
+- **Controls (§16, owner 09:15):** no fixed left/right zones.
+  - **First pointer** (anywhere): hold to charge, release to fire.
+  - **A second pointer while charging:**
+    - long-press (≥ about 0.18 s) → a floating joystick appears at that point; drag to move; it disappears on lift.
+    - short tap (< about 0.18 s, < 10 px movement) → 払う.
+  - With no first pointer down, nothing moves. The first touch always starts charging.
+  - **PC:** arrows/WASD to move, mouse hold to charge and release to fire, Space or right-click for 払う.
+  - Intro and title input rules stay (TAP, TAP START, queued-tap guard).
+  - Show a visible stick ring and knob; keep it cheap.
+  - **Edge cases to test:**
+    - the charging pointer lifting while the stick is held (the shot fires; the stick is cancelled)
+    - pointercancel
+    - a third finger (ignored)
+    - the stick finger lifting (it must never fire)
+- **Hero motion:**
+  - Floats along streets and plazas at about 10–12 m/s, with smooth acceleration.
+  - Collides against building footprints, sliding along walls. It may not leave the city.
+  - Each grabber slows it by about 20% (floor 40%).
+  - The hero body faces the move direction and leans.
+- **Camera:** the overhead camera follows the hero smoothly, keeping it centred, at the same framing distance as now.
+- **Ground zero = the hero's position at release.** Everything below must take a centre point, not assume the origin:
+  - blast, crater and sphereDeform (JS and GLSL)
+  - cityView crush/veil
+  - explosionView
+  - finalePlan (beat spot search around the release point)
+  - finaleTimeline radii
+  - cinematic, spaceView and replay* (snapshot includes the centre)
+  - S9 outcome (distance from the release point)
+  - patrolGlow
+  - maxEnemyReach semantics: a max-charge clear is guaranteed only near the city centre
+  - the results aftermath
+  
+  Add a test that the blast at an off-centre point kills exactly the riders within radius of that point. Test the JS and GLSL crater formulas for parity with a non-zero centre.
+- **HUD:** 「中心まで ◯ m」 plus a small arrow to the city centre.
+- **Balance:** `scripts/balance-sim.mjs` needs a movement policy. Use a reasonable bot: drift toward the centre, sidestep incoming chargers, and use 払う when grabbed. Report the numbers; the deep retune happens in M2.
+- **Tests:** joystick logic (tap vs drag, pointer ids, multi-touch with the charge thumb), collision, camera follow, off-centre blast/crater/outcome, and replay determinism with movement.
+
+### M2: 敵のライトと知らせ・払う 3 回・釣り合い（§16）
+Files: src/game/enemies.js, config.js, game.js, render/enemyView.js (headlight cones), the HUD, balance tooling.
+- **Headlight spotting:** a forward cone that is wider than now, with a longer reach, and requires line of sight. Draw the cone on the ground as a soft light wedge, visible from the overhead view and cheap.
+- **Alert propagation:**
+  - When a rider spots the hero it flashes and calls nearby riders: those within about 120 m switch to hunt, and they relay.
+  - The horde converges more and more while the hero stays seen.
+  - Once sight is lost, riders sweep the last known position.
+  - Patrols take part too.
+- **払う:**
+  - 3 uses per game, shown as 3 pips near the stick.
+  - Each use costs some power (start around 4–5%; tune it).
+  - When no uses remain, a stick tap shows 「もう払えない」.
+- **Balance targets (§16):**
+  - best-play full charge at p50 about 54 s, over the runs that reach full
+  - best-policy clear rate 70–80%
+  - no-払う never reaches full
+  - a max charge near the centre always clears
+  
+  Add a policy that releases far from the centre and confirm it is worse.
+- **Shots:** spotted → alert spreading → converge; headlight cones overhead; 払う pips; 「もう払えない」.
+
 ### R1: 払うの腕前 + 軍勢の種類
 Files: src/game/enemies.js, game.js, config.js, render/enemyView.js (+bikePose/hoverBike for looks), audio for the hits, scripts/balance-sim.mjs, tests.
 
