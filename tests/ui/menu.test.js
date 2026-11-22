@@ -174,3 +174,19 @@ test('R1f: index.html: メニューのボタン（44 px 以上の当たり、右
   // R3 からの不具合: 横画面の #result:not(.fail) { display: grid } が [hidden] に勝っていた
   expect(html).toMatch(/#result\[hidden\] \{ display: none !important; \}/);
 });
+
+test('R1f fix2: 演出・リプレイ・ブラックホールの間のメニューは AudioContext を止める（suspend）。遊んでいる間は門で黙らせる（mute）', () => {
+  const g = createGame({ seed: 3 });
+  let cine = true;
+  const audio = fakeAudio(), bgm = fakeBgm();
+  const pause = createPause({ game: g, controls: null, audio, bgm, cinematic: () => cine });
+  pause.set('menu', true);
+  expect(audio.log).toEqual(['mute', 'suspend']);
+  pause.set('menu', false);
+  expect(audio.log).toEqual(['mute', 'suspend', 'resume', 'unmute']);
+  cine = false;
+  pause.set('menu', true);
+  expect(audio.log.slice(4)).toEqual(['mute']);
+  pause.set('menu', false);
+  expect(audio.log.slice(4)).toEqual(['mute', 'unmute']);
+});

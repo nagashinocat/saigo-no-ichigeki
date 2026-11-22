@@ -221,7 +221,8 @@ window.addEventListener('blur', () => { controls.reset(); keysDown.clear(); });
 // R1f（持ち主 18:14「一時停止、リトライ、音量調節ができるメニューボタン」「画面切り替えしたら一瞬ピープ音」）: 一時停止（ui/pause.js）とメニュー（ui/menu.js）。
 // メニューを出せるのは遊んでいる間と演出・リプレイの間（導入・題字・結果では出さない）。開くと一時停止、つづけるで戻る。
 // タブ・アプリを切り替えたら一時停止して（音は約 30 ms で 0 へ落としてから止め）、戻ったらメニューを出して待つ
-const pause = createPause({ game, controls, audio, bgm, keys: keysDown });
+// fix2: 演出・リプレイ・ブラックホールの間（遊びの外）は、メニューでも AudioContext を止める（ui/pause.js）
+const pause = createPause({ game, controls, audio, bgm, keys: keysDown, cinematic: () => game.phase !== 'playing' || cinematic.active || replay.active || blackhole.active });
 let previewAt = -1e9;
 // 結果を出したあと（lastResult）は出さない。結果を待っている間（演出・リプレイ）は出してよい
 const menuAvailable = () => !introFlow.blocksInput && !lastResult;

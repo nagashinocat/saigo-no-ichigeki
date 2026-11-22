@@ -165,3 +165,35 @@ test('R1f fix1: mute で世界の音と BGM は 0 へ（AudioContext は止め�
   expect(audio.worldGate.gain.at(ctx.currentTime + 0.5)).toBeGreaterThan(0.95);
   expect(audio.bgmGate.gain.at(ctx.currentTime + 0.5)).toBeGreaterThan(0.95);
 });
+
+// fix2（再見直し Important 1）: 演出・リプレイ・ブラックホールの間にメニューを開くと、AudioContext を止める（予約した地響き・唸り・BGM の引き伸ばしの
+// 時計も止まる）。遊んでいる間は止めずに門で黙らせる（音量の試し音が聞こえる: M6）
+import { createPause } from '../../src/ui/pause.js';
+test('R1f fix2: 演出の間のメニューの一時停止は時計を止め、戻ったあとの音の時刻のずれは絵の時刻と同じ（止める前の 30 ms の落としの分だけ）', async () => {
+  const { ctx, audio, flush } = rig();
+  let cine = true, picture = 0;
+  const game = { setHidden() {} };
+  const pause = createPause({ game, controls: null, audio, bgm: null, cinematic: () => cine });
+  // 時計: 動いている間だけ AudioContext の時刻が進む（本物と同じ）。絵は一時停止していない間だけ進む
+  const tick = (sec) => { for (let i = 0; i < Math.round(sec * 100); i++) { if (ctx.state === 'running') ctx.currentTime += 0.01; if (!pause.paused) picture += 0.01; } };
+  const a0 = ctx.currentTime, p0 = picture;
+  tick(1);
+  pause.set('menu', true);
+  tick(0.05); flush(); await tick0(); // 落としてから止める
+  expect(ctx.state).toBe('suspended');
+  tick(3); // メニューを開いたまま 3 秒
+  pause.set('menu', false); await tick0(); flush(); await tick0();
+  expect(ctx.state).toBe('running');
+  tick(1);
+  const audioT = ctx.currentTime - a0, picT = picture - p0;
+  expect(picT).toBeCloseTo(2, 6);
+  expect(Math.abs(audioT - picT)).toBeLessThanOrEqual(0.05 + 1e-9);
+  // 遊んでいる間のメニューは止めない（門で黙らせる。時計は進むが、遊びの音は先へ予約していない）
+  cine = false;
+  pause.set('menu', true);
+  tick(0.5); flush(); await tick0();
+  expect(ctx.state).toBe('running');
+  expect(audio.worldGate.gain.at(ctx.currentTime)).toBeLessThan(1e-4);
+  pause.set('menu', false);
+});
+const tick0 = () => new Promise((r) => setTimeout(r, 0));
