@@ -121,6 +121,10 @@ Files: src/game/enemies.js, config.js, game.js, render/enemyView.js (headlight c
   - a max charge near the centre always clears
   
   Add a policy that releases far from the centre and confirm it is worse.
+- **Carried over from the R1 review:**
+  - **Type readability overhead is an acceptance criterion.** Add non-colour cues: a pulsing ground ring for drainers (about 2 Hz, at least 8 px on screen), a thicker trail plus a double-edged marker for heavies, and marker inner shapes per type.
+  - **Revisit HP against the 3-use 払う budget.** Boss hp 3 and heavy hp 2 would need every 払う. Decide whether to lower hp, or to count a stagger as one 払う use, and state the rule in the HUD and how-to text.
+  - **Restore the 「早く払うほうが早く満タン」 balance test** to its original median comparison, or add a continuous metric such as 60 s power or grabbed person-seconds. Remove the TODO.
 - **Shots:** spotted → alert spreading → converge; headlight cones overhead; 払う pips; 「もう払えない」.
 
 ### R1: 払うの腕前 + 軍勢の種類
@@ -232,7 +236,7 @@ Files: src/world/cityGen seed plumbing, main.js URL parsing, result.js/share tex
 Files: a new src/share/clip.js, main.js, result.js UI, tests (logic only).
 
 **Recording**
-- From the result, a 「動画で共有」 button re-renders a short highlight of the player's own shot, deterministically from the replay snapshot: the blast close → showcase → space → the line of light, 6–10 s.
+- From the result, a 「動画で共有」 button re-renders a short highlight of the player's own shot, deterministically from the replay snapshot: the blast close → showcase → space → the vertical line of light, 6–10 s.
 - Render to an offscreen 9:16 canvas, recorded with MediaRecorder (video/mp4 if supported, else webm).
 - Overlay: 「最後の一撃」, the rank, the outcome, 被害額, and the title badge if any.
 - Audio: capture the finale audio through a MediaStreamDestination tap of the master bus, in sync.
