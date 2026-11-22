@@ -8,6 +8,9 @@ import { CONFIG } from '../config.js';
 // R1 の見直しの持ち越し（種類を色だけでなく形でも）: 吸う者の足元に、2 Hz で脈打つ輪（画面で少なくとも KIND_RING.minPx px）
 export const CONE = { seg: 14, gain: 0.55, flash: 1.6, near: 160 };
 export const KIND_RING = { minPx: 9, minM: 1.6, hz: 2 };
+// M2 fix1（30 fps）: 知らせの輪は細い帯の網（内径 inner、外径 1）だけを描く（円板を描いて捨てない）。同時に見えるのは max 個まで
+// （新しい者が先、同じなら主人公に近い者が先）。中継が重なっても塗る画素は max 本の細い帯ぶん
+export const ALERT_RING = { max: 4, inner: 0.9, seg: 96 };
 const TINT = { search: [1.0, 0.93, 0.78], heard: [1.0, 0.68, 0.22], chase: [1.0, 0.36, 0.24] };
 
 // 扇の形（向きは +z、半径 1）: 頂点ごとに aR（0 要 → 1 縁）と aA（扇の中の角 −1〜1）
@@ -63,6 +66,20 @@ void main() {
   vec4 wp = modelMatrix * instanceMatrix * vec4(position * r, 1.0);
   gl_Position = projectionMatrix * viewMatrix * wp;
 }`;
+// 知らせの輪: 帯の網そのものが輪なので、帯の内から外へやわらかく（vP の長さ inner〜1）
+const CALL_FRAG = /* glsl */`
+uniform vec3 uCall;
+uniform float uInner;
+varying float vA, vK, vU;
+varying vec2 vP;
+void main() {
+  float r = (length(vP) - uInner) / (1.0 - uInner);
+  float a = vA * smoothstep(0.0, 0.35, r) * (1.0 - smoothstep(0.65, 1.0, r));
+  if (a < 0.004) discard;
+  gl_FragColor = vec4(uCall * a, 1.0);
+  #include <tonemapping_fragment>
+  #include <colorspace_fragment>
+}`;
 const RING_FRAG = /* glsl */`
 uniform vec3 uCall, uDrain;
 uniform float uTime, uHz;
@@ -93,10 +110,9 @@ export function createHeadlights(group, { capacity, drainColor = [1.0, 0.1, 0.4]
   cones.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
   cones.frustumCulled = false; cones.count = 0; cones.renderOrder = 1; cones.name = 'headlight-cones';
 
-  // 輪: 平らな輪の帯（内 0.6〜外 1。帯は frag で切る）。知らせの輪は 120 m まで広がるので、円板にせず帯だけを描いて塗る画素を減らす
-  // （知らせの輪の帯は 0.9〜1 の所。内 0.6 より内は描かない）
-  const ringGeo = new THREE.RingGeometry(0.6, 1, 64, 1).rotateX(-Math.PI / 2);
-  const ringCap = capacity * 2;
+  // 吸う者の輪: 平らな輪の帯（内 0.6〜外 1。帯は frag で切る。足元の小さな輪）
+  const ringGeo = new THREE.RingGeometry(0.6, 1, 48, 1).rotateX(-Math.PI / 2);
+  const ringCap = capacity;
   const ringAttr = new THREE.InstancedBufferAttribute(new Float32Array(ringCap * 3), 3);
   ringAttr.setUsage(THREE.DynamicDrawUsage);
   ringGeo.setAttribute('aRing', ringAttr);
@@ -109,16 +125,28 @@ export function createHeadlights(group, { capacity, drainColor = [1.0, 0.1, 0.4]
     polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -6,
   }), ringCap);
   rings.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-  rings.frustumCulled = false; rings.count = 0; rings.renderOrder = 2; rings.name = 'alert-rings';
-  group.add(cones, rings);
+  rings.frustumCulled = false; rings.count = 0; rings.renderOrder = 2; rings.name = 'drainer-rings';
+  // 知らせの輪（M2 fix1）: 細い帯の網、ALERT_RING.max 個まで
+  const callGeo = new THREE.RingGeometry(ALERT_RING.inner, 1, ALERT_RING.seg, 1).rotateX(-Math.PI / 2);
+  const callAttr = new THREE.InstancedBufferAttribute(new Float32Array(ALERT_RING.max * 3), 3);
+  callAttr.setUsage(THREE.DynamicDrawUsage);
+  callGeo.setAttribute('aRing', callAttr);
+  const callRings = new THREE.InstancedMesh(callGeo, new THREE.ShaderMaterial({
+    uniforms: { ...ringUniforms, uInner: { value: ALERT_RING.inner } }, vertexShader: RING_VERT, fragmentShader: CALL_FRAG, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+    polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -6,
+  }), ALERT_RING.max);
+  callRings.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  callRings.frustumCulled = false; callRings.count = 0; callRings.renderOrder = 2; callRings.name = 'alert-rings';
+  group.add(cones, rings, callRings);
+  const calls = []; // このフレームの知らせの輪の候補 { x, y, z, R, A, fl, d }
 
   const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _p = new THREE.Vector3(), _s = new THREE.Vector3(), _e = new THREE.Euler(), UP = new THREE.Vector3(0, 1, 0);
   let nc = 0, nr = 0;
   const flashOf = (e) => (e.callT != null && e.callT < AL.flashSec ? 1 - e.callT / AL.flashSec : 0);
   return {
-    cones, rings,
+    cones, rings, callRings,
     begin(time, pointScale, pixelRatio = 1) {
-      nc = 0; nr = 0;
+      nc = 0; nr = 0; calls.length = 0;
       ringUniforms.uTime.value = time; ringUniforms.uPx.value = pointScale; ringUniforms.uMinPx.value = KIND_RING.minPx * pixelRatio;
     },
     // 一人ぶん: e（ゲームの軍勢）、b（bikePose の描く位置）、ground（足元の地面の高さ）、heroPos
@@ -135,12 +163,9 @@ export function createHeadlights(group, { capacity, drainColor = [1.0, 0.1, 0.4]
         coneAttr.setXYZW(nc, tint[0], tint[1], tint[2], CONE.gain * (e.state === 'chase' ? 0.75 : 1) * (1 + CONE.flash * fl));
         nc++;
       }
-      if (fl > 0 && nr < ringCap) { // 知らせの輪: 光った者から alert.radius まで広がって消える
+      if (fl > 0) { // 知らせの輪の候補: 光った者から alert.radius まで広がって消える（end で新しい・近い ALERT_RING.max 人だけ描く）
         const u = 1 - fl;
-        _p.set(b.x, ground + 0.09, b.z); _q.identity(); _s.set(1, 1, 1);
-        rings.setMatrixAt(nr, _m.compose(_p, _q, _s));
-        ringAttr.setXYZ(nr, Math.max(2, AL.radius * (1 - (1 - u) ** 2)), 0.5 * (1 - u), 0);
-        nr++;
+        calls.push({ x: b.x, y: ground + 0.09, z: b.z, R: Math.max(2, AL.radius * (1 - (1 - u) ** 2)), A: 0.5 * (1 - u), fl, d: Math.hypot(b.x - heroPos.x, b.z - heroPos.z) });
       }
       if (e.kind === 'drainer' && nr < ringCap) {
         _p.set(b.x, ground + 0.1, b.z); _q.identity(); _s.set(1, 1, 1);
@@ -150,10 +175,18 @@ export function createHeadlights(group, { capacity, drainColor = [1.0, 0.1, 0.4]
       }
     },
     end() {
-      cones.count = nc; rings.count = nr;
-      cones.instanceMatrix.needsUpdate = rings.instanceMatrix.needsUpdate = true;
-      coneAttr.needsUpdate = ringAttr.needsUpdate = true;
+      calls.sort((a, b) => b.fl - a.fl || a.d - b.d);
+      const n = Math.min(ALERT_RING.max, calls.length);
+      for (let i = 0; i < n; i++) {
+        const c = calls[i];
+        _p.set(c.x, c.y, c.z); _q.identity(); _s.set(1, 1, 1);
+        callRings.setMatrixAt(i, _m.compose(_p, _q, _s));
+        callAttr.setXYZ(i, c.R, c.A, 0);
+      }
+      cones.count = nc; rings.count = nr; callRings.count = n;
+      cones.instanceMatrix.needsUpdate = rings.instanceMatrix.needsUpdate = callRings.instanceMatrix.needsUpdate = true;
+      coneAttr.needsUpdate = ringAttr.needsUpdate = callAttr.needsUpdate = true;
     },
-    setVisible(v) { cones.visible = rings.visible = v; },
+    setVisible(v) { cones.visible = rings.visible = callRings.visible = v; },
   };
 }

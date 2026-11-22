@@ -504,7 +504,7 @@ export function createEnemyView(scene, tier, { sunDir = new THREE.Vector3(0.8, 0
 
   // R1: 大物の探照灯
   const searchlight = createSearchlight(group);
-  // M2: 前方ライトの光の扇・知らせの輪・吸う者の脈打つ輪（headlights.js。全部で 2 つの InstancedMesh）
+  // M2: 前方ライトの光の扇・知らせの輪（細い帯、同時に 4 つまで）・吸う者の脈打つ輪（headlights.js。全部で 3 つの InstancedMesh）
   const headlights = createHeadlights(group, { capacity: CAPACITY, drainColor: DRAIN_COLOR.high });
 
   // 遠くの者の目印（見えている者と、隠れた者）
