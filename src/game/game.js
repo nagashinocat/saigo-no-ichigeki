@@ -66,6 +66,7 @@ export function createGame({ seed, cfg = CONFIG }) {
   let draggedIds = null; // R3: 放った瞬間に主人公を掴んでいた大物の id（称号「道連れ」）
   // R3 fix1（称号を多めに）: 隠れられた回数・見つかった回数（追われていない → 追われる、に変わった回）・大物に掴まれたか
   let hides = 0, spotted = 0, pursuedPrev = false, bossGrabbed = false;
+  let bossClosest = Infinity; // fix2: 大物が主人公にいちばん近づいた距離（m。称号「大物知らず」）
 
   // 小爆発は軍勢だけを払う（対象のビル・props はなし）。最後の一発はまだ壊れていないものすべて。距離は爆心（shot.centre）から
   function startBlast(shot) {
@@ -179,7 +180,7 @@ export function createGame({ seed, cfg = CONFIG }) {
       const kills = { normal: 0, patrol: 0, heavy: 0, drainer: 0, boss: 0 };
       for (const e of enemies.list) if (e.state === 'dead') kills[e.kind ?? (e.patrol ? 'patrol' : 'normal')]++;
       return {
-        puffs: Number.isFinite(cfg.puff.uses) ? cfg.puff.uses - puffsLeft : 0, maxCombo, hides, spotted, bossGrabbed, kills,
+        puffs: Number.isFinite(cfg.puff.uses) ? cfg.puff.uses - puffsLeft : 0, maxCombo, hides, spotted, bossGrabbed, bossClosest, kills,
         release: releaseInfo ? { timeLeft: releaseInfo.timeLeft, near: releaseInfo.near, power: releaseInfo.power, centreDist: releaseInfo.centreDist } : null,
       };
     },
@@ -319,6 +320,7 @@ export function createGame({ seed, cfg = CONFIG }) {
       for (const e of enemies.list) {
         if (e.state === 'chase' || e.state === 'approach' || e.state === 'grab' || e.state === 'cling') pursued = true;
         if (e.kind === 'boss' && (e.state === 'grab' || e.state === 'cling')) bossGrabbed = true;
+        if (e.kind === 'boss' && e.state !== 'dead' && Number.isFinite(e.dist)) bossClosest = Math.min(bossClosest, e.dist);
       }
       if (pursued && !pursuedPrev) spotted++;
       pursuedPrev = pursued;

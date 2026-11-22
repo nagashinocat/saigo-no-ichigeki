@@ -11,6 +11,7 @@ const imp = (p) => import(pathToFileURL(path.join(root, p)).href);
 const { createGame } = await imp('src/game/game.js');
 const { steerBot, actBot, releaseBot, RELEASE } = await imp('src/game/bot.js');
 const { citySeed } = await imp('src/game/daily.js');
+const { CONFIG } = await imp('src/config.js');
 const titlesMod = await imp('src/game/titles.js');
 const DT = 1 / 30;
 
@@ -25,6 +26,10 @@ export const POLICIES = [
   { name: '届いたらすぐ放つ', act: { grab: 2, trigger: 0, crowd: Infinity, hide: true }, waitTo: 20, lastCall: 1 },
   { name: '群れを払う', act: { grab: 3, trigger: 8, crowd: 5, hide: true }, waitTo: 4 },
   { name: '払わない', act: { grab: Infinity, trigger: 0, crowd: Infinity, hide: true }, waitTo: 0.8 },
+  // fix2（再点検 Important 1）: 安い遊び方。届いたかによらず、決まった時に放つ（珍しい称号が安く取れないかを見る）
+  { name: 'すぐ放つ（約 5 秒）', act: { grab: 2, trigger: 0, crowd: Infinity, hide: true }, instant: true },
+  { name: '30 秒で放つ', act: { grab: 2, trigger: 0, crowd: Infinity, hide: true }, releaseSec: 30 },
+  { name: '大物の前に放つ（48 秒）', act: { grab: 2, trigger: 0, crowd: Infinity, hide: true }, releaseSec: 48 },
 ];
 
 export function playOne(seed, pol) {
@@ -33,6 +38,11 @@ export function playOne(seed, pol) {
   const R = { ...RELEASE, waitTo: pol.waitTo, ...(pol.lastCall != null ? { lastCall: pol.lastCall } : {}) };
   while (g.phase === 'playing') {
     steerBot(g, {}); actBot(g, pol.act); g.update(DT);
+    if (pol.instant || pol.releaseSec != null) {
+      const t = CONFIG.roundSeconds - g.timer.remaining;
+      if ((pol.instant && g.power.value >= CONFIG.power.minRelease + 0.2) || (pol.releaseSec != null && t >= pol.releaseSec)) { g.pressEnd(); if (g.phase !== 'playing') break; }
+      continue;
+    }
     if (releaseBot(g, { R })) break;
   }
   if (g.phase === 'cinematic' || g.phase === 'finale') g.settle();
@@ -64,6 +74,7 @@ if (titlesMod.TITLES?.[0]?.rarity != null) {
     const ctx = { reason: r.reason, outcome: r.outcome, stats: r.stats, damage: r.total, cityValue: r.cityValue, ...r.ctx };
     for (const id of titlesMod.earnedTitles(ctx)) earned.set(id, earned.get(id) + 1);
     const pick = titlesMod.pickTitle(ctx, titlesMod.runSeed(ctx, r.seed));
+    r.shown = pick;
     if (pick) shown.set(pick, shown.get(pick) + 1); else none++;
   }
   const pc = (n) => `${(100 * n / N).toFixed(1)}%`;
@@ -73,9 +84,14 @@ if (titlesMod.TITLES?.[0]?.rarity != null) {
   for (const t of [...titlesMod.TITLES].sort((a, b) => earned.get(b.id) - earned.get(a.id))) console.log(`| ${t.name}（${t.id}） | ${t.rarity} | ${earned.get(t.id)}（${pc(earned.get(t.id))}） | ${shown.get(t.id)}（${pc(shown.get(t.id))}） |`);
   const maxE = Math.max(...earned.values()), maxS = Math.max(...shown.values());
   console.log(`いちばん多い: 取れた ${pc(maxE)}・出た ${pc(maxS)}`);
+  // fix2: 遊び方ごとに、結果に出た ★3 以上の称号（安い遊び方で珍しい称号が出ないか）
+  const rare = (id) => (titlesMod.TITLES.find((t) => t.id === id)?.rarity ?? 0) >= 3;
   for (const pol of POLICIES) {
     const rs = runs.filter((r) => r.policy === pol.name);
-    console.log(`  ${pol.name}: 撃退成功 ${rs.filter((r) => r.outcome?.clear).length}/${rs.length}  ブラックホール ${rs.filter((r) => r.reason === 'blackhole').length}`);
+    const hi = {};
+    for (const r of rs) { const id = r.shown; if (id && rare(id)) hi[id] = (hi[id] ?? 0) + 1; }
+    const hiTxt = Object.entries(hi).map(([k, v]) => `${titlesMod.titleName(k)} ${v}`).join('・') || 'なし';
+    console.log(`  ${pol.name}: 撃退成功 ${rs.filter((r) => r.outcome?.clear).length}/${rs.length}  ブラックホール ${rs.filter((r) => r.reason === 'blackhole').length}  ★3 以上が出た: ${hiTxt}`);
   }
   const rankC = Object.fromEntries(['S', 'A', 'B', 'C'].map((k) => [k, runs.filter((r) => (r.outcome?.rank ?? 'C') === k).length]));
   console.log(`ランク（この遊び方の混ぜ方で）: ${Object.entries(rankC).map(([k, v]) => `${k} ${v}（${pc(v)}）`).join(' ')}`);

@@ -26,19 +26,23 @@ export const TITLES = [
   { id: 'dragged', name: '道連れ', rarity: 3, cond: '掴んでいた大物を最後の一撃に巻き込んだ', test: (c) => !!rel(c)?.dragged },
   // 時間
   { id: 'lastBlink', name: '刹那の一撃', rarity: 4, cond: '残り 0.3 秒以内に放って撃退成功', test: (c) => clear(c) && left(c) <= 0.3 },
-  { id: 'early', name: '先手必勝', rarity: 2, cond: '残り 6 秒以上で放って撃退成功', test: (c) => clear(c) && left(c) >= 6 && left(c) <= 11 },
-  { id: 'beforeBoss', name: '大物知らず', rarity: 4, cond: '大物が来る前（残り 11 秒より前）に撃退成功', test: (c) => clear(c) && left(c) > 11 },
+  // fix2: 力は溜めている間だけ毎秒 1.9 で、撃退成功には約 98 が要るので、撃退成功で放てるのは早くても残り約 8.5 秒（title-sim の撃退成功の最大 8.5 秒）
+  { id: 'early', name: '先手必勝', rarity: 2, cond: '残り 6 秒以上で放って撃退成功（早くても残り約 8.5 秒）', test: (c) => clear(c) && left(c) >= 6 },
+  // fix2: 前の「残り 11 秒より前に撃退成功」は届かなかった（49 秒で力は多くて 93.1）。大物（49 秒）を一度も 20 m の内に近づけずに撃退成功
+  // （title-sim fix2: 撃退成功 151 回のうち 13 回、全部の回の 3.6%）
+  { id: 'beforeBoss', name: '大物知らず', rarity: 3, cond: '大物を一度も 20 m の内に近づけずに撃退成功', test: (c) => clear(c) && (c.stats?.bossClosest ?? 0) > 20 },
   // 隠れる・見つかる
   { id: 'hermit', name: '影の住人', rarity: 2, cond: '6 回以上隠れた', test: (c) => (c.stats?.hides ?? 0) >= 6 },
   { id: 'noHide', name: '正面突破', rarity: 4, cond: '一度も隠れずに撃退成功', test: (c) => clear(c) && c.stats?.hides === 0 },
-  { id: 'unseen', name: '誰にも見られず', rarity: 5, cond: '一度も見つからなかった', test: (c) => c.stats?.spotted === 0 && c.reason != null },
+  // fix2: すぐ放てば見つかる前に終わるので、撃退成功が要る
+  { id: 'unseen', name: '誰にも見られず', rarity: 5, cond: '一度も見つからずに撃退成功', test: (c) => clear(c) && c.stats?.spotted === 0 },
   { id: 'wanted', name: '指名手配', rarity: 2, cond: '6 回以上見つかった', test: (c) => (c.stats?.spotted ?? 0) >= 6 },
   // 放ったときのまわり
   { id: 'fullHouse', name: '大入り満員', rarity: 3, cond: '放ったとき 15 m の内に軍勢 20 体以上', test: (c) => !!rel(c) && (R(c)?.near ?? 0) >= 20 },
   { id: 'lonely', name: '孤高の一撃', rarity: 3, cond: '15 m の内の軍勢 4 体以下で撃退成功', test: (c) => clear(c) && R(c) != null && R(c).near <= 4 },
   { id: 'lucky7', name: 'ラッキーセブン', rarity: 3, cond: '15 m の内の軍勢ちょうど 7 体で撃退成功', test: (c) => clear(c) && R(c)?.near === 7 },
   { id: 'centre', name: '街のへそ', rarity: 4, cond: '街の中心から 17 m 以内で放って撃退成功', test: (c) => clear(c) && R(c) != null && R(c).centreDist <= 17 },
-  { id: 'outskirts', name: '郊外の一撃', rarity: 3, cond: '街の中心から 34 m 以上で放った', test: (c) => !!rel(c) && (R(c)?.centreDist ?? 0) >= 34 },
+  { id: 'outskirts', name: '郊外の一撃', rarity: 3, cond: '街の中心から 34 m 以上で放って撃退成功', test: (c) => clear(c) && (R(c)?.centreDist ?? 0) >= 34 },
   { id: 'lowPower', name: '紙一重', rarity: 2, cond: '力 99% 未満で放って撃退成功', test: (c) => clear(c) && R(c) != null && R(c).power < 99 },
   // 払う
   { id: 'allPuffs', name: '払い尽くした者', rarity: 4, cond: '払うを 3 回使い切って撃退成功', test: (c) => clear(c) && puffsOf(c) >= 3 },
@@ -49,11 +53,13 @@ export const TITLES = [
   { id: 'drainHunter', name: '吸う者退治', rarity: 2, cond: '吸う者を 14 体以上倒した', test: (c) => (c.stats?.kills?.drainer ?? 0) >= 14 },
   // 被害額
   { id: 'wipeout', name: '街ごと消した者', rarity: 3, cond: '被害額が街の値打ちの 6.1 倍以上', test: (c) => (ratio(c) ?? 0) >= 6.1 },
-  { id: 'modest', name: '控えめな破壊者', rarity: 3, cond: '被害額が街の値打ちの 3.5 倍未満', test: (c) => ratio(c) != null && ratio(c) < 3.5 },
+  // fix2: 早く放つだけで取れる（失敗の慰め）ので ふつう
+  { id: 'modest', name: '控えめな破壊者', rarity: 1, cond: '被害額が街の値打ちの 3.5 倍未満', test: (c) => ratio(c) != null && ratio(c) < 3.5 },
   { id: 'zorome', name: 'ゾロ目', rarity: 2, cond: '被害額の表示がゾロ目（¥2.2兆 など）', test: (c) => !!rel(c) && /^¥(\d)\.\1兆$/.test(formatYen(c.damage ?? 0)) },
   // 端末・日・時刻
   { id: 'firstClear', name: '今日の初撃退', rarity: 2, cond: 'その日の街で初めての撃退成功', test: (c) => clear(c) && !!c.firstClearToday },
-  { id: 'newBest', name: '記録を塗り替えた者', rarity: 3, cond: '前の自己ベストを塗り替えた', test: (c) => !!rel(c) && !!c.newBest },
+  // fix2: 失敗どうしで被害額を少し上げるだけでも塗り替えになるので、撃退成功が要る
+  { id: 'newBest', name: '記録を塗り替えた者', rarity: 3, cond: '前の自己ベストを塗り替えて撃退成功', test: (c) => clear(c) && !!c.newBest },
   { id: 'nightOwl', name: '夜ふかしの破壊者', rarity: 2, cond: '日本時間 0〜4 時に遊んだ', test: (c) => inHours(c.hour, 0, 4) },
   { id: 'dawn', name: '夜明けの一撃', rarity: 2, cond: '日本時間 5〜8 時に遊んだ', test: (c) => inHours(c.hour, 5, 8) },
 ];
