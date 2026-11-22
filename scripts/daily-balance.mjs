@@ -19,13 +19,14 @@ const { CONFIG: BASE } = await imp('src/config.js');
 const { radiusFor } = await imp('src/game/charge.js');
 const { citySeed } = await imp('src/game/daily.js');
 const J = (k) => JSON.parse(process.env[k] ?? '{}');
-const CONFIG = { ...BASE, enemy: { ...BASE.enemy, ...J('ENEMY') }, hide: { ...BASE.hide, ...J('HIDE') }, power: { ...BASE.power, ...J('POWER') }, puff: { ...BASE.puff, ...J('PUFF') } };
+const CONFIG = { ...BASE, enemy: { ...BASE.enemy, ...J('ENEMY'), alert: { ...BASE.enemy.alert, ...J('ALERT') }, chase: { ...BASE.enemy.chase, ...J('CHASE') } }, hide: { ...BASE.hide, ...J('HIDE') }, power: { ...BASE.power, ...J('POWER') }, puff: { ...BASE.puff, ...J('PUFF') } };
 const DT = 1 / 30;
 const dayKeys = (from, n) => Array.from({ length: n }, (_, i) => { const d = new Date(Date.UTC(+from.slice(0, 4), +from.slice(4, 6) - 1, +from.slice(6, 8)) + i * 864e5); return `${d.getUTCFullYear()}${String(d.getUTCMonth() + 1).padStart(2, '0')}${String(d.getUTCDate()).padStart(2, '0')}`; });
 const SEEDS = process.env.CITIES === 'ints'
   ? Array.from({ length: Number(process.env.SEEDS ?? 30) }, (_, i) => i + 1)
   : dayKeys(process.env.FROM ?? '20261101', Number(process.env.DAYS ?? 120)).map(citySeed);
-const BEST = { grab: 2, trigger: 0, crowd: Infinity, hide: true };
+const QUICK = !!process.env.QUICK;
+const BEST = { grab: 2, trigger: 0, crowd: Infinity, hide: true, ...J('BEST') };
 const NO = { grab: Infinity, trigger: 0, crowd: Infinity, hide: false };
 const LEVELS = [95, 96, 97, 98, 99, 100];
 const q = (xs, p) => { const s = [...xs].sort((a, b) => a - b); return s.length ? s[Math.min(s.length - 1, Math.floor(p * s.length))] : NaN; };
@@ -33,14 +34,13 @@ const q = (xs, p) => { const s = [...xs].sort((a, b) => a - b); return s.length 
 function run(seed, st) {
   const g = createGame({ seed, cfg: CONFIG });
   let lost = 0;
-  g.on('lose', (e) => { lost += e?.n ?? 1; });
   g.begin(); g.pressStart();
   let t = 0, li = 0, full = Infinity, grabPuffAt = null, recovered = false;
   const lv = [];
   while (g.phase === 'playing' && t < CONFIG.roundSeconds - DT / 2) {
     steerBot(g, { cfg: CONFIG });
     const grabbed = g.grabbing > 0;
-    const a = actBot(g, st);
+    const a = actBot(g, st, CONFIG);
     if (a === 'puff' && grabbed && grabPuffAt == null) grabPuffAt = t;
     g.update(DT); t += DT;
     if (grabPuffAt != null && t > grabPuffAt && g.power.value >= 80) recovered = true;
@@ -52,12 +52,13 @@ function run(seed, st) {
     }
   }
   const rs = g.runStats;
+  lost = g.enemies.lostCount ?? 0;
   return { full, end: g.power.value, lv, grabPuff: grabPuffAt != null, recovered, spotted: rs.spotted, hides: rs.hides, lost };
 }
 
 const t0 = Date.now();
 const best = SEEDS.map((s) => run(s, BEST));
-const no = SEEDS.map((s) => run(s, NO));
+const no = QUICK ? [] : SEEDS.map((s) => run(s, NO));
 const N = SEEDS.length;
 const got = best.map((r) => r.full).filter(Number.isFinite);
 console.log(`街 ${N}（${process.env.CITIES === 'ints' ? `seed 1〜${N}` : `今日の街 ${process.env.FROM ?? '20261101'} から ${N} 日`}）`);
@@ -74,5 +75,5 @@ console.log(`満タンで放った回 ${at100.length}: 撃退成功 ${at100.filt
 const gp = best.filter((r) => r.grabPuff);
 console.log(`立て直し: 掴まれて払った回 ${gp.length}、そのあと力 80 以上 ${gp.filter((r) => r.recovered).length}（${gp.length ? (100 * gp.filter((r) => r.recovered).length / gp.length).toFixed(0) : '-'}%）`);
 console.log(`見つかった回数 p50=${q(best.map((r) => r.spotted), 0.5)}  隠れた回数 p50=${q(best.map((r) => r.hides), 0.5)}  見失わせた（lose）p50=${q(best.map((r) => r.lost), 0.5)}`);
-console.log(`払わない・隠れない: 満タンに届いた ${no.filter((r) => Number.isFinite(r.full)).length}/${N}  60 秒の力 p50=${q(no.map((r) => r.end), 0.5).toFixed(1)} 最大=${Math.max(...no.map((r) => r.end)).toFixed(1)}`);
+if (!QUICK) console.log(`払わない・隠れない: 満タンに届いた ${no.filter((r) => Number.isFinite(r.full)).length}/${N}  60 秒の力 p50=${q(no.map((r) => r.end), 0.5).toFixed(1)} 最大=${Math.max(...no.map((r) => r.end)).toFixed(1)}`);
 console.log(`（${((Date.now() - t0) / 1000).toFixed(0)} 秒）`);

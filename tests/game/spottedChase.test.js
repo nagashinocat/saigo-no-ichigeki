@@ -1,6 +1,7 @@
 import { test, expect } from 'vitest';
 import { createGame } from '../../src/game/game.js';
-import { swarmRing } from '../../src/game/enemies.js';
+import { swarmRing, lineOfSight, createEnemies, seesHero } from '../../src/game/enemies.js';
+import { createRng } from '../../src/rng.js';
 import { CONFIG } from '../../src/config.js';
 
 // R1d（持ち主 13:36「見つかってから敵キャラがどっかいく」）: 見つけた軍勢は、主人公が 28 m/s（M2）で通りを渡り角を曲がっても、
@@ -12,6 +13,10 @@ import { CONFIG } from '../../src/config.js';
 //  - 掴む者・群がる者は、主人公が動いている間も今の主人公の群がる輪の内
 //  - 払いでよろめいた者は、よろめきが終わったそのフレームで chase へ戻り、0.2 秒のうちに今の主人公の方を向いて突っ込み直す
 // を確かめる。主人公の道すじは決めた向きの列（溜めている間だけ動く。ビルに当たれば壁に沿って滑る）
+// R1f（持ち主 19:47「撒けるようにしたらまだいいかも」。13:36 の「見失わない」を改める）: 見つけた者は、主人公が見えている間（ライトか、すぐ後ろ hearDist の内の見通し）と、
+// 見えなくなってから chase.loseSec（約 2 秒）の間は追い続ける。それより長く見えなければ見失い、最後に見た所を探す（search）。
+// 「二度と search に戻らない」は、見通しが loseSec 秒より長く切れた者を除いて確かめる（切れていないのに戻った者はいない）。
+// 距離が増え続けないことは、見通しのある間だけ（見通しがなければビルを回り込むので、主人公から一度離れうる。tests/game/chaseNav.test.js）
 
 const DT = 1 / 30;
 const SPOTTED = new Set(['chase', 'approach', 'grab', 'cling', 'stagger']);
@@ -37,6 +42,9 @@ function run(seed, sec = 45) {
   g.begin(); g.pressStart();
   expect(CONFIG.hero.speed).toBe(28); // M2（持ち主 15:20）
   const rec = new Map(); // id → { back, growSec, maxGrowSec, staggerEnd }
+  const LOSE = CONFIG.enemy.chase.loseSec;
+  const spottedIds = new Set();
+  let lostOk = 0, lostEarly = 0;
   let backToSearch = 0, maxGrowSec = 0, ringOut = 0, staggerRecovered = 0, staggerBad = 0, meanBumps = 0, maxMeanBump = 0, moved = 0;
   let prevMean = null, prevIds = null;
   for (let i = 0; i < sec / DT && g.phase === 'playing'; i++) {
@@ -55,26 +63,37 @@ function run(seed, sec = 45) {
       if (e.state === 'dead') continue;
       const d = Math.hypot(e.x - H.x, e.z - H.z);
       let r = rec.get(e.id);
-      if (!r && SPOTTED.has(e.state)) rec.set(e.id, (r = { growSec: 0 }));
+      if (!r && SPOTTED.has(e.state)) { rec.set(e.id, (r = { growSec: 0, blind: 0 })); spottedIds.add(e.id); }
       if (!r) continue;
-      if (e.state === 'search') { backToSearch++; continue; }
       const b = before.get(e.id);
+      // R1f: 見えない秒（追う者の見え方: ライト（扇・ごく近く・見通し）か、chase.hearDist の内の見通し）。掴む者・群がる者は主人公の上にいる（見失わない）
+      const sees = (e.state === 'grab' || e.state === 'cling') || seesHero(e, H, g.city.buildings, CONFIG) || (d <= CONFIG.enemy.chase.hearDist && lineOfSight(e.x, e.z, g.city.buildings, 0, H.x, H.z));
+      const blindBefore = r.blind;
+      r.blind = sees ? 0 : r.blind + DT;
+      if (e.state === 'search') {
+        // 見失ったのは、見通しが loseSec 秒より長く切れたときだけ（それより早く search に戻った者はいない）。また見つければ数え直す
+        // （ゲームは動く前に見え方を確かめ、ここは動いたあとに確かめるので、数フレームのずれは許す）
+        if (blindBefore + DT >= LOSE - 3 * DT) lostOk++; else { lostEarly++; backToSearch++; }
+        rec.delete(e.id);
+        continue;
+      }
+      const clear = sees && blindBefore === 0; // 回り込んでいる間（見通しのない者）は距離の決まりの外
       // 距離が増え続けた秒（よろめきは押し戻されるので除く）
-      if (e.state !== 'stagger' && b && b.state !== 'stagger') {
+      if (clear && e.state !== 'stagger' && b && b.state !== 'stagger') {
         r.growSec = d > b.d + 1e-6 ? r.growSec + DT : 0;
         maxGrowSec = Math.max(maxGrowSec, r.growSec);
-      }
-      // よろめきが終わった: そのフレームで chase（か掴む・群がる）へ戻り、0.2 秒のうちに向きが今の主人公の方へ向く
+      } else if (!clear) r.growSec = 0;
+      // よろめきが終わった: そのフレームで chase（か掴む・群がる）へ戻り、0.2 秒のうちに向きが今の主人公の方へ向く（見通しがあれば）
       if (b && b.state === 'stagger' && e.state !== 'stagger') {
         if (['chase', 'grab', 'cling'].includes(e.state)) { staggerRecovered++; r.recoverAt = i; } else staggerBad++;
       }
       if (r.recoverAt != null && i - r.recoverAt === 6) {
-        if (!reacquired(e, H)) staggerBad++;
+        if (clear && !reacquired(e, H)) staggerBad++;
         r.recoverAt = null;
       }
       // 掴む者・群がる者は今の主人公の群がる輪の内
       if ((e.state === 'grab' || e.state === 'cling') && d > RING_MAX + 1e-6) ringOut++;
-      if (e.state !== 'stagger' && b && b.state !== 'stagger') { ids.push(e.id); sum += d; }
+      if (clear && e.state !== 'stagger' && b && b.state !== 'stagger') { ids.push(e.id); sum += d; }
     }
     // 見つけた者（前のフレームにもいた者だけ）の距離の平均
     if (prevIds && ids.length) {
@@ -94,11 +113,11 @@ function run(seed, sec = 45) {
     prevIds = g.enemies.list.filter((e) => ids.includes(e.id)).map((e) => ({ id: e.id, d: Math.hypot(e.x - H.x, e.z - H.z) }));
     prevMean = ids.length ? sum / ids.length : prevMean;
   }
-  return { spotted: rec.size, backToSearch, maxGrowSec, ringOut, staggerRecovered, staggerBad, meanBumps, maxMeanBump, moved, hero: g.hero };
+  return { spotted: spottedIds.size, lostOk, lostEarly, backToSearch, maxGrowSec, ringOut, staggerRecovered, staggerBad, meanBumps, maxMeanBump, moved, hero: g.hero };
 }
 
 for (const seed of [1, 2, 3]) {
-  test(`R1d / M2 seed ${seed}: 28 m/s で通りを渡り角を曲がる主人公を、見つけた軍勢は見失わない（search に戻らず、距離は増え続けず、掴む者は今の主人公の輪の内）`, () => {
+  test(`R1d / M2 / R1f seed ${seed}: 28 m/s で通りを渡り角を曲がる主人公を、見つけた軍勢は見えている間と見えなくなって loseSec の間は見失わない（それより早く search に戻らず、見える間は距離が増え続けず、掴む者は今の主人公の輪の内）`, () => {
     const r = run(seed);
     expect(r.moved).toBeGreaterThan(300); // 主人公はずっと動いていた（10 秒以上）
     expect(Math.hypot(r.hero.x, r.hero.z)).toBeGreaterThan(30);
@@ -154,4 +173,87 @@ test('R1d: 払いでよろめいた重い者は、よろめきが終わったそ
     expect(['grab', 'cling']).toContain(e.state);
     expect(Math.hypot(e.x - g.hero.x, e.z - g.hero.z)).toBeLessThanOrEqual(RING_MAX + 1e-6);
   }
+});
+
+// R1f（持ち主 19:47「撒けるようにしたらまだいいかも」）: 見えなくなって loseSec 秒を越えると見失い、最後に見た所を探す
+const CH = CONFIG.enemy.chase;
+const quietEnemy = { ...CONFIG, enemy: { ...CONFIG.enemy, spawnPerSec: 0, patrol: { ...CONFIG.enemy.patrol, count: 0 } } };
+
+test('R1f: 見失うまでの秒（約 2 秒）と、払ったよろめきの長さ（前の 0.55 秒の約 1.4 倍）は config', () => {
+  expect(CH.loseSec).toBeGreaterThanOrEqual(1.5);
+  expect(CH.loseSec).toBeLessThanOrEqual(2.5);
+  expect(CONFIG.enemy.stagger.sec / 0.55).toBeGreaterThanOrEqual(1.3);
+  expect(CONFIG.enemy.stagger.sec / 0.55).toBeLessThanOrEqual(1.5);
+});
+
+test('R1f: ビルの陰で見えなくなった追う者は、loseSec の間は追い続け（回り込む）、それを越えると見失って最後に見た所を探す。また見つけるにはライトが要る', () => {
+  // 主人公 (0, 0)、長いビル（z 8〜12、x ±50）の向こう (0, 25) に追う者。回り込む道のりは 2 秒で走れる距離より長い
+  const wall = { id: 1, x: 0, z: 10, w: 100, d: 4, h: 20 };
+  const e = createEnemies(createRng(3), quietEnemy, { buildings: [wall] });
+  const r = { id: 50, state: 'chase', x: 0, z: 25, heading: -Math.PI / 2, speed: 30, turn: 0, lane: [0, 0], dist: 25, angle: Math.PI / 2 };
+  e.list.push(r);
+  e.update(DT); // 見通しがない（最初のフレームを最後に見た時刻にする）
+  expect(r.lastSeen).toMatchObject({ x: 0, z: 0 });
+  let t = DT, lostAt = null;
+  const inWall = (x, z) => Math.abs(x) < 50 && Math.abs(z - 10) < 2;
+  for (; t < 4 && lostAt == null; t += DT) {
+    e.update(DT);
+    expect(inWall(r.x, r.z)).toBe(false);
+    if (r.state === 'search') lostAt = t;
+    else expect(r.state).toBe('chase');
+  }
+  expect(lostAt).not.toBeNull();
+  expect(lostAt).toBeGreaterThanOrEqual(CH.loseSec - 2 * DT);
+  expect(lostAt).toBeLessThanOrEqual(CH.loseSec + 3 * DT);
+  expect(r.heard.x).toBeCloseTo(0, 6); expect(r.heard.z).toBeCloseTo(0, 6); // 最後に見た所を探す
+  expect(e.lostCount).toBe(1);
+  // 見失った者は、ライトの扇の外（真後ろ・ごく近くより遠く）からは見つけない
+  const H = e.heroPos;
+  H.x = r.x - Math.cos(r.heading) * 12; H.z = r.z - Math.sin(r.heading) * 12;
+  e.update(DT); e.update(DT);
+  expect(r.state).toBe('search');
+});
+
+test('R1f: 見えている間は見失わない。掴む者は（壁の陰に回っても）見失わない', () => {
+  const e = createEnemies(createRng(3), quietEnemy, { buildings: [{ id: 1, x: 0, z: 40, w: 10, d: 4, h: 20 }] });
+  const c = { id: 51, state: 'chase', x: 30, z: 0, heading: Math.PI, speed: 0, turn: 0, lane: [0, 0], dist: 30, angle: 0 };
+  const gr = { id: 52, state: 'grab', x: 2.5, z: 0, heading: Math.PI / 2, speed: 15, turn: 0, lane: [0, 0], dist: 2.5, angle: 0, grabTime: 0 };
+  e.list.push(c, gr);
+  for (let t = 0; t < 3; t += DT) {
+    e.update(DT);
+    expect(c.state === 'chase' || c.state === 'grab' || c.state === 'cling').toBe(true);
+    expect(['grab', 'cling']).toContain(gr.state);
+  }
+});
+
+test('R1f: ライトの届く端（約 34 m 後ろ）の追う者は、角を曲がり続ければ撒ける（見えない間は遅くなり、loseSec 秒で見失う）。すぐ後ろ（12 m）の追う者は撒けない', () => {
+  const quiet = { ...CONFIG, enemy: { ...CONFIG.enemy, spawnPerSec: 0, patrol: { ...CONFIG.enemy.patrol, count: 0 }, kinds: {} } };
+  const P = 26;
+  const legs = [[1, 0], [0, 1], [1, 0], [0, -1], [1, 0], [0, 1]]; // 1 区画ごとに角を曲がる
+  const chaseFrom = (seed, gap) => {
+    const g = createGame({ seed, cfg: quiet });
+    g.begin(); g.pressStart();
+    g.hero.x = 1.5 * P; g.hero.z = 1.5 * P; // 広場の外の交差点
+    const r = { id: 70, state: 'chase', x: g.hero.x - gap, z: g.hero.z, heading: 0, speed: 30, turn: 0, lane: [0, 0], dist: gap, angle: Math.PI };
+    g.enemies.list.push(r);
+    for (let i = 0; i < 6 / DT; i++) {
+      g.setMove(...legs[Math.floor((i * DT * CONFIG.hero.speed) / P) % legs.length]);
+      g.power.add(1); // 溜めたまま動く（掴まれても）
+      g.update(DT);
+      if (r.state !== 'chase') break;
+      expect(r.speed).toBeLessThanOrEqual(CONFIG.enemy.speed + 1e-6);
+    }
+    return { state: r.state, lost: g.enemies.lostCount };
+  };
+  const far = [1, 2, 3, 4, 5, 6].map((s) => chaseFrom(s, 34));
+  expect(far.filter((r) => r.state === 'search').length).toBeGreaterThanOrEqual(1);
+  for (const r of far) if (r.state === 'search') expect(r.lost).toBe(1);
+  for (const s of [1, 2, 3]) expect(['grab', 'cling']).toContain(chaseFrom(s, 12).state);
+  // まっすぐ開けた所を逃げる主人公は撒けない（見えていれば突っ込む 32 m/s で追いつかれる）
+  const open = createEnemies(createRng(3), quietEnemy, { buildings: [] });
+  const H = open.heroPos;
+  const c = { id: 71, state: 'chase', x: -30, z: 0, heading: 0, speed: 30, turn: 0, lane: [0, 0], dist: 30, angle: Math.PI };
+  open.list.push(c);
+  for (let t = 0; t < 10 && c.state === 'chase'; t += DT) { H.x += CONFIG.hero.speed * DT; open.update(DT); }
+  expect(['grab', 'cling']).toContain(c.state);
 });

@@ -219,6 +219,14 @@ export function createGame({ seed, cfg = CONFIG }) {
       emit('hide', { from, to: spot, lost });
       return true;
     },
+    // R1f（持ち主 18:14「LOOK OUT!の矢印をタップ」）: LOOK OUT! の矢印の物陰（spot: { x, z }）の向きへ隠れる（M2 の hide と同じ決まり・同じ物陰の探し方。
+    // 矢印は lookout.js が、その向きへ隠れれば同じ物陰へ入るものだけを出す）
+    hideToward(spot) {
+      if (!spot) return false;
+      const dx = spot.x - hero.x, dz = spot.z - hero.z;
+      if (!(Math.hypot(dx, dz) > 1e-6)) return false;
+      return this.hide(dx, dz);
+    },
     // 進行中の一発の読み取り専用の写し（描画が一発ごとに球を描くため）。小爆発は shot.small
     get blasts() {
       return Object.freeze(blasts.map((b) => Object.freeze({ id: b.id, shot: b.shot, front: b.blast.front })));

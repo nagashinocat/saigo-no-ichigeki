@@ -96,7 +96,16 @@ export const CONFIG = {
     },
     // 払うが当たって倒れなかった者（重い者・大物）のよろめき: sec 秒、外へ push m/s（なめらかに 0 へ）と、回る向きへ spin m/s。
     // 止まって見えない（どの瞬間も spin 以上の速さ）。そのあと突っ込み直す
-    stagger: { sec: 0.55, push: 20, spin: 9 },
+    // R1f（持ち主 19:47「払ったあとのよろめきの間に逃げ、撒いて、また溜められる」）: sec 0.55 → 0.77（約 4 割長く）
+    stagger: { sec: 0.77, push: 20, spin: 9 },
+    // R1f（持ち主 19:47「ビル貫通してバイクがくる」「撒けるように」）: 追う者（enemies.js）。ライト（扇・ごく近く・見通し。見つけるときと同じ）で
+    // 見えない間が loseSec 秒を越えると見失い、最後に見た所を探す。見えない間は、最後に見た所へ（reachLastSeen m の内に着くまで。そこへの見通しが
+    // なければ道しるべ flowField.js: navCell m の升、足元を navPad m 広げて通れない升に、主人公のまわり navHalf m の窓。rebuildSec 秒か rebuildDist m
+    // ごとに作り直し、navAhead 升たどった先へ）、着いても見えなければ、そのままの向きで guessDist m 先へ行き過ぎる（角を曲がられれば外れる）。
+    // hearDist m の内の見通しのある主人公は、ライトの向きによらず見えている（すぐ後ろは撒けない。見つけた直後に背を向けていても突っ込める）。
+    // navTurnRate rad/s で向き直り、見えない間は blindSpeed m/s（探す 30・主人公の 28 より遅い。見えていれば突っ込む 32 のまま: 開けた所では追いつかれ、
+    // 角を曲がって見えなくすれば速さで振り切れる）。動いたあと足元（riderPad m 広げた四角）から押し出す
+    chase: { loseSec: 2, hearDist: 15, blindSpeed: 20, reachLastSeen: 3, guessDist: 20, navCell: 2, navPad: 0.9, navHalf: 64, rebuildSec: 0.2, rebuildDist: 3, navAhead: 3, navTurnRate: 18, riderPad: 0.6 },
   },
   score:   { comboStep: 0.1, comboMax: 3 },
   // M1（持ち主 09:11 / 09:15、spec §16）: 主人公が動く。通りと広場の上を浮いたまま speed m/s（軍勢より遅い）で、なめらかに（accelRate 1/秒の
@@ -111,8 +120,7 @@ export const CONFIG = {
   // step m 刻み、向きのずれ 1 rad ごとに offW m 遠いのと同じに数える）へ dashSec 秒でシュッと滑り込む。そこから leaveDist m 離れるまで見つからない。
   // 次の隠れるまで cooldown 秒。掴まれている間はできない
   // 物陰では、ライトが真正面から seeDist m の内を照らさない限り見つからない。同じ物陰にいられるのは holdSec 秒まで（ずっと隠れたままにしない）
-  // R1f（持ち主 18:14「ビルの横にいるだけで素通り」）: seeDist（4）はやめた。物陰の印では見えなくならず、見つかるかは見通しとライトだけ（enemies.js seesHero）
-  hide: { holdSec: 12, dashSec: 0.3, cooldown: 3, range: 26, minDist: 3, step: 1.5, wallDist: 1.6, offW: 6, leaveDist: 3 },
+  hide: { holdSec: 12, seeDist: 4, dashSec: 0.3, cooldown: 3, range: 26, minDist: 3, step: 1.5, wallDist: 1.6, offW: 6, leaveDist: 3 },
   // M1 の操作（持ち主 09:15、制作側の判断）: 溜めているあいだの 2 本目の指は、longPressSec 秒以上で浮かぶジョイスティック（押した所に出て、
   // 指を離すと消える。stickRadiusPx の輪いっぱいで全速、deadPx より内は止まる）、それより短く tapMovePx px 未満の動きで離せば払う
   // M2（持ち主 15:20）: PC の隠れる操作。向きのキーを同じ向きに素早く 2 回押す（keyTwice: mag より深く・window 秒の内・向きのずれ angleDeg° 以内、

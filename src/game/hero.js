@@ -15,7 +15,7 @@ export function heroSpeedFactor(n, cfg = CONFIG) {
 }
 
 // ビルの足元（主人公の半径だけ広げた四角）を、道路の格子の区画ごとに引ける表
-function footprintGrid(buildings, pad) {
+export function footprintGrid(buildings, pad) {
   const P = GRID.PITCH, cells = new Map();
   const key = (i, j) => i * 100003 + j;
   for (const b of buildings) {

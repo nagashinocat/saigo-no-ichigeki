@@ -6,8 +6,12 @@
 // を足した「最善の操作」（best play = 動くボット）。centreAt: 寄る先（既定は街の中心。M2 の「中心から離れて放つ」操作は遠い点）
 import { CONFIG } from '../config.js';
 import { reachNow } from './reach.js';
+import { createLookout } from './lookout.js';
 
-export const BOT = { holdDist: 45, centreSlack: 6, dodgeDist: 16, dodgeW: 1.6, coneW: 1.2, coneSlack: 8 };
+// R1f（持ち主 18:14「LOOK OUT!の矢印をタップ」）: 遊ぶ人と同じく、LOOK OUT! の矢印が出たら、その物陰へ隠れる（st.lookout）。ゲームごとに一つの見張り
+const lookouts = new WeakMap();
+
+export const BOT = { holdR: 40, holdDist: 45, centreSlack: 6, dodgeDist: 16, dodgeW: 1.6, coneW: 1.2, coneSlack: 8 };
 const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
 
 export function steerBot(g, { centreAt = null, cfg = CONFIG, B = BOT } = {}) {
@@ -15,7 +19,7 @@ export function steerBot(g, { centreAt = null, cfg = CONFIG, B = BOT } = {}) {
   const cx = centreAt?.x ?? 0, cz = centreAt?.z ?? 0;
   let mx = 0, mz = 0;
   // M2: 物陰に隠れている間は、近く（holdDist m の内）に軍勢がいるうちは動かない（出れば見つかる）
-  if (h.hidden && Math.hypot(h.x - cx, h.z - cz) < 40 && g.enemies.list.some((e) => e.state !== 'dead' && e.x != null && (!e.patrol || e.hunting) && Math.hypot(e.x - h.x, e.z - h.z) < (B.holdDist ?? 0))) { g.setMove(0, 0); return; }
+  if (h.hidden && Math.hypot(h.x - cx, h.z - cz) < (B.holdR ?? 40) && g.enemies.list.some((e) => e.state !== 'dead' && e.x != null && (!e.patrol || e.hunting) && Math.hypot(e.x - h.x, e.z - h.z) < (B.holdDist ?? 0))) { g.setMove(0, 0); return; }
   const r = Math.hypot(h.x - cx, h.z - cz);
   if (r > B.centreSlack) { mx -= (h.x - cx) / r; mz -= (h.z - cz) / r; }
   for (const e of g.enemies.list) {
@@ -47,10 +51,16 @@ export function steerBot(g, { centreAt = null, cfg = CONFIG, B = BOT } = {}) {
 //  払う: 掴まれている数が grab 以上、または主人公から trigger m 以内に crowd 人以上。wait（既定 true）なら、掴まれているのが grab 未満でも
 //   隠れるがすぐできないとき（次まで待つ間）は、掴む者が maxGrabbing に届くまで払わない（払っても隠れられず、すぐまた掴まれるので）
 //  隠れる: 掴まれていなくて、追う者が hideAt 人以上いる（払った直後も）
-export function actBot(g, st) {
+export function actBot(g, st, cfg = CONFIG) {
   if (st.grab === 'spam') return g.puff() ? 'puff' : null;
   const n = st.crowd < Infinity ? g.enemies.list.filter((e) => e.state !== 'dead' && e.dist <= st.trigger).length : 0;
   if ((g.grabbing >= st.grab || n >= st.crowd) && g.puff()) return 'puff';
+  if (st.lookout && st.hide) {
+    let lo = lookouts.get(g);
+    if (!lo) lookouts.set(g, (lo = createLookout(cfg)));
+    const out = lo.update(st.dt ?? 1 / 30, { hero: g.hero, enemies: g.enemies.list, buildings: g.city.buildings, hideBlock: g.hideBlock, azimuthDeg: 0 });
+    if (out.show && out.spot && g.hideToward(out.spot)) return 'hide';
+  }
   if (st.hide && g.hideBlock === null) {
     const chasers = g.enemies.list.filter((e) => (e.state === 'chase' || e.state === 'stagger') && e.x != null && e.dist < 80);
     // 物陰にいられる時間が切れそうなら、次の物陰へ（追う者がいなくても）

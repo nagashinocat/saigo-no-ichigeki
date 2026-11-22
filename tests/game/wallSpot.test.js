@@ -4,14 +4,13 @@ import { lineOfSight, seesHero } from '../../src/game/enemies.js';
 import { createRng } from '../../src/rng.js';
 import { CONFIG } from '../../src/config.js';
 
-// R1f（持ち主 18:14「たまにビルの横にいるだけで素通りするばしょがあったよ」）。原因（task-R1f-report.md）:
-//  1) 物陰の印（hero.hidden）が、隠れた所から leaveDist（3 m）の内にいる間は最大 holdSec（12 秒）残り、その間はライトが
-//     真正面から seeDist（4 m）の内を照らさない限り誰にも見つからなかった。物陰はビルの壁のそば（wallDist 1.6 m の内）なので、
-//     「ビルの横に立っているだけ」で、通りの向こうから照らす新しい軍勢にも見つからない（ボットの遊び 10 回で、見えているのに
-//     素通りした 1241 件のうち 1230 件がこれ）
-//  2) 見通しの確かめで建物の足元を sightMargin（0.8 m）広げていた。壁の角をかすめる見通しが、見えているのにさえぎられる（3 件）
-// 直したあと: 見つかるかは見通し（建物の足元そのもの）とライトの扇だけで決まる。隠れる（M2）は、追っていた者が見失うことと、
-// 物陰へ跳ぶ間（dashing）だけ見えないこと。本当の物陰（ライトとの間にビルがある）では今も見つからない
+// R1f（持ち主 18:14「たまにビルの横にいるだけで素通りするばしょがあったよ」→ 隠れていないのに、ビルのそばにいるだけで見つからない）。原因（task-R1f-report.md）:
+//  見通しの確かめで建物の足元を sightMargin（0.8 m）広げていた。主人公は壁に触れると足元の縁から主人公の半径（1.2 m）の所に立つので、
+//  壁に沿う向き・角の向こうから照らす見通しが、0.8 m 広げた足元の角をかすめて「さえぎられた」（seed 4 の広場のまわり 40 棟の壁のそばの格子で、
+//  ライトの扇の内で本当は見えている 3454 件のうち 522 件、約 15%）。直したあと: 見通しは足元そのもの（sightMargin 0）。
+//  もう一つの入口は、思わず隠れていたこと（R1e の 2 本目の指のシュッ。持ち主 18:14「払うが…スワイプと誤認識してるのか」）: 隠れた印は物陰から 3 m の内に
+//  最大 12 秒残り、その間は M2 の決まり（真正面から 4 m の内でなければ見つからない）で見つからない。シュッはやめた（隠れるのは LOOK OUT! の矢印を
+//  タップしたときだけ、派手な動きで。tests/input）。M2 の物陰の決まりはそのまま（brief: Keep all the M2 hide rules）
 const E = CONFIG.enemy;
 const R = CONFIG.hero.radius;
 const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
@@ -29,7 +28,7 @@ function wallSpots(b) {
 }
 const insideAny = (bs, x, z, pad) => bs.some((b) => Math.abs(x - b.x) < b.w / 2 + pad && Math.abs(z - b.z) < b.d / 2 + pad);
 
-test('R1f: 壁に触れて立つ主人公（隠れた印が残っていても）は、ライトの扇の内で見通しのある軍勢にはいつも見つかる', () => {
+test('R1f: 壁に触れて立つ（隠れていない）主人公は、ライトの扇の内で見通しのある軍勢にはいつも見つかる', () => {
   const g = createGame({ seed: 4 });
   const bs = g.city.buildings;
   const rand = createRng(77);
@@ -43,11 +42,8 @@ test('R1f: 壁に触れて立つ主人公（隠れた印が残っていても）
         if (insideAny(bs, x, z, 0.8)) continue; // 軍勢は道・空き地の上
         if (!lineOfSight(x, z, bs, 0, p.x, p.z)) continue; // 見えない（本当の物陰）は別のテスト
         const heading = Math.atan2(p.z - z, p.x - x) + (rand() - 0.5) * 2 * E.spotHalfAngle * 0.95;
-        for (const hidden of [false, true]) {
-          cases++;
-          const H = { ...p, hidden, hideT: 1, dashing: null };
-          if (!seesHero({ x, z, heading }, H, bs, CONFIG)) missed.push({ b: b.id, p, rider: { x, z }, hidden });
-        }
+        cases++;
+        if (!seesHero({ x, z, heading }, { ...p, hidden: false, dashing: null }, bs, CONFIG)) missed.push({ b: b.id, p, rider: { x, z } });
       }
     }
   }
@@ -70,33 +66,30 @@ test('R1f: 本当の物陰（軍勢との間にビルがある）では、ライ
   expect(cases).toBeGreaterThan(20);
 });
 
-test('R1f: 隠れたあと物陰に立ったままでも、通りの向こうからライトで照らす新しい軍勢には見つかる（隠れた印は消える）', () => {
+test('R1f: 隠れていない主人公が壁のそばを歩いていて、通りの向こうからライトで照らす軍勢には見つかる（ゲームの中で。種 1〜6）', () => {
   const quiet = { ...CONFIG, enemy: { ...E, spawnPerSec: 0, patrol: { ...E.patrol, count: 0 }, kinds: {} } };
   let tried = 0, found = 0;
   for (const seed of [1, 2, 3, 4, 5, 6]) {
     const g = createGame({ seed, cfg: quiet });
     g.begin(); g.pressStart();
-    for (let i = 0; i < 10; i++) g.update(1 / 30);
-    const ok = [[1, 0], [0, 1], [-1, 0], [0, -1], [0.7, 0.7], [-0.7, 0.7]].some((d) => g.hide(d[0], d[1]));
-    if (!ok) continue;
-    for (let i = 0; i < 15; i++) g.update(1 / 30);
-    expect(g.hero.hidden).toBe(true);
-    expect(g.hero.dashing).toBeNull();
-    // 見通しのある向きから、主人公の方を向いて来る者を置く（主人公から 20 m）
-    const H = g.hero, bs = g.city.buildings;
+    const bs = g.city.buildings, H = g.hero;
+    // 広場のそばのビルの東の壁に触れて立つ
+    const b = bs.filter((x) => Math.hypot(x.x, x.z) > 30 && Math.hypot(x.x, x.z) < 90).sort((p, q) => Math.hypot(p.x, p.z) - Math.hypot(q.x, q.z))[0];
+    H.x = b.x + b.w / 2 + R; H.z = b.z;
+    if (insideAny(bs, H.x, H.z, R - 1e-6)) continue;
+    // 壁に沿う向き（北か南）の 20〜30 m 先から、主人公の方を向いて来る者（見通しのある方）
     let placed = null;
-    for (let k = 0; k < 64 && !placed; k++) {
-      const a = (k / 64) * Math.PI * 2, x = H.x + Math.cos(a) * 20, z = H.z + Math.sin(a) * 20;
-      if (!insideAny(bs, x, z, 1) && lineOfSight(x, z, bs, 0, H.x, H.z)) placed = { x, z, a };
+    for (const s of [1, -1]) for (const d of [30, 25, 20]) {
+      const x = H.x + 0.6, z = H.z + s * d;
+      if (!placed && !insideAny(bs, x, z, 1) && lineOfSight(x, z, bs, 0, H.x, H.z)) placed = { x, z, heading: s > 0 ? -Math.PI / 2 : Math.PI / 2 };
     }
     if (!placed) continue;
     tried++;
-    const r = { id: 990, state: 'search', x: placed.x, z: placed.z, heading: wrap(placed.a + Math.PI), speed: 0, turn: 0, searchTime: 0, lane: [0, 0], ni: 0, nj: 0, di: 1, dj: 0 };
-    r.dist = 20; r.angle = placed.a;
+    const r = { id: 990, state: 'search', x: placed.x, z: placed.z, heading: placed.heading, speed: 0, turn: 0, searchTime: 0, lane: [0, 0], ni: 0, nj: 0, di: 0, dj: 1 };
+    r.dist = Math.hypot(r.x - H.x, r.z - H.z); r.angle = Math.atan2(r.z - H.z, r.x - H.x);
     g.enemies.list.push(r);
     for (let i = 0; i < 12; i++) g.update(1 / 30);
     if (['chase', 'grab', 'cling'].includes(r.state)) found++;
-    expect(g.hero.hidden).toBe(false);
   }
   expect(tried).toBeGreaterThanOrEqual(4);
   expect(found).toBe(tried);

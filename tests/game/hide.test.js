@@ -54,8 +54,6 @@ test('M2: 隠れると、シュッと物陰へ滑り込み、追っていた者�
   for (const d of [[1, 0], [0, 1], [0, -1], [0.7, 0.7], [0.7, -0.7]]) if ((ok = g.hide(d[0], d[1]))) { dir = d; break; }
   expect(ok).toBe(true);
   expect(g.hero.dashing).not.toBeNull(); // 滑り込みの進み具合 0〜1
-  expect(seesHero({ ...c, heading: Math.atan2(g.hero.z - c.z, g.hero.x - c.x) }, g.hero, [], CONFIG)).toBe(false); // 跳ぶ間は見えない
-  const cAt = { x: c.x, z: c.z };
   expect(c.state).toBe('search');
   expect(Math.hypot(c.heard.x - from.x, c.heard.z - from.z)).toBeLessThan(1e-6);
   step(g, HC.dashSec + 0.05);
@@ -64,10 +62,13 @@ test('M2: 隠れると、シュッと物陰へ滑り込み、追っていた者�
   const moved = Math.hypot(g.hero.x - from.x, g.hero.z - from.z);
   expect(moved).toBeGreaterThan(2);
   expect(moved).toBeLessThanOrEqual(HC.range + 1e-6);
-  // 物陰は、隠れた瞬間の追っていた者の所からビルにさえぎられて見えない所。跳ぶ間（dashing）は誰にも見えない。
-  // R1f（持ち主 18:14「ビルの横にいるだけで素通り」）: 物陰の印だけでは見えなくならない（着いたあとは見通しとライトで決まる。
-  // tests/game/wallSpot.test.js）。M2 の「物陰にいる間は誰にも見つからない」はやめた
-  expect(lineOfSight(cAt.x, cAt.z, g.city.buildings, 0, g.hero.x, g.hero.z)).toBe(false);
+  // 物陰にいる間（動かない）は誰にも見つからず、追っていた者は今の主人公ではなく最後に見た所へ向かう
+  for (let t = 0; t < 2; t += DT) {
+    g.update(DT);
+    expect(c.state).toBe('search');
+    expect(seesHero({ ...c, heading: Math.atan2(g.hero.z - c.z, g.hero.x - c.x) }, g.hero, [], CONFIG)).toBe(false);
+  }
+  expect(Math.hypot(c.x - from.x, c.z - from.z)).toBeLessThan(34);
   expect(c.heard).toBeTruthy();
 });
 
