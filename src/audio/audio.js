@@ -223,7 +223,7 @@ export function createAudio({ nav = globalThis.navigator, makeMedia = (src) => n
   let bgmBus = null;
   let introAn = null; // 調べる用の analyser（introAnalyser）
   let introBus = null; // S6: 導入の音の出口（master・out を通さずリミッターへ。導入の音は introSfx.js が組む）
-  let boomBus = null; // 爆発の音のまとめ（天井の曲線を通って master へ）
+  let boomBus = null, boomClip = null; // 爆発の音のまとめ（天井の曲線 boomClip を通って master へ）
   let drone = null; // 時間切れの結末の低い唸り（鳴っている間だけ）
   let hidden = false; // タブが隠れている間（suspend から resume まで）
   // R1f: 一番上の大きさ（リミッター → top → スピーカー。切り替えのときにまとめて 0 へ落とす）と、効果音の大きさ（世界の音・演出の音・瓦礫の音の出口）。
@@ -294,6 +294,7 @@ export function createAudio({ nav = globalThis.navigator, makeMedia = (src) => n
     boomBus.gain.value = 1 / BOOM_CLIP.range;
     const clip = ctx.createWaveShaper(); clip.curve = boomClipCurve(); clip.oversample = '2x';
     boomBus.connect(clip); clip.connect(master);
+    boomClip = clip;
     debrisLp = ctx.createBiquadFilter();
     debrisLp.type = 'lowpass'; debrisLp.frequency.value = 20000; debrisLp.Q.value = 0.5;
     debrisBus = ctx.createGain(); debrisBus.gain.value = DEBRIS_LEVEL.open;
@@ -403,6 +404,31 @@ export function createAudio({ nav = globalThis.navigator, makeMedia = (src) => n
   }
 
   return {
+    // 持ち主 2026-11-23 08:41: その場のリトライ（ページを読み直さない）。前の一回の音を止め、予約した先の音も取り消して、読み直したページと
+    // 同じ姿へ: 世界の音（master）とこもり（out）をすぐ元へ（無音・宇宙のこもり・無音のあとの地鳴りが 6 秒後に戻す予約も消す）、演出の道（cine:
+    // 心臓の鼓動・地響き・地鳴り・唸り）と爆発の音の道は外して作り直し（鳴っている尾も予約もまとめて聞こえなくなる）、ループの地響きと唸りは止め、
+    // 貯めの唸り・じわじわ期の脈動・吸われる音は 0、瓦礫の音の道はふつうへ、無音の終わり（silenceEnd）も戻す。
+    // AudioContext は止めも閉じもしない（音の許可が残る）。止まっている間（演出中のメニュー）でも効く
+    resetRound() {
+      silenceEnd = 0;
+      collapseGate.reset();
+      if (!ctx) return;
+      const t = now();
+      const stopAll = (nodes) => { for (const n of nodes ?? []) { try { n.stop(t); } catch { /* 済み */ } } };
+      stopAll(rumbleSrcs); rumbleSrcs = null;
+      if (drone) { stopAll(drone.srcs); drone = null; }
+      const oldCine = cine;
+      cine = ctx.createGain(); cine.gain.value = 0.9; cine.connect(out);
+      oldCine.disconnect();
+      const oldBoom = boomBus;
+      boomBus = ctx.createGain(); boomBus.gain.value = 1 / BOOM_CLIP.range; boomBus.connect(boomClip);
+      oldBoom.disconnect();
+      master.gain.cancelScheduledValues(t); master.gain.setValueAtTime(0.8, t);
+      out.frequency.cancelScheduledValues(t); out.frequency.setValueAtTime(20000, t);
+      for (const g of [hum.gain.gain, rumbleNode.gain.gain, rumbleNode.lfoGain.gain]) { g.cancelScheduledValues(t); g.setValueAtTime(0, t); }
+      quietVoices(t + 0.03);
+      setDebris('open');
+    },
     // R1: 払うの腕前（×k）の音。pan: 画面の左右（cues.screenPan）。k が増えるたびに一段ずつ上がる
     combo(k, pan = 0) {
       if (!ready()) return;

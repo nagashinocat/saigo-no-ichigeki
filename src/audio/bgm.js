@@ -225,6 +225,21 @@ export function createBgm(getOutput) {
       p.setValueAtTime(p.value, t + sec * FADE_HOLD);
       p.linearRampToValueAtTime(0, t + sec * FADE_END);
     },
+    // 持ち主 2026-11-23 08:41: その場のリトライ。予約した拍も鳴っている音も止め、引き伸ばし・静かな変奏・こもりを消して、まだ鳴らしていない姿（off）へ。
+    // 次の start で、読み直したページと同じ最初の BGM が鳴る（作った楽器の音と道はそのまま使う）
+    reset() {
+      pendingQuiet = null;
+      seq = null;
+      state = 'off';
+      stretchEnd = Infinity;
+      lastHolding = false;
+      if (!ctx) { live = []; return; }
+      const t = now();
+      for (const n of live) { try { n.src.stop(t); } catch { /* 済み */ } n.g.disconnect?.(); }
+      live = [];
+      outGain.gain.cancelScheduledValues(t); outGain.gain.setValueAtTime(0, t);
+      lp.frequency.cancelScheduledValues(t); lp.frequency.setValueAtTime(20000, t);
+    },
     // タブが隠れた / 戻った（AudioContext も止まるので、予約した音は時刻ごと止まる）
     pause() { paused = true; },
     resume() { paused = false; },
