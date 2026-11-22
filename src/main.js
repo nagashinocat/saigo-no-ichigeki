@@ -29,6 +29,7 @@ import { createKeyTwice } from './input/keyTwice.js';
 import { createPuffBuffer } from './input/puffBuffer.js';
 import { createMenu, retryRound } from './ui/menu.js';
 import { createPause } from './ui/pause.js';
+import { bindPageLeave } from './ui/pageLeave.js';
 import { createHideMark, hideMarkState } from './ui/hideMark.js';
 import { createLookout } from './game/lookout.js';
 import { createLookoutView } from './ui/lookoutView.js';
@@ -249,15 +250,12 @@ const menu = createMenu({ button: document.getElementById('menuBtn'), panel: doc
     if (kind && t - previewAt > 150) { previewAt = t; audio.preview(kind); }
   },
 });
+// 隠れる・切り替える: 押下を打ち切り（放たず、貯めた力は残る。ui/pause.js）、遊んでいる間ならメニューを開いておく（戻ったら「つづける」で再開）
 function leavePage() { clipRestored(); if (clipSession.busy) clipSession.cancel(); // fix2: 戻す早送りの途中で隠れても、瓦礫の音の道は黙らせたままにしない
  if (menuAvailable()) { menu.setAvailable(true); menu.open(); } pause.set('tab', true); }
-window.addEventListener('pagehide', leavePage);
-// fix1（見直し Minor 7）: iOS の一部（コントロールセンターなど）は visibilitychange が来ない。タッチの端末だけ、blur でも一時停止する（PC で誤って止めない）
-if (touchDevice) {
-  window.addEventListener('blur', leavePage);
-  window.addEventListener('focus', () => { if (!document.hidden) pause.set('tab', false); });
-}
-window.addEventListener('pageshow', () => { if (!document.hidden) pause.set('tab', false); });
+// タブを隠す・pagehide・window の blur で一時停止（ui/pageLeave.js）。最終レビュー I1: PC の blur（Alt+Tab・別のウィンドウ）も、
+// 遊んでいる間と演出の間（メニューを出せる間）は止める。タッチの端末は今までどおりどの画面でも
+bindPageLeave({ win: window, doc: document, touch: touchDevice, inPlay: menuAvailable, leave: leavePage, back: () => pause.set('tab', false) });
 window.addEventListener('keyup', (e) => { keysDown.delete(e.code); if (MOVE_KEYS.includes(e.code)) { const v = keyVector(keysDown); keyFlick.push(v.x, v.y, nowSec()); } });
 // PC はマウスで長押ししながら、もう片方の手の Space キーで小爆発
 window.addEventListener('keydown', (e) => {
@@ -293,11 +291,6 @@ window.addEventListener('keydown', (e) => {
 });
 // fix2: 手で写す箱の中は長押しのメニューを止めない（携帯で選んでコピーできるように）
 window.addEventListener('contextmenu', (e) => { if (!allowsNativeMenu(e.target)) e.preventDefault(); });
-document.addEventListener('visibilitychange', () => {
-  // 隠れる前に押下を打ち切る（放たず、貯めた力は残る。戻ってきたとき指が引っかかったままにならない）。R1f: 一時停止（ui/pause.js）に任せ、
-  // 遊んでいる間ならメニューを開いておく（戻ったら「つづける」で再開）
-  if (document.hidden) leavePage(); else pause.set('tab', false);
-});
 // 終わり: 最後の一発は、演出（cinematic）とリプレイが最後まで終わって（replay の 'replayEnd'）から結果。
 // ブラックホール（時間切れ）は、その演出（blackhole）が暗転しきって 'end' を知らせてから結果
 const RESULT_DELAY = 0.15;
