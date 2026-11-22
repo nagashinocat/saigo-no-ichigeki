@@ -29,7 +29,8 @@ test('R1f fix1: 動く主人公（通りを渡り角を曲がり、壁に沿っ�
         prev.set(e.id, { x: e.x, z: e.z, hx: g.hero.x, hz: g.hero.z, state: e.state });
         if (!p || e.dist > 25) continue;
         frames++;
-        const orbit = (e.state === 'grab' || e.state === 'cling') && (p.state === 'grab' || p.state === 'cling');
+        // 掴む・群がる者（と、そこから払われてよろめき始めたフレーム: 前のフレームは主人公と一緒に動いていた）は主人公に対する動きで測る
+        const orbit = (p.state === 'grab' || p.state === 'cling') && (e.state === 'grab' || e.state === 'cling' || e.state === 'stagger');
         const moved = orbit
           ? Math.hypot((e.x - g.hero.x) - (p.x - p.hx), (e.z - g.hero.z) - (p.z - p.hz)) / DT
           : Math.hypot(e.x - p.x, e.z - p.z) / DT;

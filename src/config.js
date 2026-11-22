@@ -10,8 +10,8 @@ export const CONFIG = {
   // 貯めた力: 長押しの間だけ chargePerSec で貯まる（max で止まる）。離すと最後の一発（minRelease 未満なら放たず、貯めた力は残る）
   // M2（§16 の釣り合い。数は task-M2-report.md）: 払うが 3 回になり、隠れるで見失わせられるので、貯める速さ 3 → 1.9/秒
   // （見つからずに貯めきって約 53 秒。最善の操作で満タン p50 約 53 秒・撃退成功 7〜8 割）
-  // R1f（持ち主 19:47「一回見つかって払うとほぼ詰む」・今日の街）: 1.9 → 1.92（見つからずに貯めきって約 52.1 秒）。fix1: 払う 4・吸う 0.8 と合わせて、
-  // 一度見つかって払っても満タンに届く余り（60 秒で 115 − 払う 4 × 3）を作る。今日の街 120 日で最善の撃退成功 84/120（70%）、満タン p50 52.1 秒
+  // R1f（持ち主 19:47「一回見つかって払うとほぼ詰む」・今日の街）: 1.9 → 1.92（見つからずに貯めきって約 52.1 秒）。fix2: 払う 3.5・吸う 1.2 と合わせて、
+  // 一度見つかって払っても満タンに届く余り（60 秒で 115 − 払う 3.5 × 3）を作る。今日の街 360 日（2026-07・11、2027-03 から 120 日ずつ）で最善の撃退成功 75%
   // （数は task-R1f-report.md。scripts/daily-balance.mjs）
   power:   { max: 100, chargePerSec: 1.92, minRelease: 10 },
   // 小爆発: 貯めた力を cost 使い、主人公のまわり radius m の軍勢を払う（ビルは壊さず、破壊額にも入らない）
@@ -20,9 +20,9 @@ export const CONFIG = {
   // R1: 一度の払うで combo.from 体以上を払うと「×k」を出す（見せるだけ。力は戻さない: 持ち主 09:11 で払うは回数制限になるため、
   // 力を戻す払うの腕前はやめた）
   // M2（持ち主 09:11「払うを 3 回くらいの回数制限」）: 1 回のゲームで uses 回まで。払うたびに力も cost 使う（2.8 → 4.5。持ち主の選択）
-  // R1f fix1（まとめ役の判断: 持ち主の選んだ 4.5 から、目標を満たすいちばん高い費用）: 4.5 → 4。今日の街 120 日で 4.5 は吸う 0.8 でも 81/120（68%）で届かず、
-  // 4 は吸う 0.8 で 84/120（70%）。表は task-R1f-report.md（Fix round 1）
-  puff:    { cost: 4, uses: 3, radius: 22, combo: { from: 3 } },
+  // R1f fix1: 4.5 → 4（吸う 0.8 と合わせて）。表は task-R1f-report.md（Fix round 1）
+  // fix2（まとめ役の判断）: 4 → 3.5（吸う 1.2 のまま）
+  puff:    { cost: 3.5, uses: 3, radius: 22, combo: { from: 3 } },
   // 最後の一発の半径（貯めた力 / power.max で決まる）。S8: max 440 → 720（街の端 680 m と、見回る軍勢の一番外
   // （maxEnemyReach、約 603 m）より十分先まで。最大溜めなら街のどこにいる軍勢も必ず巻き込む）
   // fix1（持ち主 15:33「軍勢は街の全体に」）: 見回る者が街の端まで行くので max 720 → 730（maxEnemyReach 約 685 m + 40 m より先）
@@ -61,8 +61,9 @@ export const CONFIG = {
   enemy:   {
     // R1（重い者・吸う者・大物を入れた仮の釣り合い。持ち主 09:11 で動く主人公と払うの回数制限に変わるので、そこで作り直す）:
     // 払う 3 → 2.8、吸う 1.4 → 1.5/秒（tests/game/balance.test.js の範囲に戻す。数は task-R1-report.md）
-    // R1f: 吸う 1.5 → 1.2/秒。fix1: 払うを 4 に戻したので 0.8/秒（6 人で 4.8/秒。貯める速さの 2.5 倍、払わず隠れずでは届かない）
-    spawnPerSec: 0.5, surgeStart: 40, surgeEnd: 52, surgeMul: 11, drainPerSec: 0.8, maxGrabbing: 6,
+    // R1f: 吸う 1.5 → 1.2/秒（6 人で 7.2/秒）。fix1 で 0.8 にしたのは、まとめ役の判断で 1.2 に戻した
+    // fix2（まとめ役の判断）: 0.8 → 1.2 に戻す
+    spawnPerSec: 0.5, surgeStart: 40, surgeEnd: 52, surgeMul: 11, drainPerSec: 1.2, maxGrabbing: 6,
     spawnDist: [50, 66], roamDist: 75, laneSpread: 1.6,
     searchSpeed: 30, inwardBias: 0.8, turnRate: 16, lookAhead: 2.5, accel: 30, brake: 70,
     // M2（持ち主 09:11「敵の前方ライトを少し広くして」）: 見つけるのは前を照らすライトの中だけ。前の 28 m の丸 → 前向きの扇
@@ -71,7 +72,8 @@ export const CONFIG = {
     // 来ない。見つかれば知らせで集まる）。12 / 0.05 / 0.1 → Infinity / 0 / 0
     // R1f（持ち主 18:14）: sightMargin 0.8 → 0（壁に触れて立つ主人公への、角をかすめる見通しが、見えているのにさえぎられていた。
     // 壁のそばの格子で見えている 3454 件のうち 522 件。tests/game/wallSpot.test.js）
-    spotDist: 36, spotHalfAngle: 0.8, spotNear: 5, spotEvery: 0.15, sightMargin: 0, alertAfter: Infinity, alertRate: 0, alertAtSpawn: 0,
+    // fix2（三つの時期の今日の街で 7 割を保つ）: ライトの扇の半分の角 0.8 → 0.7 rad（46° → 40°）
+    spotDist: 36, spotHalfAngle: 0.7, spotNear: 5, spotEvery: 0.15, sightMargin: 0, alertAfter: Infinity, alertRate: 0, alertAtSpawn: 0,
     // M2（「見つかったらどんどん集まってくる」）: 見つけた者は光り、radius m の内の探す者・見回る者へ知らせる。知らされた者は relayDelay 秒で
     // 次へ伝える（hops 段まで）。主人公が見えている追う者・掴む者は callEvery 秒ごとに知らせ直す（最後に見えた所が今の主人公へ）。
     // 知らされただけの者は最後に見えた所へ向かい、そこから sweepDist m の内を探し回る（自分で見つけたら今の主人公を追う）
@@ -133,7 +135,8 @@ export const CONFIG = {
   // crouchCreep だけ進む）、高さ leapH m の弧で跳ぶ（道すじが kickMinLen m 以上で、真ん中から kickNear m の内にビルの面があれば、その壁を蹴る）。
   // 物陰に着くのは dashSec 秒（前のまま）。そのあと landSec 秒、着地のしゃがみ（見た目だけ）。残像・光の尾・着地の光は render/hideAction.js
   hideAction: { crouchSec: 0.06, crouchCreep: 0.04, leapH: 4, kickMinLen: 6, kickNear: 3.5, landSec: 0.16 },
-  hide: { holdSec: 12, seeDist: 4, dashSec: 0.3, cooldown: 3, range: 26, minDist: 3, step: 1.5, wallDist: 1.6, offW: 6, leaveDist: 3 },
+  // fix2: 同じ物陰にいられる秒 holdSec 12 → 16（三つの時期の今日の街で 7 割を保つ。task-R1f-report.md Fix round 2）
+  hide: { holdSec: 16, seeDist: 4, dashSec: 0.3, cooldown: 3, range: 26, minDist: 3, step: 1.5, wallDist: 1.6, offW: 6, leaveDist: 3 },
   // M1 の操作（持ち主 09:15、制作側の判断）: 溜めているあいだの 2 本目の指は、longPressSec 秒以上で浮かぶジョイスティック（押した所に出て、
   // 指を離すと消える。stickRadiusPx の輪いっぱいで全速、deadPx より内は止まる）、それより短く tapMovePx px 未満の動きで離せば払う
   // M2（持ち主 15:20）: PC の隠れる操作。向きのキーを同じ向きに素早く 2 回押す（keyTwice: mag より深く・window 秒の内・向きのずれ angleDeg° 以内、

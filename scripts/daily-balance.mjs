@@ -22,9 +22,12 @@ const J = (k) => JSON.parse(process.env[k] ?? '{}');
 const CONFIG = { ...BASE, enemy: { ...BASE.enemy, ...J('ENEMY'), alert: { ...BASE.enemy.alert, ...J('ALERT') }, chase: { ...BASE.enemy.chase, ...J('CHASE') } }, hide: { ...BASE.hide, ...J('HIDE') }, power: { ...BASE.power, ...J('POWER') }, puff: { ...BASE.puff, ...J('PUFF') } };
 const DT = 1 / 30;
 const dayKeys = (from, n) => Array.from({ length: n }, (_, i) => { const d = new Date(Date.UTC(+from.slice(0, 4), +from.slice(4, 6) - 1, +from.slice(6, 8)) + i * 864e5); return `${d.getUTCFullYear()}${String(d.getUTCMonth() + 1).padStart(2, '0')}${String(d.getUTCDate()).padStart(2, '0')}`; });
+// fix2: 既定は三つの時期（2026-07-01・2026-11-01・2027-03-01 から DAYS 日ずつ）。FROMS=YYYYMMDD,… か FROM=YYYYMMDD（一つ）で変えられる
+const FROMS = (process.env.FROMS ?? process.env.FROM ?? '20260701,20261101,20270301').split(',');
+const PERIOD = [];
 const SEEDS = process.env.CITIES === 'ints'
   ? Array.from({ length: Number(process.env.SEEDS ?? 30) }, (_, i) => i + 1)
-  : dayKeys(process.env.FROM ?? '20261101', Number(process.env.DAYS ?? 120)).map(citySeed);
+  : FROMS.flatMap((f) => dayKeys(f, Number(process.env.DAYS ?? 120)).map((k) => { PERIOD.push(f); return citySeed(k); }));
 const QUICK = !!process.env.QUICK;
 const BEST = { grab: 2, trigger: 0, crowd: Infinity, hide: true, ...J('BEST') };
 const NO = { grab: Infinity, trigger: 0, crowd: Infinity, hide: false };
@@ -53,7 +56,7 @@ function run(seed, st) {
   }
   const rs = g.runStats;
   lost = g.enemies.lostCount ?? 0;
-  return { full, end: g.power.value, lv, grabPuff: grabPuffAt != null, recovered, spotted: rs.spotted, hides: rs.hides, lost };
+  return { full, end: g.power.value, lv, grabPuff: grabPuffAt != null, recovered, spotted: rs.spotted, hides: rs.hides, lost, drained: g.drainedTotal > 0 };
 }
 
 const t0 = Date.now();
@@ -61,7 +64,7 @@ const best = SEEDS.map((s) => run(s, BEST));
 const no = QUICK ? [] : SEEDS.map((s) => run(s, NO));
 const N = SEEDS.length;
 const got = best.map((r) => r.full).filter(Number.isFinite);
-console.log(`街 ${N}（${process.env.CITIES === 'ints' ? `seed 1〜${N}` : `今日の街 ${process.env.FROM ?? '20261101'} から ${N} 日`}）`);
+console.log(`街 ${N}（${process.env.CITIES === 'ints' ? `seed 1〜${N}` : `今日の街 ${FROMS.join('・')} から ${process.env.DAYS ?? 120} 日ずつ`}）`);
 console.log(`最善: 満タンに届いた ${got.length}/${N}（${(100 * got.length / N).toFixed(0)}%）  満タンの時刻（届いた回） p25=${q(got, 0.25)?.toFixed(1)} p50=${q(got, 0.5)?.toFixed(1)} p75=${q(got, 0.75)?.toFixed(1)}`);
 let bestL = null;
 for (const [i, L] of LEVELS.entries()) {
@@ -70,6 +73,10 @@ for (const [i, L] of LEVELS.entries()) {
   if (!bestL || ok > bestL.ok) bestL = { L, ok };
 }
 console.log(`best clear: L=${bestL.L} で ${bestL.ok}/${N}（${(100 * bestL.ok / N).toFixed(0)}%）`);
+// fix2: 時期ごとの best clear（同じ L）と、一度でも吸われた回だけの満タンの時刻 p50
+if (PERIOD.length) for (const f of FROMS) { const rs = best.filter((_, i) => PERIOD[i] === f); const ok = rs.filter((r) => r.lv[LEVELS.indexOf(bestL.L)]?.clear).length; console.log(`  ${f} から: ${ok}/${rs.length}（${(100 * ok / rs.length).toFixed(1)}%）  満タン p50=${q(rs.map((r) => r.full).filter(Number.isFinite), 0.5)?.toFixed(1)}`); }
+const dr = best.filter((r) => r.drained && Number.isFinite(r.full)).map((r) => r.full);
+console.log(`一度でも吸われて満タンに届いた回 ${dr.length}: 満タンの時刻 p50=${q(dr, 0.5)?.toFixed(1)}`);
 const at100 = best.map((r) => r.lv[LEVELS.indexOf(100)]).filter(Boolean);
 console.log(`満タンで放った回 ${at100.length}: 撃退成功 ${at100.filter((r) => r.clear).length}  中心からの距離 最大 ${at100.length ? Math.max(...at100.map((r) => r.centre)).toFixed(1) : '-'} m`);
 const gp = best.filter((r) => r.grabPuff);

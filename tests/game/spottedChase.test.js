@@ -231,8 +231,10 @@ test('R1f: 見えている間は見失わない。掴む者は（壁の陰に回
 });
 
 // fix1（見直し Important 3）: 見えない追う者は「最後に誰かが見た所」へ向かい（今の主人公は知らない）、そこで見えなければ行き過ぎて見失う。
-// 街ごとに、角の内側にビルがあって角の向こうが見えない 2 つ角の道すじ（真っすぐ 1 区画 → 曲がって 1 区画 → 曲がり戻して 1 区画）を選び、
-// 28〜34 m 後ろの追う者から逃げる。今日の街 12（120 日を 10 日おき）
+// 街ごとに、角の内側にビルがあって角の向こうが見えない 2 つ角の道すじ（真っすぐ 1 区画 → 曲がって 1 区画 → 曲がり戻して 1 区画）を選んで逃げる。
+// fix2（まとめ役の判断）: 受け入れは「28 m 以上後ろから角を 2 つ曲がれば、たいていの街で撒ける」。25 m では撒けなくてよい（角の手前で追う者が
+// 対角に詰め、角の向こうの最初の数 m がまだ見える）。街は三つの時期（2026-07-01・2026-11-01・2027-03-01）から 4 つずつ（計 12、30 日おき）。
+// 測った数（今日の街 24 × 三つの時期、5 日おき）: 25 m 3〜10/24、28 m 16〜20/24、30 m 14〜22/24、34 m 20〜22/24
 import { citySeed } from '../../src/game/daily.js';
 const P = 26;
 const node = (i, j) => [(i + 0.5) * P, (j + 0.5) * P];
@@ -264,20 +266,30 @@ function shake(seed, gap) {
   }
   return { state: r.state, lost: g.enemies.lostCount, heard: r.heard, known: g.enemies.known };
 }
-const DAILY12 = Array.from({ length: 12 }, (_, k) => { const d = new Date(Date.UTC(2026, 10, 1) + k * 10 * 864e5); return citySeed(`${d.getUTCFullYear()}${String(d.getUTCMonth() + 1).padStart(2, '0')}${String(d.getUTCDate()).padStart(2, '0')}`); });
+const dk = (y, m, d, i) => { const t = new Date(Date.UTC(y, m, d) + i * 864e5); return `${t.getUTCFullYear()}${String(t.getUTCMonth() + 1).padStart(2, '0')}${String(t.getUTCDate()).padStart(2, '0')}`; };
+const DAILY12 = [[2026, 6, 1], [2026, 10, 1], [2027, 2, 1]].flatMap(([y, m, d]) => Array.from({ length: 4 }, (_, k) => citySeed(dk(y, m, d, k * 30))));
 
-test('R1f fix1: 28〜34 m 後ろの追う者は、角を 2 つ曲がれば、たいていの街で撒ける（見失って最後に誰かが見た所を探す）', () => {
-  expect(CH.loseSec).toBeCloseTo(1.5, 6);
+test('R1f fix2: 28 m 以上後ろの追う者は、角を 2 つ曲がれば、たいていの街（三つの時期の 12 の街のうち 7 以上）で撒ける（見失って最後に誰かが見た所を探す）', () => {
+  expect(CH.loseSec).toBeGreaterThanOrEqual(1.3);
+  expect(CH.loseSec).toBeLessThanOrEqual(2);
   expect(CH.hearDist).toBeGreaterThanOrEqual(8);
   expect(CH.hearDist).toBeLessThanOrEqual(10);
   expect(CH.blindSpeed).toBeLessThan(CONFIG.hero.speed);
-  for (const gap of [28, 34]) {
+  for (const gap of [28, 30, 34]) {
     const runs = DAILY12.map((s) => shake(s, gap)).filter(Boolean);
     expect(runs.length).toBe(12);
     const shaken = runs.filter((r) => r.state === 'search');
     expect(shaken.length, `gap ${gap}`).toBeGreaterThanOrEqual(7);
     for (const r of shaken) { expect(r.lost).toBe(1); expect(r.heard.x).toBeCloseTo(r.known.x, 6); expect(r.heard.z).toBeCloseTo(r.known.z, 6); }
   }
+});
+
+// fix2: 25 m 後ろからは撒けなくてよい（隠さずに書いておく受け入れの外の端）。撒けるのは 28 m より少ないことだけを確かめる（数は上のコメント）
+test('R1f fix2（受け入れの外・記録）: 25 m 後ろからは、角を 2 つ曲がっても撒けない街が多くてよい（28 m より撒けにくい）', () => {
+  const at = (gap) => DAILY12.map((s) => shake(s, gap)).filter((r) => r?.state === 'search').length;
+  const n25 = at(25), n28 = at(28);
+  expect(n25).toBeLessThanOrEqual(n28);
+  expect(n25).toBeLessThan(12);
 });
 
 test('R1f fix1: 開けた所で 12 m 後ろの追う者は撒けない（見えている間は突っ込む 32 m/s で追いつく）', () => {

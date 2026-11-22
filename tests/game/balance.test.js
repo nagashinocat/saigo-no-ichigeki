@@ -19,8 +19,10 @@ import { citySeed } from '../../src/game/daily.js';
 const DT = 1 / 30;
 const BEST = { grab: 2, trigger: 0, crowd: Infinity, hide: true };
 const NO_PUFF = { grab: Infinity, trigger: 0, crowd: Infinity, hide: false };
-const dayKey = (i) => { const d = new Date(Date.UTC(2026, 10, 1) + i * 864e5); return `${d.getUTCFullYear()}${String(d.getUTCMonth() + 1).padStart(2, '0')}${String(d.getUTCDate()).padStart(2, '0')}`; };
-const SEEDS = Array.from({ length: 24 }, (_, i) => citySeed(dayKey(i * 5)));
+// fix2（まとめ役の判断: 三つの時期で頑健に）: 2026-07-01・2026-11-01・2027-03-01 から 120 日ずつの時期から、それぞれ 15 日おきに 8 の街（計 24）。
+// sim（scripts/daily-balance.mjs、360 日すべて）: 最善の撃退成功 270/360（75%。時期ごと 72.5% / 79.2% / 73.3%）。この 24 の街で 17/24 が満タン、p50 52.1 秒
+const dayKey = (y, m, d, i) => { const t = new Date(Date.UTC(y, m, d) + i * 864e5); return `${t.getUTCFullYear()}${String(t.getUTCMonth() + 1).padStart(2, '0')}${String(t.getUTCDate()).padStart(2, '0')}`; };
+const SEEDS = [[2026, 6, 1], [2026, 10, 1], [2027, 2, 1]].flatMap(([y, m, d]) => Array.from({ length: 8 }, (_, i) => citySeed(dayKey(y, m, d, i * 15))));
 function play(seed, st = BEST, { centreAt = null } = {}) {
   const g = createGame({ seed });
   g.begin(); g.pressStart();
