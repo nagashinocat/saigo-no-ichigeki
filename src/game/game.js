@@ -196,6 +196,8 @@ export function createGame({ seed, cfg = CONFIG }) {
     // M2: 残りの払える回数（HUD の 3 つの点）と、今払えない理由（'out' / 'short' / 'busy' / 'off'。払えるなら null）
     get puffsLeft() { return puffsLeft; },
     get puffBlock() { return puffBlock(); },
+    // R1f fix1: 前の払うが広がり終わるまでの残りの秒（広がっていなければ 0。input/puffBuffer.js が使う）
+    get puffBusyLeft() { let m = 0; for (const b of blasts) if (b.shot.small) m = Math.max(m, b.blast.left); return m; },
     // M2: 今隠れられない理由（'off' / 'grabbed' / 'cooldown' / 'dashing'。隠れられるなら null）と、次の隠れるまでの秒
     get hideBlock() { return hideBlock(); },
     get hideCooldown() { return Math.max(0, hideCool); },

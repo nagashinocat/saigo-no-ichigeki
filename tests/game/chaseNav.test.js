@@ -117,3 +117,10 @@ test('R1f fix1: 壁に触れて立つ主人公を掴む者・群がる者（大�
   }
   expect(frames).toBeGreaterThan(3000);
 });
+
+// fix1（見直し Minor 2）: 道しるべの升の表は街を作ったときに作る（最初に見えない追う者が出たフレームで作らない）
+test('R1f fix1: 道しるべ（升の表）はゲームを作った時にもうある', () => {
+  const g = createGame({ seed: 2 });
+  expect(g.enemies.flow).not.toBeNull();
+  expect(g.enemies.flow.builds).toBe(0);
+});

@@ -28,7 +28,8 @@ export function retryRound({ session, cityPick, rememberRetryCity, markRetry, re
 }
 
 // els: { button, panel }（panel の中に [data-act="resume"]・[data-act="retry"]・input[name="bgm"]・input[name="sfx"]）。
-// onOpen / onClose: 一時停止を入れる・外す。onRetry。onVolume({ bgm, sfx }): 音量が変わった（すぐ音へ）。storage: 音量を覚える所
+// onOpen / onClose: 一時停止を入れる・外す。onRetry。onVolume({ bgm, sfx }, kind): 音量が変わった（すぐ音へ。kind は動かしたスライダー 'bgm' / 'sfx'、
+// 開いたときの読み込みでは無し）。storage: 音量を覚える所
 export function createMenu({ button, panel }, { onOpen = () => {}, onClose = () => {}, onRetry = () => {}, onVolume = () => {}, storage = null } = {}) {
   let open = false, available = false;
   const vol = loadVolumes(storage);
@@ -50,7 +51,7 @@ export function createMenu({ button, panel }, { onOpen = () => {}, onClose = () 
       vol[k] = clamp(v, vol[k]);
       if (sliders[k]) sliders[k].value = String(Math.round(vol[k] * 100));
       saveVolumes(storage, vol);
-      onVolume({ ...vol });
+      onVolume({ ...vol }, k); // k: 動かしたスライダー（試し音をその道で鳴らす）
     },
   };
   button.addEventListener('click', (e) => { e.preventDefault?.(); api.open(); });

@@ -83,7 +83,9 @@ test('BGM の出口: unlock の前は無く、あとは最後の天井（リミ�
     audio.unlock();
     const o = audio.bgmOutput;
     expect(o.ctx).toBe(ctx);
-    expect(links.some(([g, to]) => g === o.dest && to === ctx.compressors[0])).toBe(true);
+    // fix1: BGM の出口 → 一時停止の門（bgmGate）→ BGM の音量（bgmBus）→ リミッター
+    expect(links.some(([g, to]) => g === o.dest && to === audio.bgmBus)).toBe(true);
+    expect(links.some(([g, to]) => g === audio.bgmBus && to === ctx.compressors[0])).toBe(true);
     audio.silence();
     expect(o.dest.gain.final()).toBe(1);
   } finally {
@@ -158,9 +160,12 @@ test('最後の天井（リミッター）: 効果音・演出の音・BGM は�
     };
     for (const bus of [master, cine, out, audio.bgmOutput.dest]) expect(reaches(bus, lim)).toBe(true);
     // R1f: out のあとは効果音の大きさ（メニューの音量の gain）を通ってリミッターへ
-    expect(links.some(([a, to]) => a === out && to === audio.sfxBus)).toBe(true);
+    // fix1: その間に、メニューの一時停止で黙らせる門（out → worldGate → sfxBus、BGM の出口 bgmGate → bgmBus）
+    expect(links.some(([a, to]) => a === out && to === audio.worldGate)).toBe(true);
+    expect(links.some(([a, to]) => a === audio.worldGate && to === audio.sfxBus)).toBe(true);
     expect(links.some(([a, to]) => a === audio.sfxBus && to === lim)).toBe(true);
-    expect(links.some(([a, to]) => a === audio.bgmOutput.dest && to === lim)).toBe(true);
+    expect(links.some(([a, to]) => a === audio.bgmOutput.dest && to === audio.bgmBus)).toBe(true);
+    expect(links.some(([a, to]) => a === audio.bgmBus && to === lim)).toBe(true);
   } finally {
     delete globalThis.window;
   }

@@ -254,8 +254,11 @@ test('R1c / R1f: 揺れはバイクの拍の通過の瞬間だけ（1/60 秒ご�
   expect(peak(k0.tp + 0.66 * d, k0.tp + d)).toBeLessThan(0.5 * peak(k0.tp, k0.tp + 0.33 * d));
   // 時刻に対して決まる（録画で同じ絵）
   expect(introShake(k0.tp + 0.05)).toEqual(introShake(k0.tp + 0.05));
-  // R1f: 立ち上がりは鋭い（通過から 0.03 秒の内に山の 8 割）
-  expect(peak(k0.tp, k0.tp + 0.03)).toBeGreaterThan(0.8 * peak(k0.tp, k0.tp + d));
+  // R1f: 立ち上がりは鋭い。fix1（見直し Minor 8）: 30 fps の動画のコマにも山が写るよう、山は約 0.04 秒（通過から 0.045 秒の内に山の 9 割、
+  // 0.02 秒ではまだ 7 割未満）
+  expect(INTRO_SHAKE.attack).toBeGreaterThanOrEqual(0.035);
+  expect(INTRO_SHAKE.attack).toBeLessThanOrEqual(0.045);
+  expect(peak(k0.tp, k0.tp + 0.045)).toBeGreaterThan(0.9 * peak(k0.tp, k0.tp + d));
   // R1f: 通過の瞬間の縦の一撃（風切りと同じ時刻に下へ沈む）。山のあたりの y は下向き（負）が多い
   let down = 0, up = 0;
   for (let t = k0.tp; t < k0.tp + 0.08; t += 1 / 600) { const y = introShake(t).y; if (y < 0) down++; else if (y > 0) up++; }

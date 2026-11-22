@@ -229,6 +229,9 @@ export function createAudio({ nav = globalThis.navigator, makeMedia = (src) => n
   // R1f: 一番上の大きさ（リミッター → top → スピーカー。切り替えのときにまとめて 0 へ落とす）と、効果音の大きさ（世界の音・演出の音・瓦礫の音の出口）。
   // vol: メニューの音量（鳴らす前に決めてもよい。build で入れる）
   let top = null, sfxBus = null;
+  // fix1（見直し Minor 6）: メニューの一時停止で黙らせる門（世界の音 out・瓦礫 → worldGate → sfxBus、BGM → bgmGate → bgmBus）。
+  // 音量の試し音は門の後ろ（sfxBus / bgmBus）で鳴る
+  let worldGate = null, bgmGate = null, muted = false;
   const vol = { bgm: 1, sfx: 1 };
   // 瓦礫の崩れる音の道: 音のもと（起動時に数種類だけ書き出して使い回す）→ 一つごとの大きさ・左右 → debrisBus → debrisLp →
   // リミッター。master を通さない（地鳴りが master を 0 に保つ間に始まるリプレイでも鳴らせるように）。
@@ -299,8 +302,14 @@ export function createAudio({ nav = globalThis.navigator, makeMedia = (src) => n
     sfxBus = ctx.createGain();
     sfxBus.gain.value = vol.sfx;
     sfxBus.connect(limiter);
-    out.connect(sfxBus);
-    debrisLp.connect(sfxBus);
+    worldGate = ctx.createGain();
+    worldGate.gain.value = muted ? 0 : 1;
+    worldGate.connect(sfxBus);
+    out.connect(worldGate);
+    debrisLp.connect(worldGate);
+    bgmGate = ctx.createGain();
+    bgmGate.gain.value = muted ? 0 : 1;
+    bgmGate.connect(bgmBus);
     top = ctx.createGain();
     top.gain.value = hidden ? 0 : 1;
     limiter.connect(top);
@@ -461,7 +470,7 @@ export function createAudio({ nav = globalThis.navigator, makeMedia = (src) => n
     // iOS の音のセッション（無音の <audio>）がまだ鳴っていない: 操作のたびに unlock を呼んでほしい
     get sessionPending() { return session !== 'done'; },
     // BGM の出口（unlock の前は null）
-    get bgmOutput() { return ctx && bgmBus ? { ctx, dest: bgmBus } : null; },
+    get bgmOutput() { return ctx && bgmGate ? { ctx, dest: bgmGate } : null; },
     // 導入の音の出口（unlock の前は null）
     get introOutput() { return ctx && introBus ? { ctx, dest: introBus } : null; },
     // 調べる用（?debug の __debug.introPeak）: 導入の音の出口を聞く analyser（はじめて呼んだときにつなぐ。unlock の前は null）
@@ -507,6 +516,33 @@ export function createAudio({ nav = globalThis.navigator, makeMedia = (src) => n
     },
     get volumes() { return { ...vol }; },
     get sfxBus() { return sfxBus; },
+    get bgmBus() { return bgmBus; },
+    get worldGate() { return worldGate; },
+    get bgmGate() { return bgmGate; },
+    // fix1（見直し Minor 6）: メニューの一時停止。AudioContext は止めず、世界の音と BGM の門を SWITCH_FADE.fadeOut 秒で 0 へ（on）/ 戻す（off）
+    mute(on) {
+      muted = !!on;
+      if (!ctx || !worldGate) return;
+      const t = now();
+      for (const g of [worldGate.gain, bgmGate.gain]) {
+        if (g.cancelAndHoldAtTime) g.cancelAndHoldAtTime(t); else { g.cancelScheduledValues(t); g.setValueAtTime(g.value, t); }
+        g.linearRampToValueAtTime(muted ? 0 : 1, t + (muted ? SWITCH_FADE.fadeOut : SWITCH_FADE.fadeIn));
+      }
+      if (muted) quietVoices(t + SWITCH_FADE.fadeOut);
+    },
+    // fix1: 音量の試し音（kind 'sfx' 効果音の道 / 'bgm' BGM の道。門の後ろなので黙らせている間も聞こえる）
+    preview(kind) {
+      if (!ready()) return;
+      const bus = kind === 'bgm' ? bgmBus : sfxBus;
+      const t = now();
+      const notes = kind === 'bgm' ? [[523.25, 0], [659.25, 0.09], [783.99, 0.18]] : [[1320, 0], [1980, 0.05]];
+      for (const [f, w] of notes) {
+        const o = ctx.createOscillator(); o.type = kind === 'bgm' ? 'triangle' : 'square';
+        o.frequency.setValueAtTime(f, t + w);
+        const g = ctx.createGain(); env(g.gain, t + w, 0.005, kind === 'bgm' ? 0.12 : 0.05, kind === 'bgm' ? 0.25 : 0.07);
+        o.connect(g); g.connect(bus); o.start(t + w); o.stop(t + w + 0.35);
+      }
+    },
     // level 0〜1。0 で止まる
     chargeHum(level) {
       if (!ready()) return;

@@ -515,8 +515,10 @@ test('瓦礫の音の道: 演出の無音（白の間）では黙り、爆発が
   const bus = ctx.links.find(([a]) => a === panNode)[1];
   const lp = ctx.links.find(([a]) => a === bus)[1];
   expect(lp.kind).toBe('filter');
-  // R1f: こもりのあとは効果音の大きさ（メニューの音量）を通ってリミッターへ
-  const sfx = ctx.links.find(([a]) => a === lp)[1];
+  // R1f: こもりのあとは、メニューの一時停止の門（fix1）と効果音の大きさ（メニューの音量）を通ってリミッターへ
+  const gate = ctx.links.find(([a]) => a === lp)[1];
+  expect(gate.kind).toBe('gain');
+  const sfx = ctx.links.find(([a]) => a === gate)[1];
   expect(sfx.kind).toBe('gain');
   expect(ctx.links.some(([a, to]) => a === sfx && to === lim)).toBe(true);
   audio.silence();

@@ -134,9 +134,34 @@ test('R1f: BGM と効果音の大きさを、鳴らす前でも後でも変え�
   const { ctx, audio } = rig();
   audio.setVolumes({ bgm: 0.4, sfx: 0.25 });
   expect(audio.volumes).toEqual({ bgm: 0.4, sfx: 0.25 });
-  const out = audio.bgmOutput;
-  expect(out.dest.gain.at(ctx.currentTime + 1)).toBeCloseTo(0.4, 3);
+  expect(audio.bgmBus.gain.at(ctx.currentTime + 1)).toBeCloseTo(0.4, 3);
   expect(audio.sfxBus.gain.at(ctx.currentTime + 1)).toBeCloseTo(0.25, 3);
   audio.setVolumes({ bgm: 2, sfx: -1 }); // 0〜1 に収める
   expect(audio.volumes).toEqual({ bgm: 1, sfx: 0 });
+});
+
+// fix1（見直し Minor 6）: メニューの一時停止は AudioContext を止めず、世界の音と BGM の出口を約 30 ms で黙らせる。音量の試し音は黙らせた後ろ
+// （音量の道: 効果音は sfxBus、BGM は bgmBus）で鳴る
+test('R1f fix1: mute で世界の音と BGM は 0 へ（AudioContext は止めない）。試し音はその道の音量を通って聞こえる', () => {
+  const { ctx, audio, top } = rig();
+  const t0 = ctx.currentTime;
+  audio.mute(true);
+  expect(ctx.suspends).toBe(0);
+  expect(ctx.state).toBe('running');
+  expect(audio.worldGate.gain.at(t0 + 0.035)).toBeLessThan(1e-4);
+  expect(audio.bgmGate.gain.at(t0 + 0.035)).toBeLessThan(1e-4);
+  expect(top().gain.at(t0 + 0.035)).toBeGreaterThan(0.9);
+  // 世界の音の出口 out → worldGate → sfxBus、BGM の出口 → bgmGate → bgmBus
+  expect(ctx.links.some(([a, to]) => a === audio.worldGate && to === audio.sfxBus)).toBe(true);
+  expect(audio.bgmOutput.dest).toBe(audio.bgmGate);
+  expect(ctx.links.some(([a, to]) => a === audio.bgmGate && to === audio.bgmBus)).toBe(true);
+  for (const k of ['sfx', 'bgm']) {
+    const n = ctx.links.length;
+    audio.preview(k);
+    const fresh = ctx.links.slice(n);
+    expect(fresh.some(([, to]) => to === (k === 'sfx' ? audio.sfxBus : audio.bgmBus)), k).toBe(true);
+  }
+  audio.mute(false);
+  expect(audio.worldGate.gain.at(ctx.currentTime + 0.5)).toBeGreaterThan(0.95);
+  expect(audio.bgmGate.gain.at(ctx.currentTime + 0.5)).toBeGreaterThan(0.95);
 });

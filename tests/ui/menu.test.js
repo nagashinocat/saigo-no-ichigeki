@@ -22,7 +22,7 @@ function menuDom() {
   const panel = { ...el(), querySelector: (s) => parts[s] ?? null };
   return { button: el('button'), panel, parts };
 }
-const fakeAudio = () => ({ log: [], suspend() { this.log.push('suspend'); }, resume() { this.log.push('resume'); } });
+const fakeAudio = () => ({ log: [], suspend() { this.log.push('suspend'); }, resume() { this.log.push('resume'); }, mute(on) { this.log.push(on ? 'mute' : 'unmute'); } });
 const fakeBgm = () => ({ log: [], pause() { this.log.push('pause'); }, resume() { this.log.push('resume'); } });
 
 test('R1f: メニューを開くと一時停止: ゲームの時間・軍勢・力は進まず、溜めの指は放たずに打ち切り、BGM と音も止まる。閉じると続きから進む', () => {
@@ -45,7 +45,8 @@ test('R1f: メニューを開くと一時停止: ゲームの時間・軍勢・�
   expect(pause.paused).toBe(true);
   expect(log).toEqual(['start', 'cancel']); // 放たない
   expect(controls.charging).toBe(false);
-  expect(audio.log).toEqual(['suspend']);
+  // fix1（見直し Minor 6）: メニューでは AudioContext を止めず、世界の音と BGM を黙らせるだけ（音量の試し音が聞こえる）
+  expect(audio.log).toEqual(['mute']);
   expect(bgm.log).toEqual(['pause']);
   for (let i = 0; i < 90; i++) g.update(1 / 30);
   expect(g.timer.remaining).toBe(t0);
@@ -56,24 +57,27 @@ test('R1f: メニューを開くと一時停止: ゲームの時間・軍勢・�
   dom.parts['[data-act="resume"]'].fire('click');
   expect(menu.isOpen).toBe(false);
   expect(pause.paused).toBe(false);
-  expect(audio.log).toEqual(['suspend', 'resume']);
+  expect(audio.log).toEqual(['mute', 'unmute']);
   g.update(1 / 30);
   expect(g.timer.remaining).toBeLessThan(t0);
   expect(g.timer.remaining).toBeGreaterThan(t0 - 0.05); // 止まっていた 3 秒は数えない
 });
 
-test('R1f: タブ・アプリの切り替えの一時停止とメニューの一時停止は重なっても、両方が外れるまで止まったまま', () => {
+test('R1f / fix1: タブ・アプリの切り替えの一時停止とメニューの一時停止は重なっても、両方が外れるまで止まったまま', () => {
   const g = createGame({ seed: 3 });
   g.begin(); g.pressStart();
   const audio = fakeAudio(), bgm = fakeBgm();
   const pause = createPause({ game: g, controls: null, audio, bgm });
+  // タブの切り替えは AudioContext を止める。戻ってもメニューが開いていれば、鳴らし直して黙らせたまま
   pause.set('tab', true); pause.set('menu', true);
+  expect(audio.log).toEqual(['mute', 'suspend']);
   pause.set('tab', false);
   expect(pause.paused).toBe(true);
-  expect(audio.log).toEqual(['suspend']);
+  expect(audio.log).toEqual(['mute', 'suspend', 'resume', 'mute']);
   pause.set('menu', false);
   expect(pause.paused).toBe(false);
-  expect(audio.log).toEqual(['suspend', 'resume']);
+  expect(audio.log).toEqual(['mute', 'suspend', 'resume', 'mute', 'unmute']);
+  expect(bgm.log).toEqual(['pause', 'resume']);
 });
 
 test('R1f: リトライは同じ街（今日の街は 0 時をまたいでも）で、導入を飛ばして読み直す（覚える → 印 → 読み直す の順）', () => {
@@ -99,13 +103,16 @@ test('R1f: 音量（BGM・効果音）は動かすとすぐ音へ渡り、端末
   const s = store();
   const got = [];
   const dom = menuDom();
-  const menu = createMenu(dom, { storage: s, onVolume: (v) => got.push(v) });
+  const gotKind = [];
+  const menu = createMenu(dom, { storage: s, onVolume: (v, k) => { got.push(v); gotKind.push(k ?? null); } });
   expect(got.at(-1)).toEqual({ bgm: 1, sfx: 1 }); // 覚えた音量が無ければ 1
   dom.parts['input[name="bgm"]'].value = '35';
   dom.parts['input[name="bgm"]'].fire('input');
   dom.parts['input[name="sfx"]'].value = '70';
   dom.parts['input[name="sfx"]'].fire('input');
   expect(got.at(-1)).toEqual({ bgm: 0.35, sfx: 0.7 });
+  // fix1: どのスライダーを動かしたか（試し音をその道で鳴らす）。開いたときの読み込みでは鳴らさない
+  expect(gotKind).toEqual([null, 'bgm', 'sfx']);
   expect(s.m.get(VOLUME_KEYS.bgm)).toBe('0.35');
   expect(VOLUME_KEYS.bgm.startsWith('saigo-no-ichigeki:')).toBe(true);
   expect(VOLUME_KEYS.sfx.startsWith('saigo-no-ichigeki:')).toBe(true);

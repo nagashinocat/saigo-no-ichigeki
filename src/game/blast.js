@@ -97,6 +97,8 @@ export function createBlast(shot, targets, cfg = CONFIG) {
     },
     get front() { return front; },
     get done() { return time >= total; },
+    // R1f fix1: 広がり終わるまでの残りの秒
+    get left() { return Math.max(0, total - time); },
     // creep → burst → show（最後の一発だけ）→ done
     get phase() { return time >= total ? 'done' : time >= creep + burst && !small ? 'show' : time >= creep ? 'burst' : 'creep'; },
     burstAt: creep,

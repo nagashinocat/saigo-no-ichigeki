@@ -131,6 +131,14 @@
     #menu .menu-vol { display: grid; grid-template-columns: 4.5em 1fr; align-items: center; gap: 8px; font-size: 15px; }
     #menu input[type=range] { width: 100%; height: 32px; accent-color: #ffe14a; }
     @media (orientation: landscape) and (max-height: 500px) { #menu .menu-card { width: min(520px, 80vw); display: grid; grid-template-columns: 1fr 1fr; gap: 8px 14px; padding: 12px 16px; } #menu .menu-title { grid-column: 1 / -1; } #menu .menu-vol { grid-column: 1 / -1; } }
+    /* R1f fix1: 物陰にいる間の「かくれ中」と、その物陰にいられる残り（--p、1 → 0）の細い輪（hideMark.js） */
+    #hideMark { position: fixed; left: 0; top: 0; width: 0; height: 0; pointer-events: none; z-index: 4; --p: 1; }
+    #hideMark[hidden] { display: none; }
+    #hideMark .hm-ring { position: absolute; left: -26px; top: -26px; width: 52px; height: 52px; border-radius: 50%;
+      background: conic-gradient(rgba(140, 220, 255, 0.95) calc(var(--p) * 360deg), rgba(140, 220, 255, 0.12) 0);
+      -webkit-mask: radial-gradient(circle, transparent 22px, #000 23px); mask: radial-gradient(circle, transparent 22px, #000 23px); }
+    #hideMark .hm-tag { position: absolute; left: 0; top: -46px; transform: translateX(-50%); white-space: nowrap; padding: 2px 8px; border-radius: 999px;
+      font: 900 13px/1.2 system-ui, -apple-system, sans-serif; color: #d9f4ff; background: rgba(10, 20, 40, 0.7); box-shadow: 0 0 0 1px rgba(140, 220, 255, 0.6); }
     #lookout { position: fixed; left: 0; top: 0; width: 0; height: 0; pointer-events: none; z-index: 5; }
     #lookout .lo-text { position: absolute; left: 0; top: -64px; transform: translate(-50%, -50%) rotate(-8deg); white-space: nowrap;
       font: italic 900 30px/1 system-ui, -apple-system, "Arial Black", "Helvetica Neue", sans-serif; letter-spacing: 0.02em; color: #ffe14a;
@@ -309,6 +317,7 @@
       <label class="menu-vol"><span>効果音</span><input type="range" name="sfx" min="0" max="100" step="1" value="100"></label>
     </div>
   </div>
+  <div id="hideMark" hidden><div class="hm-ring"></div><div class="hm-tag">かくれ中</div></div>
   <div id="lookout" hidden><div class="lo-hit"></div><div class="lo-arrow"><b></b><i></i></div><div class="lo-text"></div></div>
   <div id="start">長押しで力を貯め、離して最後の一撃<br><small>貯めながら、もう一本の指を長押しで動く・短くタップで払う（3 回まで）<br>LOOK OUT! が出たら 矢印をタップで物陰に隠れる<br>払うは まわりの者を はがす（重い者・大物は倒れず よろめく）</small></div>
   <div id="replay" hidden><span class="replay-tag">リプレイ</span><span class="replay-hint">タップでとばす</span></div>

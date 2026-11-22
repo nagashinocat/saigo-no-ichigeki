@@ -29,6 +29,7 @@ import { createKeyTwice } from './input/keyTwice.js';
 import { createPuffBuffer } from './input/puffBuffer.js';
 import { createMenu, retryRound } from './ui/menu.js';
 import { createPause } from './ui/pause.js';
+import { createHideMark, hideMarkState } from './ui/hideMark.js';
 import { createLookout } from './game/lookout.js';
 import { createLookoutView } from './ui/lookoutView.js';
 import { createDashStreak } from './render/dashStreak.js';
@@ -137,7 +138,7 @@ function tryPuff(x, y) {
   if (game.puff()) { puffBuffer.clear(); return true; }
   // M2: 3 回使い切ったら「もう払えない」、力が足りなければ「足りない」（どちらも毎回出す）
   const why = game.puffBlock;
-  if (puffBuffer.push(x, y, nowSec(), why)) return false;
+  if (puffBuffer.push(x, y, nowSec(), why, game.puffBusyLeft)) return false;
   if (why === 'out') hud.short(x, y, OUT_TEXT); else if (why === 'short') hud.short(x, y);
   return false;
 }
@@ -171,6 +172,7 @@ const controls = createControls({
 const lookout = createLookout();
 const lookoutView = createLookoutView(document.getElementById('lookout'));
 let lookoutNow = null; // 今のフレームの LOOK OUT!（createLookout().update の戻り値の写し）
+const hideMark = createHideMark(document.getElementById('hideMark')); // R1f fix1: 物陰にいる間の印
 // M2（持ち主 15:20）: 隠れる。R1f から指は LOOK OUT! の矢印のタップ（tryHideArrow）、PC は向きのキーの 2 回押し（tryHide）か H キー（矢印が出ていれば）。
 // d は画面の向き。上空カメラの向きで街の向きへ直す（screenToWorld。スティックの動く向きと同じ写し）。
 // 掴まれている間・次まで待つ間・物陰がない向きは、主人公の上に短い知らせ
@@ -220,6 +222,7 @@ window.addEventListener('blur', () => { controls.reset(); keysDown.clear(); });
 // メニューを出せるのは遊んでいる間と演出・リプレイの間（導入・題字・結果では出さない）。開くと一時停止、つづけるで戻る。
 // タブ・アプリを切り替えたら一時停止して（音は約 30 ms で 0 へ落としてから止め）、戻ったらメニューを出して待つ
 const pause = createPause({ game, controls, audio, bgm, keys: keysDown });
+let previewAt = -1e9;
 // 結果を出したあと（lastResult）は出さない。結果を待っている間（演出・リプレイ）は出してよい
 const menuAvailable = () => !introFlow.blocksInput && !lastResult;
 const menu = createMenu({ button: document.getElementById('menuBtn'), panel: document.getElementById('menu') }, {
@@ -228,10 +231,21 @@ const menu = createMenu({ button: document.getElementById('menuBtn'), panel: doc
   onClose() { pause.set('menu', false); },
   // R1f（R3 の見直しの持ち越し）: 同じ街（0 時をまたいでも）で、導入を飛ばしてすぐ遊び直す
   onRetry() { retryRound({ session, cityPick, rememberRetryCity, markRetry, reload: () => location.reload() }); },
-  onVolume(v) { audio.setVolumes(v); },
+  // fix1（見直し Minor 6）: 動かしたスライダーの道で短い試し音（一時停止の間も聞こえる。0.15 秒に一度まで）
+  onVolume(v, kind) {
+    audio.setVolumes(v);
+    const t = performance.now();
+    if (kind && t - previewAt > 150) { previewAt = t; audio.preview(kind); }
+  },
 });
 function leavePage() { if (menuAvailable()) { menu.setAvailable(true); menu.open(); } pause.set('tab', true); }
 window.addEventListener('pagehide', leavePage);
+// fix1（見直し Minor 7）: iOS の一部（コントロールセンターなど）は visibilitychange が来ない。タッチの端末だけ、blur でも一時停止する（PC で誤って止めない）
+const touchDevice = (() => { try { return matchMedia('(pointer: coarse)').matches || (navigator.maxTouchPoints ?? 0) > 0; } catch { return false; } })();
+if (touchDevice) {
+  window.addEventListener('blur', leavePage);
+  window.addEventListener('focus', () => { if (!document.hidden) pause.set('tab', false); });
+}
 window.addEventListener('pageshow', () => { if (!document.hidden) pause.set('tab', false); });
 window.addEventListener('keyup', (e) => { keysDown.delete(e.code); if (MOVE_KEYS.includes(e.code)) { const v = keyVector(keysDown); keyFlick.push(v.x, v.y, nowSec()); } });
 // PC はマウスで長押ししながら、もう片方の手の Space キーで小爆発
@@ -844,6 +858,9 @@ function finishFrame(dt, live) {
     : null;
   lookoutNow = lo?.show ? { show: true, spot: lo.spot ? { ...lo.spot } : null, deg: lo.deg } : null;
   lookoutView.update(lo, lo?.show ? screenCue(game.hero.x, 1.2, game.hero.z) : null);
+  // R1f fix1: 物陰にいる間の「かくれ中」と残りの輪
+  const hm = game.phase === 'playing' && !cinematic.active && !debugCam ? hideMarkState({ hero: game.hero, hideLeft: game.hideLeft, holdSec: CONFIG.hide.holdSec }) : { show: false, p: 0 };
+  hideMark.update(hm, hm.show ? screenCue(game.hero.x, 1.2, game.hero.z) : null);
   // 最後の一発を放ってから結果までずっと HUD は出さない（両手が玉を握り込む間も、リプレイの間も）
   hud.setVisible(!debugCam && !cinematic.active && !replay.active && !blackhole.active);
   updateAudio(live, dt);
