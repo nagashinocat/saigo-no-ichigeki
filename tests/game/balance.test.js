@@ -15,7 +15,7 @@ import { citySeed } from '../../src/game/daily.js';
 // sim（seed 1〜30）: 最善は「掴まれ 2 人で払う・隠れる」で 22/30 が満タン、届いた回の p50 52.6 秒、撃退成功 L=99 で 22/30（73%）
 // R1f（R3 の今日の街・持ち主 19:47）: 遊ぶ街は日本時間の日付の街（daily.js citySeed）なので、種 1〜12 ではなく、今日の街 120 日（20261101 から）を
 // 5 日おきに選んだ 24 の街で確かめる（R3 で今日の街は種 1〜30 より難しい街が多かった: 前の数で 120 日 63%、種 1〜30 で 77%）。
-// sim（scripts/daily-balance.mjs、120 日すべて）: 最善の撃退成功 85/120（71%）、満タン p50 52.1 秒。この 24 の街で 19/24 が満タン、p50 52.1 秒
+// sim（scripts/daily-balance.mjs、120 日すべて）: fix1 で最善の撃退成功 84/120（70%）、満タン p50 52.1 秒
 const DT = 1 / 30;
 const BEST = { grab: 2, trigger: 0, crowd: Infinity, hide: true };
 const NO_PUFF = { grab: Infinity, trigger: 0, crowd: Infinity, hide: false };
@@ -39,8 +39,8 @@ const median = (xs) => { const s = [...xs].sort((a, b) => a - b); return s[Math.
 test('R0 / M2: 最善の操作（動くボット）でも、満タンは終わりの数秒前（届いた回の中央 52〜56 秒）。たいていは届くが、届かない回もある', () => {
   const ts = SEEDS.map((s) => play(s).full);
   const got = ts.filter(Number.isFinite);
-  // R1f: 24 の街の 6〜9 割（前は 12 の種の 8〜11）
-  expect(got.length).toBeGreaterThanOrEqual(Math.ceil(SEEDS.length * 0.6));
+  // R1f: 24 の街の 16〜21（前は 12 の種の 8〜11。fix1: 下限は前の割合 8/12 より緩めない）
+  expect(got.length).toBeGreaterThanOrEqual(16);
   expect(got.length).toBeLessThanOrEqual(Math.floor(SEEDS.length * 0.9)); // 上手に遊んでも失敗することがある
   expect(median(got)).toBeGreaterThanOrEqual(52);
   expect(median(got)).toBeLessThanOrEqual(56);
