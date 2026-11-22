@@ -262,6 +262,15 @@ export function generateCity(seed, cfg = CONFIG, opts = {}) {
   return city;
 }
 
+// R3（今日の街）: 街の壊せるものの値打ちの合計（建物 + props + 高架の区間。game.js の壊せるものと同じ）。ランクはこれで割って街ごとの差をならす
+export function cityValue(city) {
+  let v = 0;
+  for (const t of city.buildings) v += t.value;
+  for (const t of city.props) v += t.value;
+  for (const t of city.transit?.segments ?? []) v += t.value;
+  return v;
+}
+
 // 区画 (i, j) の乱数の種（種・区画の番号・用途から。混ぜ方は murmur3 の仕上げ）
 function lotSeed(seed, i, j, salt) {
   let h = (seed ^ Math.imul(i + 0x9e37, 0x85ebca6b) ^ Math.imul(j + 0x7f4a, 0xc2b2ae35) ^ Math.imul(salt, 0x27d4eb2f)) >>> 0;

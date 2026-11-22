@@ -1,6 +1,6 @@
 import { CONFIG } from '../config.js';
 import { createRng } from '../rng.js';
-import { generateCity } from '../world/cityGen.js';
+import { generateCity, cityValue as totalValue } from '../world/cityGen.js';
 import { createPower } from './power.js';
 import { createCharge } from './charge.js';
 import { createTimer } from './timer.js';
@@ -26,6 +26,8 @@ const MAX_DT = 0.1;
 // （shot.centre）。払うの爆心も払った瞬間の主人公の位置。勝ち負けの「倒れたか」は、その爆心からの距離で決まる
 export function createGame({ seed, cfg = CONFIG }) {
   const city = generateCity(seed, cfg);
+  // R3: 街の壊せるものの値打ちの合計（ランクの点をこれで割る。今日の街ごとの差をならす）
+  const cityValue = totalValue(city);
   // 主人公（hero.js）。hero は { x, z, vx, vz, heading, lean } の同じ物で、軍勢の heroPos にも渡す（動くたびに書き換わる）
   const motion = createHeroMotion(city, cfg);
   const hero = motion.hero;
@@ -85,9 +87,9 @@ export function createGame({ seed, cfg = CONFIG }) {
       if (!releaseIds.has(e.id) || e.state === 'dead') continue;
       survivors.push({ id: e.id, x: e.x, z: e.z, patrol: !!e.patrol, ...(e.kind ? { kind: e.kind } : {}) });
     }
-    outcome = { clear: survivors.length === 0, total: releaseIds.size, survivors, ...releaseInfo.extra };
-    // R2: ランク（rank.js）
-    outcome.rank = rankFor({ clear: outcome.clear, timeLeft: releaseInfo.timeLeft, puffs: releaseInfo.puffsUsed, damage: releaseInfo.damage });
+    outcome = { clear: survivors.length === 0, total: releaseIds.size, survivors, ...releaseInfo.extra, cityValue };
+    // R2: ランク（rank.js）。R3: 点は街の値打ちで割る
+    outcome.rank = rankFor({ clear: outcome.clear, timeLeft: releaseInfo.timeLeft, puffs: releaseInfo.puffsUsed, damage: releaseInfo.damage, cityValue });
   }
 
   // settled: settle が一気に進めた分の命中（描く側は見た目を作らなくてよい）
@@ -154,6 +156,8 @@ export function createGame({ seed, cfg = CONFIG }) {
 
   return {
     city, enemies, power, charge, timer, score,
+    // R3: 街の壊せるものの値打ちの合計（ランクの点の分母）
+    cityValue,
     // M1: 主人公の位置と速さ { x, z, vx, vz, heading, lean }（読むだけ。試しは x, z を直に置いてよい）
     hero,
     get phase() { return phase; },
