@@ -28,6 +28,7 @@ import { createJoystickView } from './ui/joystick.js';
 import { clearThreshold } from './game/charge.js';
 import { maxEnemyReachFrom } from './game/enemies.js';
 import { createHud } from './ui/hud.js';
+import { createTimeTicks } from './ui/timeLeft.js';
 import { createResult } from './ui/result.js';
 import { createAudio, finaleBoomOpts } from './audio/audio.js';
 import { createHitFeed } from './audio/hitFeed.js';
@@ -100,7 +101,9 @@ const audio = createAudio();
 // リプレイと結果画面では同じ旋律をゆっくり静かに。時間切れ（ブラックホール）では引き伸ばされて消える
 const bgm = createBgm(() => audio.bgmOutput);
 // M1（持ち主 09:15）: 払うのボタンはなくした。溜めている間の 2 本目の指の短いタップ、PC は Space か右クリックで払う
-const hud = createHud(document.getElementById('hud'));
+const hud = createHud(document.getElementById('hud'), { total: CONFIG.roundSeconds });
+// R1c: 残り 10 秒から 1 秒ごとの刻みの音（遊んでいる間だけ。演出・リプレイ・結末・導入では鳴らさない）
+const timeTicks = createTimeTicks();
 // 払う。力が払える量に足りなければ、押した所（キーなら主人公の画面の位置）に小さく「足りない」（持ち主 08:24 の制作側の判断）。
 // 溜めていない（1 本目の指がない）ときは払えない（spec §16 09:15）
 function tryPuff(x, y) {
@@ -770,6 +773,7 @@ function updateAudio(live, dt = 0) {
   if (bgm.state === 'off') bgm.prepare();
   if (game.phase === 'playing' && audio.running) bgm.start();
   bgm.update({ elapsed: CONFIG.roundSeconds - game.timer.remaining, power: game.power.level, holding: game.charge.active });
+  for (const n of timeTicks.update(game.timer.remaining, game.phase === 'playing' && !introFlow.blocksInput && !cinematic.active && !replay.active && !blackhole.active)) audio.timeTick(n);
   // リプレイの間は世界の音を鳴らさない（瓦礫の崩れる音だけは、同じ崩落に合わせて鳴らす）
   if (replay.active) {
     audio.rumble(0);

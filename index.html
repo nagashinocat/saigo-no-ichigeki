@@ -20,7 +20,16 @@
     .hud-strip { position: absolute; display: flex; justify-content: space-between; align-items: flex-start; box-sizing: border-box; padding: 0.6em 4vw 0; text-shadow: 0 1px 3px rgba(20, 10, 30, 0.85), 0 0 10px rgba(20, 10, 30, 0.5); }
     .hud-left { min-width: 0; }
     .hud-right { display: flex; flex-direction: column; align-items: flex-end; }
-    .hud-time { font-size: clamp(13px, 3.8vw, 20px); font-weight: 700; opacity: 0.92; padding-top: 0.35em; }
+    /* R1c（持ち主 11:03「制限時間もわかりやすくしよう」）: 上の帯の右に大きな数字（秒）と、その下の減っていく細い帯。
+       残り 10 秒（.last）から琥珀 → 赤（色は hud.js が --tcol と数字の color に入れる）、数字は 1 秒に 1 回脈打つ（transform も hud.js） */
+    .hud-time { display: flex; flex-direction: column; align-items: flex-end; --tcol: currentColor; }
+    .hud-tline { display: flex; align-items: baseline; gap: 0.15em; line-height: 1; }
+    .hud-tnum { font-size: clamp(34px, 10vw, 54px); font-weight: 900; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; transform-origin: 70% 60%; will-change: transform; }
+    .hud-tunit { font-size: clamp(11px, 3vw, 15px); font-weight: 700; opacity: 0.8; }
+    .hud-tbar { position: relative; width: clamp(64px, 20vw, 120px); height: 4px; margin-top: 0.3em; border-radius: 999px; overflow: hidden; background: rgba(8, 4, 14, 0.6); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.16), 0 1px 3px rgba(0, 0, 0, 0.5); }
+    .hud-tfill { position: absolute; right: 0; top: 0; bottom: 0; width: 100%; border-radius: inherit; background: rgba(255, 255, 255, 0.92); box-shadow: 0 0 6px rgba(255, 255, 255, 0.6); }
+    .hud-time.last .hud-tfill { background: var(--tcol); box-shadow: 0 0 8px var(--tcol); }
+    .hud-time.last .hud-tunit { color: var(--tcol); opacity: 1; }
     .hud-army { font-size: clamp(11px, 3vw, 15px); font-weight: 700; opacity: 0.85; margin-top: 0.15em; color: #c9f5d8; font-variant-numeric: tabular-nums; }
     /* R1b（持ち主 08:24「力のパーセントをもう少しわかりやすく」）: 手の帯の上端の太いゲージと、撃退ラインの目盛り。
        色は段で変わる: 撃退ライン未満は琥珀、以上は白熱、満タンはゆっくり脈打つ。吸われて減った分は赤紫の影が遅れて縮む */

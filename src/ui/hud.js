@@ -2,6 +2,7 @@
 // 吸われている間の画面の縁の脈打ち。M1（持ち主 09:15）: 払うのボタンはなくした（溜めている間の 2 本目の指の短いタップ、PC は Space か右クリック）
 import { clearThreshold } from '../game/charge.js';
 import { DRAIN_FX } from './drainFx.js';
+import { TIME_LEFT, timeLeftText, isLastSeconds, timeBarFrac, timePulse, timeColor } from './timeLeft.js';
 
 // M1（spec §16）: 街の中心までの距離（m）。中心のそば（CENTRE_NEAR m 未満）では「街の中心」
 export const CENTRE_NEAR = 5;
@@ -75,10 +76,11 @@ const STAGE_RGB = { low: [255, 190, 92], ready: [255, 250, 236], full: [255, 255
 const DRAIN_RGB = [255, 70, 190];
 const mixRgb = (a, b, k) => `rgb(${a.map((v, i) => Math.round(v + (b[i] - v) * k)).join(',')})`;
 
-export function createHud(root, { threshold = clearThreshold() } = {}) {
-  // 上の帯: 左は空けておく（R2 の「届かない軍勢 あと N 体」の場所）、右に残り時間と街の軍勢
+export function createHud(root, { threshold = clearThreshold(), total = 60 } = {}) {
+  // 上の帯: 左は空けておく（R2 の「届かない軍勢 あと N 体」の場所）、右に残り時間と街の軍勢。
+  // R1c（持ち主 11:03）: 残り時間は大きな数字（秒）と、その下の減っていく細い帯（total 秒で満タン）。街の軍勢はその下
   root.innerHTML = '<div class="hud-drain"></div>'
-    + '<div class="hud-strip"><div class="hud-left"></div><div class="hud-right"><div class="hud-time"></div><div class="hud-army"></div></div></div>'
+    + '<div class="hud-strip"><div class="hud-left"></div><div class="hud-right"><div class="hud-time" role="timer" aria-label="残り時間"><div class="hud-tline"><b class="hud-tnum"></b><small class="hud-tunit">秒</small></div><div class="hud-tbar"><i class="hud-tfill"></i></div></div><div class="hud-army"></div></div></div>'
     + '<div class="hud-centre"><i class="hud-arrow"></i><span></span></div>'
     + '<div class="hud-gauge low" role="meter" aria-label="力" aria-valuemin="0" aria-valuemax="100"><div class="hud-track"><i class="hud-ghost"></i><i class="hud-fill"></i><i class="hud-pulse"></i></div>'
     + '<div class="hud-tick"></div><div class="hud-tick-label">撃退ライン</div><div class="hud-lost"></div></div>'
@@ -89,6 +91,7 @@ export function createHud(root, { threshold = clearThreshold() } = {}) {
     + '<div class="hud-announce"><span></span></div>';
   const strip = root.querySelector('.hud-strip');
   const time = root.querySelector('.hud-time');
+  const timeNum = root.querySelector('.hud-tnum'), timeFill = root.querySelector('.hud-tfill');
   const army = root.querySelector('.hud-army');
   const gauge = root.querySelector('.hud-gauge');
   const fill = gauge.querySelector('.hud-fill'), ghost = gauge.querySelector('.hud-ghost'), pulseEl = gauge.querySelector('.hud-pulse');
@@ -108,6 +111,7 @@ export function createHud(root, { threshold = clearThreshold() } = {}) {
   let hintTimer = 0;
   let lineAt = threshold;
   tick.style.left = tickLabel.style.left = `${threshold}%`;
+  let shownTFill, shownTLast, shownTColor, shownTScale;
   let shownPct, shownTime, shownFill, shownArmy, shownStage, shownGhost, shownLost, shownColor, shownVig, shownGk, shownCentre, shownDeg, shownLine;
   let ghostF = 0;
   return {
@@ -177,8 +181,18 @@ export function createHud(root, { threshold = clearThreshold() } = {}) {
       if (alive !== shownArmy) { army.textContent = alive == null ? '' : armyText(alive); shownArmy = alive; }
       const n = powerPct(power, max);
       if (n !== shownPct) { pctNum.textContent = String(n); gauge.setAttribute('aria-valuenow', String(n)); shownPct = n; }
-      const t = String(Math.ceil(remaining));
-      if (t !== shownTime) { time.textContent = `残り ${t} 秒`; shownTime = t; }
+      // R1c: 残り時間の大きな数字と細い帯。残り 10 秒で .last（色と脈打ち。光の点滅を控える設定では色だけ）
+      const t = timeLeftText(remaining);
+      if (t !== shownTime) { timeNum.textContent = t; shownTime = t; }
+      const tf = (timeBarFrac(remaining, total) * 100).toFixed(1) + '%';
+      if (tf !== shownTFill) { timeFill.style.width = tf; shownTFill = tf; }
+      const last = isLastSeconds(remaining);
+      if (last !== shownTLast) { time.classList.toggle('last', last); shownTLast = last; }
+      const tc = timeColor(remaining);
+      const tcs = tc ? `rgb(${tc.join(',')})` : '';
+      if (tcs !== shownTColor) { timeNum.style.color = tcs; time.style.setProperty('--tcol', tcs || 'currentColor'); shownTColor = tcs; }
+      const ts = reduce ? 'none' : `scale(${(1 + TIME_LEFT.pulseScale * timePulse(remaining)).toFixed(3)})`;
+      if (ts !== shownTScale) { timeNum.style.transform = ts; shownTScale = ts; }
       const stage = powerStage(power, max, lineAt);
       if (stage !== shownStage) {
         for (const el of [gauge, pct]) { el.classList.remove('low', 'ready', 'full'); el.classList.add(stage); }

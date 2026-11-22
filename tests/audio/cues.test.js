@@ -146,3 +146,57 @@ test('R1b 吸われる音の道: 左右の panner から世界の音（master）
     delete globalThis.window;
   }
 });
+
+// R1c（持ち主 11:03「制限時間もわかりやすくしよう」）: 残り 10 秒から 1 秒ごとの短い刻みの音。画面に合わせる（世界の音 master を通るので、
+// 演出・導入の無音に従う）。最後の 3 秒は一段高い。短く、天井より十分下
+test('R1c 刻みの音: 短い（0.1 秒未満）。最後の 3 秒は高い。天井より十分下', async () => {
+  const { timeTickRecipe } = await import('../../src/audio/cues.js');
+  for (let n = 1; n <= 10; n++) {
+    const r = timeTickRecipe(n);
+    for (const t of r.tones) expect(t.dur).toBeLessThan(0.1);
+    expect(recipePeak(r)).toBeLessThan(0.35);
+  }
+  expect(timeTickRecipe(3).tones[0].f).toBeGreaterThan(timeTickRecipe(4).tones[0].f);
+  expect(timeTickRecipe(10).tones[0].f).toBe(timeTickRecipe(4).tones[0].f);
+});
+
+test('R1c 刻みの音の道: 世界の音（master）を通ってリミッターへ（演出の無音・導入では黙る）。鳴らせないときは何もしない', async () => {
+  const { createAudio } = await import('../../src/audio/audio.js');
+  const links = [];
+  const node = () => ({ connect(to) { links.push([this, to]); return to; }, start() {}, stop() {} });
+  const param = (v) => ({ value: v, setValueAtTime() {}, linearRampToValueAtTime() {}, exponentialRampToValueAtTime() {}, setTargetAtTime() {}, cancelScheduledValues() {} });
+  const gains = [], comps = [], oscs = [];
+  const ctx = {
+    state: 'running', currentTime: 1, sampleRate: 8000, destination: {},
+    resume() {}, suspend() {},
+    createBiquadFilter() { return { ...node(), type: '', frequency: param(350), Q: param(1) }; },
+    createGain() { const g = { ...node(), gain: param(1) }; gains.push(g); return g; },
+    createOscillator() { const o = { ...node(), type: '', frequency: param(440) }; oscs.push(o); return o; },
+    createBufferSource() { return { ...node(), buffer: null, loop: false }; },
+    createBuffer(ch, n) { const d = new Float32Array(n); return { getChannelData: () => d }; },
+    createDelay() { return { ...node(), delayTime: param(0) }; },
+    createStereoPanner() { return { ...node(), pan: param(0) }; },
+    createWaveShaper() { return { ...node(), curve: null }; },
+    createDynamicsCompressor() { const c = { ...node(), threshold: param(0), knee: param(0), ratio: param(0), attack: param(0), release: param(0) }; comps.push(c); return c; },
+  };
+  globalThis.window = { AudioContext: function AC() { return ctx; } };
+  try {
+    const audio = createAudio();
+    audio.timeTick(5); // unlock の前は鳴らせない（例外にならない）
+    audio.unlock();
+    const master = gains[0], lim = comps[0];
+    const reaches = (n, target, seen = new Set()) => n === target || (!seen.has(n) && (seen.add(n), links.some(([a, to]) => a === n && reaches(to, target, seen))));
+    const o0 = oscs.length;
+    audio.timeTick(5);
+    const mine = oscs.slice(o0);
+    expect(mine.length).toBeGreaterThan(0);
+    for (const o of mine) expect(reaches(o, master)).toBe(true);
+    expect(reaches(master, lim)).toBe(true);
+    ctx.state = 'suspended';
+    const o1 = oscs.length;
+    audio.timeTick(4);
+    expect(oscs.length).toBe(o1);
+  } finally {
+    delete globalThis.window;
+  }
+});

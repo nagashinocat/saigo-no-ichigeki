@@ -40,6 +40,21 @@ export function bossRecipe({ near = 0.5 } = {}, C = BOSS_CUE) {
   return { horns, clank: { ...C.clank, gain: C.clank.gain * k }, thud: { ...C.thud, gain: C.thud.gain * k } };
 }
 
+// R1c（持ち主 11:03「制限時間もわかりやすくしよう」）: 残り n 秒（10〜1）の刻みの音。乾いた短い「チッ」（矩形波の一打と、
+// 上の倍音の細い一打）と、ごく小さなノイズの粒。最後の 3 秒は 4 度上（急かす）。世界の音（master）を通る
+export const TICK_CUE = { f: 1480, hiAt: 3, hi: 4 / 3, dur: 0.055, gain: 0.11, sparkle: 0.03 };
+export function timeTickRecipe(n, C = TICK_CUE) {
+  const f = C.f * (n <= C.hiAt ? C.hi : 1);
+  const g = C.gain * (n <= C.hiAt ? 1.15 : 1);
+  return {
+    tones: [
+      { type: 'square', f, dur: C.dur, gain: g * 0.6, attack: 0.002 },
+      { type: 'sine', f: f * 2, dur: C.dur * 0.7, gain: g * 0.4, attack: 0.001 },
+    ],
+    sparkle: { dur: 0.03, freq: 6000, gain: C.sparkle, q: 1.5 },
+  };
+}
+
 // 一つのレシピが同時に鳴らす声の大きさの合計（天井の確かめ用。和音・重なりの足し算の上限）
 export function recipePeak(r) {
   if (r.tones) return r.tones.reduce((a, t) => a + t.gain, 0) + r.sparkle.gain;

@@ -163,3 +163,70 @@ test('R1b fix1: 吸われている間はゲージの赤紫の層（--drain）が
   hud.update({ ...base, drain: null });
   expect(Number(gauge.style.getPropertyValue('--drain'))).toBe(0);
 });
+
+// R1c（持ち主 11:03「制限時間もわかりやすくしよう」）: 小さな「残り N 秒」をやめ、上の帯の右に大きな数字と減っていく細い帯。
+// 残り 10 秒から琥珀 → 赤、数字が 1 秒に 1 回脈打つ。光の点滅を控える設定では脈打たず、色だけ
+test('R1c: 残り時間は大きな数字と細い帯（幅が減る）。ちょうど 10 秒で急かす状態へ、色と脈打ち', async () => {
+  const { createHud } = await import('../../src/ui/hud.js');
+  const { root, get } = fakeRoot();
+  const hud = createHud(root, { threshold: 98.6, total: 60 });
+  expect(root.innerHTML).toContain('hud-tnum');
+  expect(root.innerHTML).toContain('hud-tbar');
+  // 左は空けたまま（R2 の「届かない軍勢 あと N 体」）、軍勢の数は残り時間の下（同じ右の列で、後ろ）
+  expect(root.innerHTML).toMatch(/<div class="hud-left"><\/div><div class="hud-right"><div class="hud-time"[^>]*>.*<\/div><div class="hud-army"><\/div><\/div>/);
+  const num = get('.hud-tnum'), fill = get('.hud-tfill'), box = get('.hud-time');
+  const base = { power: 10, max: 100, alive: 50, dt: 1 / 60 };
+  hud.update({ ...base, remaining: 30 });
+  expect(num.textContent).toBe('30');
+  expect(num.textContent).not.toContain('残り');
+  expect(fill.style.width).toBe('50.0%');
+  expect(box.classList.contains('last')).toBe(false);
+  expect(num.style.color || '').toBe('');
+  hud.update({ ...base, remaining: 15 });
+  expect(fill.style.width).toBe('25.0%');
+  hud.update({ ...base, remaining: 10.0001 });
+  expect(num.textContent).toBe('11');
+  expect(box.classList.contains('last')).toBe(false);
+  hud.update({ ...base, remaining: 10 });
+  expect(num.textContent).toBe('10');
+  expect(box.classList.contains('last')).toBe(true);
+  expect(num.style.color).toMatch(/^rgb\(/);
+  expect(num.style.transform).toMatch(/scale\(1\.2/); // 秒が変わる瞬間の山
+  hud.update({ ...base, remaining: 9.5 });
+  expect(Number(num.style.transform.match(/scale\(([\d.]+)\)/)[1])).toBeLessThan(1.03);
+  const c10 = num.style.color;
+  hud.update({ ...base, remaining: 3 });
+  expect(num.style.color).not.toBe(c10);
+  expect(fill.style.width).toBe('5.0%');
+  // 遊び直し（残りが増える）で元へ
+  hud.update({ ...base, remaining: 60 });
+  expect(box.classList.contains('last')).toBe(false);
+  expect(num.style.color).toBe('');
+  expect(fill.style.width).toBe('100.0%');
+});
+
+test('R1c: 光の点滅を控える設定では、残り 10 秒でも数字は脈打たず、色だけ変わる', async () => {
+  const { createHud } = await import('../../src/ui/hud.js');
+  globalThis.matchMedia = (q) => ({ matches: /reduced-motion/.test(q) });
+  try {
+    const { root, get } = fakeRoot();
+    const hud = createHud(root, { threshold: 98.6, total: 60 });
+    const num = get('.hud-tnum');
+    for (const r of [10, 9, 8.9, 3]) {
+      hud.update({ power: 10, max: 100, alive: 5, dt: 1 / 60, remaining: r });
+      expect(num.style.transform || 'none').toBe('none');
+      expect(num.style.color).toMatch(/^rgb\(/);
+    }
+  } finally {
+    delete globalThis.matchMedia;
+  }
+});
+
+test('R1c: 残り時間の CSS: 大きな数字（ふだんの文字より大きい）・細い帯・遊ぶ画面の左は空けたまま', async () => {
+  const { readFileSync } = await import('node:fs');
+  const css = readFileSync(new URL('../../index.html', import.meta.url), 'utf8');
+  const px = (re) => Number(css.match(re)[1]);
+  expect(px(/\.hud-tnum\s*\{[^}]*font-size:\s*clamp\((\d+)px/)).toBeGreaterThanOrEqual(30);
+  expect(px(/\.hud-tbar\s*\{[^}]*height:\s*(\d+)px/)).toBeLessThanOrEqual(6);
+  expect(css).toMatch(/\.hud-time\.last \.hud-tfill\s*\{/); // 残り 10 秒は帯も色が変わる
+});
