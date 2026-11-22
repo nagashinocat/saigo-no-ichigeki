@@ -166,7 +166,8 @@ export function createCinematic(views, enemyView, explosionView, { renderer, sce
   // phase: 'off' | 'play'（時刻表を進める） | 'held'（終わって最後の絵のまま待つ）
   let phase = 'off', t = 0, plan = null, tl = null, stage = 'off';
   let shot = null, getEnemies = null;
-  const sparkAt = new Map(), _sparks = [];
+  let sparkAt = new Map();
+  const _sparks = [];
   let gameDt = 0, worldDt = 0, chase = null, chaseC = 1, chaseR0 = 0, cuesDone = new Set(), focusOn = false;
   // 逃げる道（planFinale の retreat: false で後回しにしたもの）を求める関数。スローの間に一度だけ呼ぶ
   let resolveRetreat = null;
@@ -508,6 +509,16 @@ export function createCinematic(views, enemyView, explosionView, { renderer, sce
   }
 
 
+  // 宇宙での大きさ: 大きな一発ほど大きい
+  // 光の半球の最大の大きさは、宇宙のカメラの画面の高さに対して決める（縦長でも横長でも同じ見え方）
+  function sizeSpace(s) {
+    spaceDist = aspect() < 1 ? 190 : 270;
+    space.aim({ aspect: aspect(), dist: spaceDist, alt: 50, lookAhead: 420, lookUp: 0, fovH: SPACE_FOV.h, fovV: SPACE_FOV.v });
+    const halfH = spaceDist * Math.tan(THREE.MathUtils.degToRad(space.camera.fov) / 2);
+    // S8: 大きさの基準は S7 までの最大の半径（blast.smallRef）。広げた最大の一発（720 m）は前の最大より約 14% 大きく見える
+    rMax = 0.17 * halfH * (0.5 + 0.5 * Math.sqrt(s.radius / (cfg.blast.smallRef ?? cfg.radius.max)));
+  }
+
   // 撮る場所（plan）が決まったら: 時刻表・カメラ・隠すビル・乗り手の隊形
   let pendingPlan = null, setupArgs = null, whiteDrawn = false, planFrame = 0;
   function setup(p) {
@@ -623,16 +634,30 @@ export function createCinematic(views, enemyView, explosionView, { renderer, sce
       whiteDrawn = false; planFrame = 0;
       if (typeof p === 'function') { pendingPlan = p; plan = null; tl = createTimeline({ radius: s.radius }, undefined, cfg); }
       else { pendingPlan = null; setup(p); }
-      // 宇宙での大きさ: 大きな一発ほど大きい
-      // 光の半球の最大の大きさは、宇宙のカメラの画面の高さに対して決める（縦長でも横長でも同じ見え方）
-      spaceDist = aspect() < 1 ? 190 : 270;
-      space.aim({ aspect: aspect(), dist: spaceDist, alt: 50, lookAhead: 420, lookUp: 0, fovH: SPACE_FOV.h, fovV: SPACE_FOV.v });
-      const halfH = spaceDist * Math.tan(THREE.MathUtils.degToRad(space.camera.fov) / 2);
-      // S8: 大きさの基準は S7 までの最大の半径（blast.smallRef）。広げた最大の一発（720 m）は前の最大より約 14% 大きく見える
-      rMax = 0.17 * halfH * (0.5 + 0.5 * Math.sqrt(s.radius / (cfg.blast.smallRef ?? cfg.radius.max)));
+      sizeSpace(s);
       screen.grade.bars = 0; screen.grade.fade = 0; screen.grade.streak = 0;
       cue('silence');
       self.update(0);
+    },
+    get spaceScene() { return space.scene; },
+    // R4（縦動画、share/clip.js）: 演出を動かさずに、演出の時刻 tt の宇宙（光の半球 → 縦一線の光 → 焼けた街の灯）の一コマを用意する。
+    // shot: 最後の一発（radius・centre）、timeline: その一発の演出の時刻表（再生したときの cinematic.timeline）、enemies: 見回る者（宇宙の火花）、
+    // sparks: 火花の時刻の覚え（Map。同じ動画の間は同じ物を渡す）。今の画面の大きさ（views.size）で解く。戻り値 { scene, camera, screen }
+    spaceShot(tt, { shot: s, timeline, enemies = [], sparks = new Map() }) {
+      const keep = { t, tl, shot, getEnemies, sparkAt, cx: C.x, cz: C.z, rMax, spaceDist };
+      try {
+        t = tt; tl = timeline; shot = s; getEnemies = () => enemies; sparkAt = sparks;
+        C.x = s.centre?.x ?? 0; C.z = s.centre?.z ?? 0;
+        sizeSpace(s);
+        updateSpace();
+        screen.grade.bars = barsFor(aspect());
+        screen.grade.fade = 0;
+        screen.time = tt;
+      } finally {
+        ({ t, tl, shot, getEnemies, sparkAt, rMax, spaceDist } = keep);
+        C.x = keep.cx; C.z = keep.cz;
+      }
+      return { scene: space.scene, camera: space.camera, screen };
     },
     // 'cinematicEnd': ゲーム側の止まった時間の終わり（この演出はゲームの時計を自分で進めるので、することはない）
     end() {},

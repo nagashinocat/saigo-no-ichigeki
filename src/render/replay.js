@@ -348,6 +348,20 @@ export function createReplay(views, { scene, lights = null, fog = null, blastLig
       screen.grade.fade = 1;
       emit('replayStart');
     },
+    // R4（縦動画、share/clip.js）: リプレイの時刻 target まで、ふつうの再生と同じ決まった刻み（REPLAY.tick）で進める（戻らない。最後で止まる）。
+    // 暗転はしない（fade 0）、結果へも進まない（'aftermath'・'replayEnd' は出さない）。描くのは呼ぶ側。
+    // maxFine: 1 回に細かい刻みで進める数の上限。超えた分は早送りの刻み（FF_TICK）で進める（遅い端末で録画が現実の時間に遅れていかない）
+    seek(target, { maxFine = Infinity } = {}) {
+      if (!tl || phase === 'off') return;
+      const end = Math.min(target, tl.end);
+      let n = 0;
+      while (t + tl.tick <= end + 1e-9) {
+        if (n++ < maxFine) tickOnce(tl.tick);
+        else tickOnce(Math.min(FF_TICK, Math.max(tl.tick, end - t)));
+      }
+      if (n === 0) shot(t);
+      screen.grade.fade = 0;
+    },
     // 画面をタップ: 暗くして最後まで早送りし、結果へ
     skip() {
       if (phase === 'play') { phase = 'skip'; skipK = 0; emit('skip'); }
