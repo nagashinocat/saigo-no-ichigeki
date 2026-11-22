@@ -53,7 +53,7 @@ import { scheduleIntroSfx, renderIntroAudio } from './audio/introSfx.js';
 import { prepareIntroMusic, introMusicPlan } from './audio/introMusic.js';
 import { createIntroClock } from './audio/introClock.js';
 import { pickCity, cityLabel, cityLink, rememberRetryCity } from './game/daily.js';
-import { earnedTitles, titleName } from './game/titles.js';
+import { settleRun } from './game/runResult.js';
 import { createRecords } from './game/records.js';
 import { createIntroGesture } from './ui/introGesture.js';
 import { createDrainFx } from './ui/drainFx.js';
@@ -241,12 +241,8 @@ let finaleDone = false;
 game.on('over', ({ reason, total, outcome = null }) => {
   audio.chargeHum(0); audio.rumble(0);
   // R3: 称号（初めては NEW）と、この街の自己ベスト（放った一発だけを出す。ブラックホールは前のベストを見せる）
-  const ids = earnedTitles({ reason, outcome, stats: { maxCombo: game.maxCombo } });
-  const fresh = new Set(records.addTitles(ids));
-  const titles = ids.map((id) => ({ id, name: titleName(id), isNew: fresh.has(id) }));
-  const best = reason === 'released' && outcome
-    ? records.submitBest(cityPick.key, { rank: outcome.rank, damage: total })
-    : { best: records.best(cityPick.key), isNew: false };
+  // R3 fix1: 称号は一つ（いちばん珍しいもの。並びはその回の種）。今日の初撃退・記録の塗り替え・日本時間の時刻も称号の元
+  const { titles, best } = settleRun({ records, cityKey: cityPick.key, citySeed: seed, reason, outcome, stats: game.runStats, damage: total, cityValue: game.cityValue });
   pendingResult = { reason, total, outcome, wait: RESULT_DELAY, extra: { city: cityInfo, titles, best } };
   // リプレイが無いとき（ふつうは無い）は、終わった街の上空で生き残りの光を脈打たせる
   if (outcome && !outcome.clear && !replaySnap) patrolGlow.setSurvivors(survivorIds(outcome));

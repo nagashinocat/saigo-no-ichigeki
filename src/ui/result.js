@@ -187,7 +187,9 @@ export function createResult(root, { onRetry, onReplay = null, share: shareFn = 
       cityEl.textContent = c.city ?? '';
       cityEl.hidden = !c.city;
       titlesEl.replaceChildren(...(c.titles ?? []).map((tt) => {
-        const b = el('span', 'result-badge' + (tt.isNew ? ' new' : ''), tt.name);
+        const b = el('span', 'result-badge' + (tt.isNew ? ' new' : '') + (tt.rarity ? ' r' + tt.rarity : ''), tt.name);
+        // R3 fix1: 珍しさを小さな星で（1〜5）
+        if (tt.rarity) b.append(el('small', 'result-stars', '★'.repeat(tt.rarity)));
         if (tt.isNew) b.append(el('i', null, 'NEW'));
         return b;
       }));
