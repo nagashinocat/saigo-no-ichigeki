@@ -130,7 +130,8 @@ export function retreatPoint(path, x) {
 // 逃げる道: 爆心から離れる向きを基準に、低い順に、ビルを通らない道を探す。
 // 向きと「低く飛ぶ長さ」ごとに、道の上の各点で越えなければならない高さを先に求めておく（放つ瞬間に止まらないように）
 const STEP = 0.75;
-function findRetreat(origin, base, buildings, ground, radius, lead) {
+// city（M1）: 街の中心（爆心を原点とした位置 { x, z }。爆心が街の中心なら原点）。街の外（野原）かはそこからの距離で見る
+function findRetreat(origin, base, buildings, ground, radius, lead, city = null) {
   const radial = Math.atan2(origin[2], origin[0]);
   const len = Math.max(60, radius + lead + 20 - len2(origin), radius + lead + 2) + 10; // 道の長さ: 爆心から見た前線の先まで、かつ始まりから radius + lead まで
   const n = Math.ceil((len - 0.5) / STEP) + 1;
@@ -174,7 +175,7 @@ function findRetreat(origin, base, buildings, ground, radius, lead) {
     while (i0 < n && xs[i0] < PLAN.profile.flatMax && needLow[i0] < y0) i0++;
     // 街の外（野原）へ出たら、outside m より下へは下がらない（屋上の並びを見下ろして、手前に街を入れる）
     const low = xs.map((x, i) => {
-      const r = Math.hypot(origin[0] + dir[0] * x, origin[2] + dir[1] * x);
+      const r = Math.hypot(origin[0] + dir[0] * x - (city?.x ?? 0), origin[2] + dir[1] * x - (city?.z ?? 0));
       return Math.max(r > CONFIG.cityRadius ? PLAN.profile.outside : 4, i < i0 ? Math.max(y0, needLow[i] + 0.3) : needUp[i] + PLAN.profile.above);
     });
     const A = Math.ceil(PLAN.profile.lookAhead / STEP);
@@ -206,10 +207,11 @@ const groundFor = (crater) => (p) => groundHeight(Math.hypot(p[0], p[2]), crater
 
 // 逃げる道だけを探す（planFinale の retreat: false で後回しにしたとき、演出の白〜一拍の間に呼ぶ）。
 // plan: planFinale の戻り値、ほかは planFinale に渡したものと同じ（radius は shot.radius）
-export function planRetreat(plan, { buildings, crater = 0, radius, lead = 0 }) {
+// M1: 位置はどれも爆心を原点とした位置。city は街の中心（その座標で。省けば原点 = 爆心が街の中心）
+export function planRetreat(plan, { buildings, crater = 0, radius, lead = 0, city = null }) {
   // 基準の向きは爆心から離れる向き（カメラは光の壁から逃げる）
   const c = plan.camPos;
-  return findRetreat(c, Math.atan2(c[2], c[0]), buildings, groundFor(crater), radius, lead);
+  return findRetreat(c, Math.atan2(c[2], c[0]), buildings, groundFor(crater), radius, lead, city);
 }
 
 

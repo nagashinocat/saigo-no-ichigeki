@@ -132,6 +132,9 @@ export function createCityView(city, style, tier) {
   group.add(ground);
   const u = style.uniforms;
   u.uRingStep.value = groundGeo.step;
+  let blastC = null; // M1: 最後の一発の爆心（setBlastCentre）
+  // M1: 地区の 'fine' の境界の球は、原点から外へ押される扇の全体。爆心が原点から離れた分だけ、押されたビルは原点から遠くへ行くので広げる
+  let sphereGrow = 0;
 
   // ビル（種類と地区ごとに箱の形を持ち、つぶれ始めた時刻を部品ごとの aCrush、屋根の形を aShape に書く）
   const segs = BUILDING_SEGMENTS[tier] ?? BUILDING_SEGMENTS.mid;
@@ -245,7 +248,7 @@ export function createCityView(city, style, tier) {
       for (const [m, sp] of [...l.meshes.map((m) => [m, fine ? l.spheres.fine : l.spheres.coarse]), [l.shadow, fine ? l.spheres.fine : l.spheres.shadow]]) {
         if (!m) continue;
         m.frustumCulled = !!sp;
-        if (sp) m.boundingSphere = sp.clone();
+        if (sp) { m.boundingSphere = sp.clone(); if (fine) m.boundingSphere.radius += sphereGrow; }
       }
       // mid / low: 最後の一発からは、外の地区の平らな影を描かない（つぶれていく遠いビルの影は光の中で見えない。描画を減らす）
       if (l.shadow) l.shadow.visible = !(fine && l.region !== 0);
@@ -374,7 +377,7 @@ export function createCityView(city, style, tier) {
   });
   group.add(...boxMeshes, ...wallMeshes, tankMesh, ...signMeshes, neonPools, beaconMesh);
   const applyDressSpheres = (level) => {
-    for (const { mesh, spheres } of dressRegions) { mesh.frustumCulled = true; mesh.boundingSphere = (level === 'fine' ? spheres.fine : spheres.coarse).clone(); }
+    for (const { mesh, spheres } of dressRegions) { mesh.frustumCulled = true; mesh.boundingSphere = (level === 'fine' ? spheres.fine : spheres.coarse).clone(); if (level === 'fine') mesh.boundingSphere.radius += sphereGrow; }
   };
   applyDressSpheres('coarse');
   const dressCounts = { boxes: roofBoxes.length + wallBoxes.length, roofBoxes: roofBoxes.length, wallBoxes: wallBoxes.length, tanks: dress.tanks.length, signs: dress.signs.length, pools: dress.pools.length, beacons: dress.beacons.length };
@@ -584,8 +587,18 @@ export function createCityView(city, style, tier) {
       u.uCrater.value = u.uFronts.value[0];
       u.uHeat.value = heat;
       u.uEmber.value = ember;
-      return transitV ? transitV.update(dt, { front, radius }) : [];
+      return transitV ? transitV.update(dt, { front, radius, centre: blastC }) : [];
     },
+    // M1（spec §16）: 最後の一発の爆心 { x, z }（放った瞬間の主人公の位置）。球に沿ったゆがみ・穴の中心（uBlastC）と、
+    // 地面の放射状の網（えぐれの縁がなめらかな円になるよう、網の中心を爆心に置き直す）。リプレイでも同じ爆心のまま
+    setBlastCentre(c) {
+      blastC = c ? { x: c.x, z: c.z } : null;
+      u.uBlastC.value.set(blastC?.x ?? 0, blastC?.z ?? 0);
+      ground.position.set(blastC?.x ?? 0, 0, blastC?.z ?? 0);
+      sphereGrow = blastC ? Math.hypot(blastC.x, blastC.z) : 0;
+      if (detail === 'fine') { applySpheres('fine'); applyDressSpheres('fine'); }
+    },
+    get blastCentre() { return blastC; },
     // ---- 高架（S8）: 区間 id は 'x3'（高速）/ 'r5'（線路） ----
     get transit() { return transitV; },
     crushTransit(id, delay) { transitV?.crush(id, time, Math.max(1e-3, delay)); },

@@ -133,7 +133,8 @@ function patchCommon(shader, uniforms) {
 }
 
 // 爆発の球に沿ったゆがみ（sphereDeform.js の式）を使うシェーダーへ、共有の uniform を渡す
-const DEFORM_UNIFORMS = ['uFronts', 'uFrontCount', 'uTime', 'uHeat', 'uEmber', 'uCrater', 'uRingStep'];
+// uBlastC（M1）: 球の中心（爆心）の x, z
+const DEFORM_UNIFORMS = ['uFronts', 'uFrontCount', 'uBlastC', 'uTime', 'uHeat', 'uEmber', 'uCrater', 'uRingStep'];
 function patchDeform(shader, uniforms) {
   for (const k of DEFORM_UNIFORMS) shader.uniforms[k] = uniforms[k];
 }
@@ -189,15 +190,16 @@ function buildingDeform(withNormal) {
   vec3 w1 = deformPoint(sq);
   float pushed = length(w1 - sq);
   // 見た目だけ: 押し付けられた面は、光の球の表面の波打ち（±2%）より少し外に置き、球に埋もれないようにする。
-  // さらに、押し付けられた量とつぶれの進みに応じて、壁をしわくちゃにする
+  // さらに、押し付けられた量とつぶれの進みに応じて、壁をしわくちゃにする（M1: 球の中心 uBlastC から外へ）
+  vec3 bc = vec3(uBlastC.x, 0.0, uBlastC.y);
   if (pushed > 0.0) {
     float crumple = min(pushed, 10.0) * (0.45 + 0.5 * ck);
-    w1 *= 1.0 + 0.022 * smoothstep(0.0, 2.0, pushed) + crumple * dfWrinkle(w0 * 0.22) / max(length(w1), 1.0);
+    w1 = bc + (w1 - bc) * (1.0 + 0.022 * smoothstep(0.0, 2.0, pushed) + crumple * dfWrinkle(w0 * 0.22) / max(length(w1 - bc), 1.0));
     w1.y = max(w1.y + crumple * 0.5 * dfWrinkle(w0 * 0.3 + 7.0), 0.0);
   }
   if (dS.y > 1e-4 && (ck > 0.0 || pushed > 0.0)) transformed = (w1 - instanceMatrix[3].xyz) / dS;
   ${withNormal ? `vPress = max(smoothstep(0.0, 3.0, pushed), ck * 0.6);
-  if (pushed > 0.0) vNormal = normalize(mix(vNormal, normalize((viewMatrix * vec4(normalize(w1), 0.0)).xyz), smoothstep(0.0, 3.0, pushed) * 0.8));` : ''}
+  if (pushed > 0.0) vNormal = normalize(mix(vNormal, normalize((viewMatrix * vec4(normalize(w1 - bc), 0.0)).xyz), smoothstep(0.0, 3.0, pushed) * 0.8));` : ''}
 }
 #endif
 `;
@@ -367,6 +369,7 @@ function makeBuildingDepthMaterial(uniforms) {
 }
 
 // 地面のえぐれ: 最大の球（uFronts[0]）の下半分の形に掘り下げ、縁の外に盛り上がりを作る。
+// M1: 地面の網（放射状）は爆心に置き直す（cityView.setBlastCentre）ので、網の座標 position は爆心からの位置
 // 縁にいちばん近い輪の頂点を縁の上へ寄せて、縁がきれいな円になるようにする（uRingStep: 輪の間隔）。
 const GROUND_VERTEX = /* glsl */`
 vec3 gPos = position;
@@ -402,7 +405,7 @@ function makeGroundMaterial(uniforms, detail) {
       .replace('#include <beginnormal_vertex>', GROUND_VERTEX)
       .replace('#include <begin_vertex>', 'vec3 transformed = gPos;');
     shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', '#include <common>\nuniform float uCrater, uHeat, uEmber, uTime;')
+      .replace('#include <common>', '#include <common>\nuniform float uCrater, uHeat, uEmber, uTime;\nuniform vec2 uBlastC;')
       .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += groundEmis;')
       .replace('applyFog(gl_FragColor.rgb, vFogW)', 'applyFog(gl_FragColor.rgb, cameraPosition + (vFogW - cameraPosition) * groundFogK)')
       .replace('#include <color_fragment>', /* glsl */`
@@ -456,20 +459,23 @@ float groundFogK = 1.0; // 穴の中は霞を薄くして、深さと岩肌を�
   // 縁に明るい筋。球が光っている間は割れ目が溶けて光り、消えたあとは熾火になって冷える。
   // 重い模様は、穴の中（inC > 0）と縁の外の帯（焦げ跡が届く範囲）だけで計算する。それより外の地面では何もしない
   if (uCrater > 0.0) {
+    // M1: 穴は爆心（uBlastC）のまわり。広場（上の r）は街の中心のまま
+    vec2 pc = p - uBlastC;
+    float rc = length(pc);
     float F = uCrater, y = vFogW.y;
     float W = ${f(CRATER_LIP.width)} * F + 3.0;
     float rw = max(0.7, F * 0.005) + px * 1.5;
     float inLo = F - 0.3 - px;
-    float inC = 1.0 - smoothstep(inLo, F - 0.05, r);
+    float inC = 1.0 - smoothstep(inLo, F - 0.05, rc);
     float bandOut = F * 1.35 + W * 1.5; // 焦げ跡（最大 0.34F）と土の盛り上がり（1.3W）の外
     // 穴の面の模様は、球の面の向きで3つの平面から取って混ぜる（壁で模様が伸びないように）
-    vec3 tw = vFogW / F; tw *= tw; tw /= tw.x + tw.y + tw.z + 1e-4;
+    vec3 tw = (vFogW - vec3(uBlastC.x, 0.0, uBlastC.y)) / F; tw *= tw; tw /= tw.x + tw.y + tw.z + 1e-4;
     #define TRI(s, o) (vnoise(vFogW.xz * (s) + (o)) * tw.y + vnoise(vFogW.xy * (s) + (o)) * tw.z + vnoise(vFogW.zy * (s) + (o)) * tw.x)
     vec2 cq = vFogW.xz;
-    float ang = atan(p.y, p.x);
+    float ang = atan(pc.y, pc.x);
     // 縁の外: 掘り返された明るい土の盛り上がりと放射状の焦げ跡（穴の中だけのピクセルでは計算しない）
-    if (inC < 1.0 && r < bandOut) {
-      float xo = max(r - F, 0.0);
+    if (inC < 1.0 && rc < bandOut) {
+      float xo = max(rc - F, 0.0);
       float rays = smoothstep(0.45, 0.8, vnoise(vec2(ang * 14.0, 3.0)) * 0.7 + vnoise(vec2(ang * 45.0, 7.0)) * 0.3);
       float ejecta = (1.0 - smoothstep(0.0, F * (0.06 + 0.28 * rays), xo)) * (1.0 - inC);
       c = mix(c, srgb(vec3(0.22, 0.17, 0.16)), ejecta * 0.75);
@@ -511,7 +517,7 @@ float groundFogK = 1.0; // 穴の中は霞を薄くして、深さと岩肌を�
       groundEmis += srgb(vec3(1.0, 0.52, 0.22)) * inC * uHeat * 0.3;
     }
     // 縁の明るい筋
-    float rim = 1.0 - smoothstep(0.0, rw, abs(r - F));
+    float rim = 1.0 - smoothstep(0.0, rw, abs(rc - F));
     c = mix(c, srgb(vec3(1.0, 0.88, 0.74)), rim * 0.9);
     groundEmis += srgb(vec3(1.0, 0.72, 0.48)) * rim * (0.3 + 1.4 * uHeat);
     #undef TRI
@@ -564,7 +570,7 @@ function makeGlowMaterial(name, uniforms, params) {
 function makeOutlineMaterial(uniforms) {
   return new THREE.ShaderMaterial({
     side: THREE.BackSide,
-    uniforms: { uSunDir: uniforms.uSunDir, uSkySun: uniforms.uSkySun, uFogStart: uniforms.uFogStart, uWidth: { value: 0.0016 }, uFronts: uniforms.uFronts, uFrontCount: uniforms.uFrontCount, uTime: uniforms.uTime },
+    uniforms: { uSunDir: uniforms.uSunDir, uSkySun: uniforms.uSkySun, uFogStart: uniforms.uFogStart, uWidth: { value: 0.0016 }, uFronts: uniforms.uFronts, uFrontCount: uniforms.uFrontCount, uBlastC: uniforms.uBlastC, uTime: uniforms.uTime },
     vertexShader: /* glsl */`
       uniform float uWidth;
       varying vec3 vFogW;
@@ -603,7 +609,7 @@ function makePlanarShadowMaterial(uniforms) {
     stencilWrite: true, stencilRef: 1, stencilFunc: THREE.NotEqualStencilFunc,
     stencilZPass: THREE.ReplaceStencilOp, stencilFail: THREE.KeepStencilOp, stencilZFail: THREE.KeepStencilOp,
     polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
-    uniforms: { uSun: { value: SUN_DIR.clone() }, uFronts: uniforms.uFronts, uFrontCount: uniforms.uFrontCount, uTime: uniforms.uTime },
+    uniforms: { uSun: { value: SUN_DIR.clone() }, uFronts: uniforms.uFronts, uFrontCount: uniforms.uFrontCount, uBlastC: uniforms.uBlastC, uTime: uniforms.uTime },
     vertexShader: /* glsl */`
       uniform vec3 uSun;
       varying float vFade;
@@ -619,7 +625,7 @@ function makePlanarShadowMaterial(uniforms) {
         wp = modelMatrix * wp;
         wp.xz -= uSun.xz * (wp.y / uSun.y);
         vFade = 1.0 - smoothstep(600.0, 900.0, length(wp.xz));
-        wp.y = 0.03 - craterDepth(length(wp.xz));
+        wp.y = 0.03 - craterDepthAt(wp.xz);
         gl_Position = projectionMatrix * viewMatrix * wp;
       }`,
     fragmentShader: /* glsl */`
@@ -716,7 +722,7 @@ function makeSignMaterial(uniforms) {
   return new THREE.ShaderMaterial({
     uniforms: {
       uSunDir: uniforms.uSunDir, uSkySun: uniforms.uSkySun, uFogStart: uniforms.uFogStart,
-      uFronts: uniforms.uFronts, uFrontCount: uniforms.uFrontCount, uTime: uniforms.uTime,
+      uFronts: uniforms.uFronts, uFrontCount: uniforms.uFrontCount, uBlastC: uniforms.uBlastC, uTime: uniforms.uTime,
       uFlicker: uniforms.uSignFlicker, uGain: uniforms.uSignGain, uAtlas: { value: signAtlasTexture() },
     },
     vertexShader: /* glsl */`
@@ -753,7 +759,7 @@ function makeSignMaterial(uniforms) {
         vLife = 1.0 - smoothstep(0.08, 0.7, max(ck, smoothstep(0.0, 5.0, pushed)));
         float F = 0.0;
         for (int i = 0; i < ${MAX_FRONTS}; i++) { if (i >= uFrontCount) break; F = max(F, uFronts[i]); }
-        vSurge = F > 0.0 ? 1.0 - smoothstep(0.0, 70.0, length(instanceMatrix[3].xyz) - F) : 0.0;
+        vSurge = F > 0.0 ? 1.0 - smoothstep(0.0, 70.0, length(instanceMatrix[3].xyz - vec3(uBlastC.x, 0.0, uBlastC.y)) - F) : 0.0;
         vUv = uv; vTile = aTile; vSign = aSign;
         #ifdef USE_INSTANCING_COLOR
           vCol = instanceColor;
@@ -852,6 +858,7 @@ export function createStyle(tierName) {
     uFogStart: { value: FOG_START },
     // 爆発の球（cityView.update が毎フレーム書く）
     uFronts: { value: new Float32Array(MAX_FRONTS) }, uFrontCount: { value: 0 }, uTime: { value: 0 },
+    uBlastC: { value: new THREE.Vector2() }, // M1: 球の中心（爆心）の x, z（cityView.setBlastCentre が書く）
     uHeat: { value: 0 }, uEmber: { value: 0 }, uCrater: { value: 0 }, uRingStep: { value: 1 },
     // 看板のちらつき（low の段は 0）と明るさ（bloom のある段は閾値を超える）。段が下がったら setSignTier で合わせる
     uSignFlicker: { value: tierName === 'low' ? 0 : 1 },

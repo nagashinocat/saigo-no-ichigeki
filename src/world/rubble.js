@@ -19,6 +19,7 @@ export function createRubble(capacity) {
   const FIELDS = Object.keys(data);
   let next = 0, counter = 0, count = 0, limit = capacity, highWater = 0;
   let swept = 0; // 前に sweep した穴の半径。広がっていなければ何もしない（走査もしない）
+  let rcx = 0, rcz = 0; // M1: 穴の中心（setCentre）
   const dirty = new Set();
   const changes = { slots: [], highWater: 0 }; // takeChanges が毎回使い回す（毎フレーム新しい配列を作らない）
 
@@ -65,6 +66,8 @@ export function createRubble(capacity) {
       for (let s = 0; s < highWater; s++) if (seq[s]) { seq[s] = 0; dirty.add(s); }
       count = 0; next = 0; swept = 0;
     },
+    // M1: 穴の中心（爆心 [x, z]）。瓦礫の距離はそこから測る
+    setCentre(c) { rcx = c?.[0] ?? 0; rcz = c?.[1] ?? 0; },
     add(p, dustOut) {
       if (next >= limit) next = 0;
       const s = next;
@@ -76,7 +79,7 @@ export function createRubble(capacity) {
       d.sx[s] = p.dims[0]; d.sy[s] = p.dims[1]; d.sz[s] = p.dims[2];
       d.cr[s] = p.color[0]; d.cg[s] = p.color[1]; d.cb[s] = p.color[2];
       d.size[s] = p.size;
-      d.r[s] = Math.hypot(p.pos[0], p.pos[2]);
+      d.r[s] = Math.hypot(p.pos[0] - rcx, p.pos[2] - rcz);
       d.floor[s] = p.floor ?? p.pos[1] - p.size * 0.5;
       seq[s] = ++counter;
       count++;

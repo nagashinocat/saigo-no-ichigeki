@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { toLocal } from './blastFrame.js';
 import { BLACKHOLE, stageAt, cuesBetween, collapseAt, splitLensAt, fullLensAt, isFullscreen } from './blackholeTimeline.js';
 import { planBlackholeCamera, BH_CAMERA } from './blackholePlan.js';
 import { createLensFx, projectToRect } from './lensFx.js';
@@ -27,7 +28,9 @@ export function createBlackhole(views, hand, { renderer, scene, sky = null, sunD
   const camera = new THREE.PerspectiveCamera(60, 1, 1, 6000);
   const cityLens = createLensFx(renderer, { sky, tier });
   const handLens = createLensFx(renderer, { tier });
+  // M1（spec §16）: 主人公は動くので、黒い球は時間切れの瞬間の主人公の位置（play の hero）。カメラの置き場所は主人公を原点として解き、世界へ戻す
   const HERO = new THREE.Vector3(...BH_CAMERA.hero);
+  let hc = { x: 0, z: 0 }, localBuildings = buildings;
   const _pos = new THREE.Vector3(), _look = new THREE.Vector3(), _v = new THREE.Vector3(), _q = new THREE.Quaternion(), _e = new THREE.Euler();
   const _center = [0.5, 0.5], _clear = new THREE.Color();
   let active = false, finished = false, t = 0, plan = null, planAspect = 0, shakeClock = 0, tierNow = tier;
@@ -35,7 +38,11 @@ export function createBlackhole(views, hand, { renderer, scene, sky = null, sunD
   // 画面全体のカメラ: ゆっくり黒い球へ寄り、潮の力で少しずつ傾く。飲み込みの間は低く震える
   function aim(dt) {
     const aspect = views.size.w / Math.max(1, views.size.h);
-    if (!plan || Math.abs(aspect - planAspect) > 1e-6) { plan = planBlackholeCamera({ aspect, sunDir, buildings }); planAspect = aspect; }
+    if (!plan || Math.abs(aspect - planAspect) > 1e-6) {
+      plan = planBlackholeCamera({ aspect, sunDir, buildings: localBuildings });
+      plan = { ...plan, pos: [plan.pos[0] + hc.x, plan.pos[1], plan.pos[2] + hc.z], look: [plan.look[0] + hc.x, plan.look[1], plan.look[2] + hc.z] };
+      planAspect = aspect;
+    }
     const u = clamp01((t - B.cut) / (B.end - B.cut));
     const k = 1 - 0.14 * easeInOut(u);
     _pos.fromArray(plan.pos).sub(HERO).multiplyScalar(k).add(HERO);
@@ -70,7 +77,11 @@ export function createBlackhole(views, hand, { renderer, scene, sky = null, sunD
     // 今の画質（始めた時の段と、光の筋の重ね数・解像度の割合）
     get quality() { return { tier: tierNow, lens: cityLens.quality }; },
     on(name, fn) { (listeners[name] ??= []).push(fn); },
-    play() {
+    // hero（M1）: 時間切れの瞬間の主人公の位置 { x, z }（省けば原点）
+    play(hero = null) {
+      hc = { x: hero?.x ?? 0, z: hero?.z ?? 0 };
+      HERO.set(BH_CAMERA.hero[0] + hc.x, BH_CAMERA.hero[1], BH_CAMERA.hero[2] + hc.z);
+      localBuildings = toLocal(buildings, hc);
       tierNow = getTier();
       cityLens.setTier(tierNow); handLens.setTier(tierNow);
       active = true; finished = false; t = 0; plan = null; shakeClock = 0;

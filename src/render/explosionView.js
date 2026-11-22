@@ -75,6 +75,7 @@ const SPHERE_FRAG = /* glsl */`
 #define WALL_FLOOR_K ${WALL_FLOOR.toFixed(3)}
 uniform float uTime, uSeed, uRadius, uFade, uBirth, uScale, uCoreK, uWall, uDebrisR;
 uniform vec3 uCore, uDeep, uInner, uBand, uRimA, uRimB;
+uniform vec3 uCentre; // M1: 球の中心（爆心。放った・払った瞬間の主人公の位置）
 varying vec3 vWorld;
 varying vec3 vDir;
 ${NOISE_GLSL}
@@ -90,7 +91,7 @@ float fbm(vec3 p) {
 void main() {
   // 視線が球の中心からどれだけ離れて通るか（0: 芯を貫く, 1: 縁をかすめる）
   vec3 D = normalize(vWorld - cameraPosition);
-  vec3 oc = cameraPosition;
+  vec3 oc = cameraPosition - uCentre;
   float tc = -dot(oc, D);
   float rn = clamp(length(oc + D * tc) / uRadius, 0.0, 1.0);
   float mu = sqrt(max(0.0, 1.0 - rn * rn));
@@ -152,18 +153,19 @@ void main() {
 
 const RING_FRAG = /* glsl */`
 uniform float uRing, uFade, uTime;
-uniform vec3 uLine, uGlow;
+uniform vec3 uLine, uGlow, uCentre;
 varying vec3 vWorld;
 ${NOISE_GLSL}
 void main() {
-  float d = length(vWorld.xz);
+  vec2 rel = vWorld.xz - uCentre.xz; // M1: 輪の中心は爆心
+  float d = length(rel);
   float x = d - uRing; // 輪の先頭からの距離 (m)。負が内側
   float w = 1.2 + uRing * 0.006;
   // くっきりした先頭の線、そのすぐ内側の暗いゆがみの帯、外へにじむ光
   float line = 1.0 - smoothstep(0.0, w, abs(x));
   float wake = smoothstep(-w * 9.0, -w, x) * (1.0 - smoothstep(-w, 0.0, x));
   float glow = exp(-max(x, 0.0) / (6.0 + uRing * 0.04)) * step(0.0, x);
-  float a = atan(vWorld.z, vWorld.x);
+  float a = atan(rel.y, rel.x);
   float broken = 0.75 + 0.25 * xnoise2(vec2(a * 40.0, uTime * 3.0));
   vec3 col = uLine * line * 2.6 * broken + uGlow * glow * 0.9;
   float alpha = clamp(line * 0.9 + glow * 0.45 + wake * 0.18, 0.0, 1.0) * uFade;
@@ -221,6 +223,7 @@ export function createExplosionView(scene, tierName, { sunDir = null, seed = 7 }
   function makeSphere() {
     const uniforms = {
       uTime: { value: 0 }, uSeed: { value: 0 }, uRadius: { value: 1 }, uFade: { value: 1 }, uBirth: { value: 0 }, uScale: { value: 3 }, uCoreK: { value: 1 }, uWall: { value: 0 }, uDebrisR: { value: 1 },
+      uCentre: { value: new THREE.Vector3() },
       ...sharedColors,
     };
     const mat = new THREE.ShaderMaterial({
@@ -233,7 +236,7 @@ export function createExplosionView(scene, tierName, { sunDir = null, seed = 7 }
     mesh.frustumCulled = false;
     mesh.renderOrder = 5;
     const ringU = {
-      uRing: { value: 0 }, uFade: { value: 1 }, uTime: { value: 0 },
+      uRing: { value: 0 }, uFade: { value: 1 }, uTime: { value: 0 }, uCentre: { value: new THREE.Vector3() },
       uLine: { value: linear(0.86, 0.94, 1.0) }, uGlow: { value: linear(1.0, 0.7, 0.45) },
     };
     const ringMat = new THREE.ShaderMaterial({
@@ -268,7 +271,13 @@ export function createExplosionView(scene, tierName, { sunDir = null, seed = 7 }
     // 空きがなければ一番古い球を使い回す（古い一発の対応は外す）
     const s = spheres.find((x) => !x.active) ?? spheres.reduce((a, x) => (x.age > a.age ? x : a));
     if (live.get(s.id) === s) { live.delete(s.id); evicted.add(s.id); }
-    Object.assign(s, { active: true, id: b.id, small: !!b.shot.small, radius: b.shot.radius, front: 0, prev: 0, age: 0, done: false, fadeAge: 0, ringFront: 0, dustAcc: 0, burstAge: Infinity, burst: false });
+    // M1: 球と輪は一発の爆心（shot.centre。省けば原点）に置く
+    const cx = b.shot.centre?.x ?? 0, cz = b.shot.centre?.z ?? 0;
+    Object.assign(s, { active: true, id: b.id, small: !!b.shot.small, radius: b.shot.radius, front: 0, prev: 0, age: 0, done: false, fadeAge: 0, ringFront: 0, dustAcc: 0, burstAge: Infinity, burst: false, cx, cz });
+    s.mesh.position.set(cx, 0, cz);
+    s.ring.position.set(cx, 0.15, cz);
+    s.uniforms.uCentre.value.set(cx, 0, cz);
+    s.ringU.uCentre.value.set(cx, 0, cz);
     s.uniforms.uSeed.value = rng() * 100;
     s.mesh.visible = s.ring.visible = true;
     live.set(b.id, s);
@@ -286,7 +295,7 @@ export function createExplosionView(scene, tierName, { sunDir = null, seed = 7 }
       const a = rng() * Math.PI * 2, r = s.ringFront * (0.97 + 0.04 * rng());
       const out = 60 + 70 * rng();
       dust.spawn(time, {
-        pos: [Math.cos(a) * r, 1 + rng() * 3, Math.sin(a) * r],
+        pos: [s.cx + Math.cos(a) * r, 1 + rng() * 3, s.cz + Math.sin(a) * r],
         vel: [Math.cos(a) * out, 4 + 10 * rng(), Math.sin(a) * out], drag: 2.2,
         rise: 3 + 4 * rng(), size: 7 + 9 * rng() + s.radius * 0.02, grow: 2.2, life: 1.8 + 0.8 * rng(), tint,
       });
@@ -305,6 +314,8 @@ export function createExplosionView(scene, tierName, { sunDir = null, seed = 7 }
     // 放つ瞬間（'shot'）: 小さな一発は白い閃光。大きな一発は演出が画面を白くするので、ここでは光らない
     // （じわじわ始まって、弾けた瞬間の閃光が主役になる）
     begin(shot) {
+      // M1: 光に溶ける対象の熾火は、最後の一発の爆心から外へ散る（最初の命中より前に決める）
+      if (!shot.small) vapor.setCentre(shot.centre?.x ?? 0, shot.centre?.z ?? 0);
       if (shot.isBig || shot.small) return; // 小爆発は手の画面が光り、街の画面は弾けた瞬間の弱い閃光だけ
       flash = Math.max(flash, 0.55 + 0.45 * shot.radius / CONFIG.radius.max);
     },
@@ -333,9 +344,10 @@ export function createExplosionView(scene, tierName, { sunDir = null, seed = 7 }
       for (const [id, s] of live) if (!seen.has(id)) { s.done = true; s.front = s.radius; live.delete(id); }
       for (const id of evicted) if (!seen.has(id)) evicted.delete(id);
 
-      let maxFront = 0, cover = 0, lightI = 0;
+      let maxFront = 0, cover = 0, lightI = 0, big = null;
       for (const s of spheres) {
         if (!s.active) continue;
+        if (!big || (!s.small && big.small) || (s.small === big.small && s.radius > big.radius)) big = s;
         s.age += dt;
         s.burstAge += dt;
         let fade = 1, r = Math.max(0.5, s.front);
@@ -386,6 +398,8 @@ export function createExplosionView(scene, tierName, { sunDir = null, seed = 7 }
       light.intensity = lightI * 0.7;
       light.distance = maxFront * 3.2 + 1;
       light.position.y = Math.max(8, maxFront * 0.45);
+      // M1: 光・熱のゆがみ・粉の中心は、いちばん大きな一発（最後の一発があればそれ）の爆心
+      if (big) { light.position.x = big.cx; light.position.z = big.cz; heat.center[0] = big.cx; heat.center[2] = big.cz; dust.uniforms.uCentre.value.set(big.cx, 0, big.cz); vapor.setCentre(big.cx, big.cz); }
       // light.visible は切り替えない（光の数が変わると、街のすべての材質が作り直しになって止まる）
 
       flash *= Math.exp(-dt / FLASH_SEC);

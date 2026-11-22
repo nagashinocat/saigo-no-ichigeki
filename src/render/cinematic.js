@@ -18,6 +18,9 @@ import { createSpaceView } from './spaceView.js';
 //   burst（弾けた瞬間: 爆発の音が開く。光の壁が届くまでにうなりが開く）→ space → rumble（音は画面に従う。持ち主 13:06）
 // 終わると 'end' を知らせ（結果へ。G4 のリプレイはここに入る）、最後の宇宙の絵を出したまま待つ（held）。
 // ゲームの時計はこの演出が決める（gameDt）。前線の進みは演出の時刻表どおりになる。
+// M1（spec §16）: 爆心は放った瞬間の主人公の位置（shot.centre）。撮る場所（plan）と opts.buildings は爆心を原点とした位置で受け
+// （main.js が blastFrame.js の toLocal で写す）、中の計算はすべて爆心のまわり。世界へ出す所（カメラの位置と見る先・乗り手の姿勢・
+// 画面の中かの確かめ・宇宙の見回る者の点）でだけ爆心を足す
 
 // 追われて引くカメラは front からこの距離だけ先にいたい（lead）、決してこれより近づかない（minLead）
 export const leadFor = (front) => 20 + 0.6 * front;
@@ -165,8 +168,8 @@ export function createCinematic(views, enemyView, explosionView, { renderer, sce
   // いちばん広い画角（LENS.beat[1] の VEIL_WIDE 倍）で決め、画面の外と決めたもの（pending）も毎フレーム今の画面で確かめ直す
   // （箱は球の面へ押される分 VEIL_GROW 倍に広げて見る）
   const inView = (frus, b, grow = 1) => {
-    const gw = b.w * (grow - 1) / 2, gd = b.d * (grow - 1) / 2;
-    _box.min.set(b.x - b.w / 2 - gw, 0, b.z - b.d / 2 - gd); _box.max.set(b.x + b.w / 2 + gw, b.h * grow, b.z + b.d / 2 + gd);
+    const gw = b.w * (grow - 1) / 2, gd = b.d * (grow - 1) / 2, x = b.x + C.x, z = b.z + C.z; // 画面（世界のカメラ）で確かめる
+    _box.min.set(x - b.w / 2 - gw, 0, z - b.d / 2 - gd); _box.max.set(x + b.w / 2 + gw, b.h * grow, z + b.d / 2 + gd);
     return frus.intersectsBox(_box);
   };
   function veilTouched(front) {
@@ -227,11 +230,14 @@ export function createCinematic(views, enemyView, explosionView, { renderer, sce
   const aspect = () => views.size.w / Math.max(1, views.size.h);
   const lens = (l) => (aspect() < 1 ? l.portrait : l.landscape);
 
+  // M1: 爆心（世界の x, z）。pos / look は爆心を原点とした位置
+  const C = { x: 0, z: 0 };
+  const _lw = new THREE.Vector3();
   function aim(pos, look, fovDeg, roll = 0) {
     cam.aspect = aspect();
-    cam.position.copy(pos);
+    cam.position.set(pos.x + C.x, pos.y, pos.z + C.z);
     cam.up.set(0, 1, 0);
-    cam.lookAt(look);
+    cam.lookAt(_lw.set(look.x + C.x, look.y, look.z + C.z));
     if (roll) cam.rotateZ(roll);
     cam.fov = fovDeg;
     cam.updateProjectionMatrix();
@@ -277,6 +283,8 @@ export function createCinematic(views, enemyView, explosionView, { renderer, sce
         // 光の壁（球の表面）に追いつかれた
         if (front >= Math.hypot(r.pos[0] + r.out[0] * carried, p.y, r.pos[2] + r.out[2] * carried) - 0.3) p.keep = 0;
       }
+      // M1: enemyView は世界の位置で描く
+      p.x += C.x; p.z += C.z;
     }
   }
 
@@ -431,12 +439,14 @@ export function createCinematic(views, enemyView, explosionView, { renderer, sce
       for (const e of getEnemies()) {
         if (!e.patrol) continue;
         // 火花の時刻は時刻表から一人ずつ決める（S8 fix2: 前は宇宙の最初のフレームで、追う間に飲まれた者が一斉に弾けていた）
-        if (!sparkAt.has(e.id)) sparkAt.set(e.id, spaceSparkTime(tl, e.dist, shot.radius));
+        // M1: 宇宙の点は爆心からの位置（爆心が宇宙の光の半球の中心）
+        const ex = e.x - C.x, ez = e.z - C.z;
+        if (!sparkAt.has(e.id)) sparkAt.set(e.id, spaceSparkTime(tl, Math.hypot(ex, ez), shot.radius));
         const at = sparkAt.get(e.id);
         if (at === -Infinity) continue;
         const age = t >= at ? t - at : -1;
         if (age > 0.7 || f > 0.3) continue;
-        _sparks.push({ x: e.x * k, z: e.z * k, age });
+        _sparks.push({ x: ex * k, z: ez * k, age });
       }
       space.setSparks(_sparks, renderer?.getPixelRatio?.() ?? 1);
     }
@@ -516,6 +526,8 @@ export function createCinematic(views, enemyView, explosionView, { renderer, sce
     get plan() { return plan; },
     // 軍勢の後ろのカットの確かめ用: { riders（乗り手の姿勢の一覧。[0] が撮る一人） }
     get beat() { return beatInfo; },
+    // M1: 今の演出の爆心（世界の { x, z }）
+    get centre() { return { x: C.x, z: C.z }; },
     // 今隠しているビルと、その理由（テスト用。Map id → 'hide' | 'near' | 'view'）
     get veilReasons() { return veilWhy; },
     get timeline() { return tl; },
@@ -562,6 +574,7 @@ export function createCinematic(views, enemyView, explosionView, { renderer, sce
     // 決まるまでは撮る場所なしの時刻表で進め、決まったら作り直す。関数は放つ瞬間の写しから決めること（白の間にゲームは進む））
     play(p, s, { retreat = null, buildings = null, enemies = null } = {}) {
       phase = 'play'; t = 0; stage = 'hands';
+      C.x = s.centre?.x ?? 0; C.z = s.centre?.z ?? 0;
       shot = s; getEnemies = enemies; sparkAt.clear();
       resolveRetreat = retreat;
       playTier = getTier();

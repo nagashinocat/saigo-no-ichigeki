@@ -45,6 +45,7 @@ import { createIntroClock } from './audio/introClock.js';
 import { createIntroGesture } from './ui/introGesture.js';
 import { createDrainFx } from './ui/drainFx.js';
 import { drainMulOf } from './game/enemies.js';
+import { toLocal } from './render/blastFrame.js';
 
 const MAX_FRAME_DT = 0.1;
 const GRABBED_STEADY = 0.15; // 掴まれている間の手の画面の光の安定（弱く瞬く）
@@ -198,7 +199,7 @@ game.on('over', ({ reason, total, outcome = null }) => {
   // リプレイが無いとき（ふつうは無い）は、終わった街の上空で生き残りの光を脈打たせる
   if (outcome && !outcome.clear && !replaySnap) patrolGlow.setSurvivors(survivorIds(outcome));
   // 時間切れ: 主人公がブラックホールになり、すべてを飲み込む（BGM と唸りの段取りは演出の cue）
-  if (reason === 'blackhole') { finaleDone = false; blackhole.play(); }
+  if (reason === 'blackhole') { finaleDone = false; blackhole.play(game.hero); } // M1: 黒い球は主人公のいる所
 });
 function updateResult(dt) {
   if (!pendingResult || (!finaleDone && (cinematic.active || replay.active || blackhole.active))) return;
@@ -247,6 +248,9 @@ warmBoth(() => cityView.warmup(renderer, views.cityCamera, cityScene));
 // 最後の一発: 放つ瞬間から、白が晴れて爆発が始まるまで世界の音は消える（音の段取りは演出が cue で知らせる）
 game.on('shot', (shot) => {
   bgm.stop(); // 放った瞬間にぴたりと止める（演出の無音・爆音のため）
+  // M1: 爆心は放った瞬間の主人公の位置。街のゆがみ・地面の穴・破片と瓦礫はそのまわり（リプレイでも同じ）
+  cityView.setBlastCentre(shot.centre);
+  destruction.setCentre(shot.centre);
   cityView.setDetail('fine'); // ビルを球の線に沿って曲がる細かい箱へ（遊んでいる間は粗い箱）
   explosionView.begin(shot); hand.release(shot);
 });
@@ -458,14 +462,16 @@ game.on('cinematicStart', (shot) => {
   // fix3: 撮る場所（planFinale）は放つ瞬間（両手が玉を握り込む一拍）ではなく、白を描いた次のフレームで決める（重い計算の間、
   // 画面は白のまま）。白の間にゲームは進むので、放つ瞬間の軍勢の写しから決める（どの fps でも同じ答え）。
   // 重い逃げる道の計算はスローでふくらむ間に回す
-  const buildings = game.city.buildings.filter((b) => standing.has(b.id)), crater = fronts.crater, lead = leadFor(shot.radius);
-  const enemiesAtRelease = snapshotEnemies(game.enemies.list);
-  const props = cityView.roofProps.filter((o) => standing.has(o.bid)); // 屋上の飾り（撮る一人の背後に飾りがない所を選ぶ）
+  // M1: 撮る場所は爆心（shot.centre）を原点として解く（blastFrame.js）。演出は世界へ戻して描く
+  const C = shot.centre;
+  const buildings = toLocal(game.city.buildings.filter((b) => standing.has(b.id)), C), crater = fronts.crater, lead = leadFor(shot.radius);
+  const enemiesAtRelease = toLocal(snapshotEnemies(game.enemies.list), C);
+  const props = toLocal(cityView.roofProps.filter((o) => standing.has(o.bid)), C); // 屋上の飾り（撮る一人の背後に飾りがない所を選ぶ）
   finalBlastSize = Math.sqrt(shot.radius / CONFIG.radius.max);
   // 逃げる道は高架の橋桁もよける（S8）
   // fix4: 縦横比は撮る場所を決めるフレームの画面のもの（縦長では撮る一人がまるごと入る横のずれ・左右・レンズを選ぶ）
   cinematic.play(() => planFinale({ shot, rng: shotRng, crater, lead, buildings, enemies: enemiesAtRelease, props, retreat: false, aspect: views.size.w / Math.max(1, views.size.h) }), shot,
-    { buildings, enemies: () => game.enemies.list, retreat: () => planRetreat(cinematic.plan, { buildings: [...buildings, ...transitObs], crater, radius: shot.radius, lead }) });
+    { buildings, enemies: () => game.enemies.list, retreat: () => planRetreat(cinematic.plan, { buildings: [...buildings, ...toLocal(transitObs, C)], crater, radius: shot.radius, lead, city: { x: -C.x, z: -C.z } }) });
 });
 game.on('cinematicEnd', () => cinematic.end());
 // 演出の音の段取り
@@ -535,7 +541,7 @@ function takeReplaySnapshot(shot) {
   citySnap.transit = cityView.transitState(); // 高速の車と電車は、放った瞬間の位置から（リプレイでも同じ所を走っている）
   replaySnap = {
     shot,
-    targets: replayTargets(game.city),
+    targets: replayTargets(game.city, shot.centre), // M1: 距離は爆心から
     enemies: game.enemies.list.map((e) => ({ ...e })),
     buildings: game.city.buildings.filter((b) => standing.has(b.id)),
   };

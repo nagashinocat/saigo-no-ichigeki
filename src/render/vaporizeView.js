@@ -144,6 +144,7 @@ export function createVaporizeView({ boxes = 96, sparks = 1600, sparksPer = 40, 
 
   const m = new THREE.Matrix4();
   let nextBox = 0, nextSpark = 0, sparkUsed = 0, lastEnd = -Infinity, dirty = false;
+  let vcx = 0, vcz = 0; // M1: 爆心（setCentre）
   const span = ([a, b]) => a + (b - a) * rng();
 
   return {
@@ -159,6 +160,8 @@ export function createVaporizeView({ boxes = 96, sparks = 1600, sparksPer = 40, 
       dirty = true;
     },
     // target: { x, z, w, d, h, color:[r,g,b] }
+    // M1: 熾火が外へ散る中心（爆心）
+    setCentre(x, z) { vcx = x; vcz = z; },
     add(time, target) {
       const i = nextBox;
       nextBox = (nextBox + 1) % boxes;
@@ -178,10 +181,10 @@ export function createVaporizeView({ boxes = 96, sparks = 1600, sparksPer = 40, 
         const x = target.x + (side ? Math.sign(fx) * 0.5 : fx) * target.w;
         const z = target.z + (side ? fz : Math.sign(fz) * 0.5) * target.d;
         const y = rng() * target.h;
-        const out = Math.hypot(x, z) || 1;
+        const ox = x - vcx, oz = z - vcz, out = Math.hypot(ox, oz) || 1;
         const life = span(SPARK_LIFE);
         sPos.array.set([x, y, z], j * 3);
-        sVel.array.set([x / out * (3 + 6 * rng()), 2 + 6 * rng(), z / out * (3 + 6 * rng()), time + dur * rng() * 0.9], j * 4);
+        sVel.array.set([ox / out * (3 + 6 * rng()), 2 + 6 * rng(), oz / out * (3 + 6 * rng()), time + dur * rng() * 0.9], j * 4);
         sLife.array.set([life, 1.2 + 2.2 * rng()], j * 2);
         lastEnd = Math.max(lastEnd, time + dur + life);
       }

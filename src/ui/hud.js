@@ -171,7 +171,7 @@ export function createHud(root, { threshold = clearThreshold() } = {}) {
       const ls = lineAt.toFixed(2);
       if (ls !== shownLine) { tick.style.left = tickLabel.style.left = `${ls}%`; shownLine = ls; }
       const ct = hero ? centreText(Math.hypot(hero.x, hero.z)) : '';
-      if (ct !== shownCentre) { centreSpan.textContent = ct; centreEl.classList.toggle('near', !!hero && Math.hypot(hero.x, hero.z) < CENTRE_NEAR); centreEl.style.visibility = hero ? 'visible' : 'hidden'; shownCentre = ct; }
+      if (ct !== shownCentre) { centreSpan.textContent = ct; centreEl.classList.toggle('near', !!hero && Math.hypot(hero.x, hero.z) < CENTRE_NEAR); centreEl.style.display = hero ? '' : 'none'; /* visibility は親（HUD の出し入れ）に任せる */ shownCentre = ct; }
       const deg = hero ? Math.round(centreArrowDeg(hero)) : 0;
       if (deg !== shownDeg) { centreArrow.style.transform = `rotate(${deg}deg)`; shownDeg = deg; }
       if (alive !== shownArmy) { army.textContent = alive == null ? '' : armyText(alive); shownArmy = alive; }

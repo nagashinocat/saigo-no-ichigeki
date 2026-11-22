@@ -3,6 +3,7 @@ import { CONFIG } from '../config.js';
 import { createReplayTimeline } from './replayTimeline.js';
 import { planReplay, aftermathView, sideWideView, sideWidePose, SIDE_WIDE } from './replayPlan.js';
 import { createReplayLight } from './replayLight.js';
+import { toLocal } from './blastFrame.js';
 
 // 最後の一発のリプレイ（画面全体。仕様 12 章の絵コンテ 6〜7）。時間割は replayTimeline.js、撮る場所は replayPlan.js。
 // 放つ直前の街へ戻し（onRestore）、同じ一発を決まった刻み（REPLAY.tick）で起こし直す（onTick(爆発の秒, カメラ)）。
@@ -12,6 +13,8 @@ import { createReplayLight } from './replayLight.js';
 // 知らせ: 'replayStart'（始まる。BGM のリプレイ版の合図）、'cut'（{ name }）、'skip'（飛ばした）、
 //   'aftermath'（撃退失敗: 生き残りの引きの絵へ切り替わった）、'replayEnd'（結果を出してよい。撃退失敗は引きの絵を見せてから）。
 // 終わったら最後の絵のまま待つ（finished。撃退失敗は引きの絵を見せて replayEnd を出してから）。もう一度 play すれば何度でも見せ直せる。
+// M1（spec §16）: 爆心は放った瞬間の主人公の位置（shot.centre）。撮る場所（replayPlan）は爆心を原点として解き（ビルと生き残りを写して渡す）、
+// カメラの位置と見る先・光の芯だけを世界へ戻す（aim）
 
 const MAX_TICKS = 4;          // 1フレームに進める刻みの上限（遅い機械ではリプレイがゆっくりになるが、中身は同じ）
 const SKIP_FADE = 0.22;       // 飛ばす: この秒で暗くし、暗いうちに最後まで早送りする
@@ -81,12 +84,13 @@ export function createReplay(views, { scene, lights = null, fog = null, blastLig
 
   const aspect = () => views.size.w / Math.max(1, views.size.h);
   const lens = (l) => (aspect() < 1 ? l.portrait : l.landscape);
-  const _pos = new THREE.Vector3(), _look = new THREE.Vector3(), _up = new THREE.Vector3();
+  const _pos = new THREE.Vector3(), _look = new THREE.Vector3(), _up = new THREE.Vector3(), _lw = new THREE.Vector3();
+  const C = { x: 0, z: 0 }; // M1: 爆心（世界の x, z）
   function aim(pos, look, fov, roll = 0, up = null) {
     cam.aspect = aspect();
-    cam.position.copy(pos);
+    cam.position.set(pos.x + C.x, pos.y, pos.z + C.z);
     if (up) cam.up.copy(up); else cam.up.set(0, 1, 0);
-    cam.lookAt(look);
+    cam.lookAt(_lw.set(look.x + C.x, look.y, look.z + C.z));
     if (roll) cam.rotateZ(roll);
     cam.fov = fov;
     cam.updateProjectionMatrix();
@@ -184,7 +188,7 @@ export function createReplay(views, { scene, lights = null, fog = null, blastLig
     // 光の中: はじめは真っ白な光の中に影だけ。光は主人公の向こうの芯へ引いていき、穴と空が現れる
     // はじめは真っ白（光の中）→ 影が浮かび上がる → 光は主人公の向こうの芯へ引いていく
     const I = 2.2 * (1 - smooth(u / 0.14)) + 0.8 * (1 - smooth((u - 0.2) / 0.7)) + 0.25;
-    light.update({ camera: cam, intensity: I, coreK: 1 + 0.6 * smooth(u / 0.7), time: t, radius: 160, center: [0, 1.05, 0] });
+    light.update({ camera: cam, intensity: I, coreK: 1 + 0.6 * smooth(u / 0.7), time: t, radius: 160, center: [C.x, 1.05, C.z] });
     setFog(0);
     dimLights(1);
     heroK = 0.9;
@@ -237,7 +241,7 @@ export function createReplay(views, { scene, lights = null, fog = null, blastLig
     phase = 'held'; heldT = 0;
     if (survivors) {
       // 撃退失敗: 引きの絵へ。明けきって hold 秒見せてから結果（advance の held）
-      after = aftermathView({ survivors, aspect: aspect(), az: plan.top.az, radius: tl.radius }); outro = AFTER_FADE_IN;
+      after = aftermathView({ survivors: toLocal(survivors, C), aspect: aspect(), az: plan.top.az, radius: tl.radius }); outro = AFTER_FADE_IN;
       emit('aftermath');
       return;
     }
@@ -302,6 +306,8 @@ export function createReplay(views, { scene, lights = null, fog = null, blastLig
     get cut() { return cutName; },
     get timeline() { return tl; },
     get plan() { return plan; },
+    // M1: 今のリプレイの爆心（世界の { x, z }）
+    get centre() { return { x: C.x, z: C.z }; },
     // S9: 撃退失敗の引きの絵（最後まで見せたあと。成功なら null）
     get aftermath() { return after; },
     // 最後のカットで主人公を影絵にする強さ（0〜1）。爆発の光で白く光らせない
@@ -327,7 +333,8 @@ export function createReplay(views, { scene, lights = null, fog = null, blastLig
     // survivors: 撃退失敗の生き残り（[{ x, z }]。最後の絵を生き残りの引きの絵にする）。成功・省けば前のまま
     play({ shot: s, buildings, heroYaw = 0, survivors: sv = null }) {
       survivors = sv && sv.length ? sv : null; after = null;
-      plan = planReplay({ radius: s.radius, buildings, heroYaw });
+      C.x = s.centre?.x ?? 0; C.z = s.centre?.z ?? 0;
+      plan = planReplay({ radius: s.radius, buildings: toLocal(buildings, C), heroYaw });
       tl = createReplayTimeline({ radius: s.radius, streetDist: plan.street.dist });
       phase = 'play'; t = 0; acc = 0; cutName = 'intro'; skipK = 0; outro = 0; ended = false;
       onRestore();

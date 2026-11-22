@@ -1,5 +1,5 @@
 import { test, expect } from 'vitest';
-import { deformPoint, craterDepth, crushPoint, packFronts, MAX_FRONTS, createFrontTracker, CRUSH_SQUASH, SPHERE_DEFORM_GLSL, groundHeight, CRATER_LIP, CRATER_FLOOR_GLSL } from '../../src/render/sphereDeform.js';
+import { deformPoint, craterDepth, crushPoint, packFronts, MAX_FRONTS, createFrontTracker, CRUSH_SQUASH, SPHERE_DEFORM_GLSL, groundHeight, CRATER_LIP, CRATER_FLOOR_GLSL, blastR, groundHeightAt } from '../../src/render/sphereDeform.js';
 
 const len = (p) => Math.hypot(p[0], p[1], p[2]);
 
@@ -174,5 +174,70 @@ test('土煙の粒の床（CRATER_FLOOR_GLSL）を動かすと、穴の中は gr
   for (const F of [60, 440]) {
     for (const r of [0, 3, 4, 10, 40, F * 0.7, F - 0.5]) expect(craterFloor(r, F)).toBeCloseTo(groundHeight(r, [F]), 6);
     expect(craterFloor(F + 10, F)).toBe(0);
+  }
+});
+
+// M1（spec §16）: 爆心は放った瞬間の主人公の位置。球・穴の式は中心 c（[x, z]）を受ける（JS とシェーダーの uBlastC）
+test('M1: 中心 c の球: 押し出しは c からの向きを保ち、c から front の距離へ。原点の球を c だけずらしたものと同じ', () => {
+  const c = [137.5, -62.25];
+  for (const p of [[30, 40, 0], [10, 3, -20], [0, 0, 0], [-60, 12, 75]]) {
+    const w = [p[0] + c[0], p[1], p[2] + c[1]];
+    for (const fronts of [[100], [40, 150, 90], [5]]) {
+      const a = deformPoint(w, fronts, c), b = deformPoint(p, fronts);
+      expect(a[0]).toBeCloseTo(b[0] + c[0], 9); expect(a[1]).toBeCloseTo(b[1], 9); expect(a[2]).toBeCloseTo(b[2] + c[1], 9);
+      const k = crushPoint(w, fronts, 0.6, c), kb = crushPoint(p, fronts, 0.6);
+      expect(k[0]).toBeCloseTo(kb[0] + c[0], 9); expect(k[1]).toBeCloseTo(kb[1], 9); expect(k[2]).toBeCloseTo(kb[2] + c[1], 9);
+    }
+  }
+  // 原点のそばの点は、中心から遠ければ動かない
+  expect(deformPoint([1, 2, 3], [100], c)).toEqual([1, 2, 3]);
+  expect(blastR(c[0] + 3, c[1] + 4, c)).toBeCloseTo(5, 12);
+  expect(blastR(3, 4)).toBe(5);
+  expect(groundHeightAt(c[0], c[1], [100], c)).toBe(-100);
+  expect(groundHeightAt(0, 0, [100], c)).toBeCloseTo(groundHeight(Math.hypot(...c), [100]), 12);
+});
+
+test('M1: シェーダーの球と穴も中心 uBlastC のまわり（押し出し・穴の深さ・地面の高さ）', () => {
+  expect(SPHERE_DEFORM_GLSL).toContain('uniform vec2 uBlastC;');
+  expect(SPHERE_DEFORM_GLSL).toContain('vec3 c = vec3(uBlastC.x, 0.0, uBlastC.y);');
+  expect(SPHERE_DEFORM_GLSL).toContain('vec3 q = p - c;');
+  expect(SPHERE_DEFORM_GLSL).toContain('return c + sdDeformLocal(q);');
+  expect(SPHERE_DEFORM_GLSL).toContain('float blastR(vec2 xz) { return length(xz - uBlastC); }');
+});
+
+// GLSL の blastR / craterDepthAt / groundHeightAt を JS に直して動かす（vec2 は [x, z]）
+function glslGroundAt(fronts, c) {
+  const out = new Float32Array(MAX_FRONTS);
+  const count = packFronts(fronts, out);
+  const pick = (head) => {
+    const start = SPHERE_DEFORM_GLSL.indexOf(head);
+    expect(start, head).toBeGreaterThanOrEqual(0);
+    let depth = 0, i = SPHERE_DEFORM_GLSL.indexOf('{', start);
+    for (; i < SPHERE_DEFORM_GLSL.length; i++) {
+      if (SPHERE_DEFORM_GLSL[i] === '{') depth++;
+      if (SPHERE_DEFORM_GLSL[i] === '}' && --depth === 0) break;
+    }
+    return SPHERE_DEFORM_GLSL.slice(start, i + 1);
+  };
+  const src = [pick('float craterDepth(float r) {'), pick('float groundHeight(float r) {'), pick('float blastR(vec2 xz)'), pick('float craterDepthAt(vec2 xz)'), pick('float groundHeightAt(vec2 xz)')].join('\n')
+    .replace(/float (\w+)\(float r\)/g, 'function $1(r)')
+    .replace(/float (\w+)\(vec2 xz\)/g, 'function $1(xz)')
+    .replace('length(xz - uBlastC)', 'Math.hypot(xz[0] - uBlastC[0], xz[1] - uBlastC[1])')
+    .replace(/\b(float|int) /g, 'let ')
+    .replace(/(?<!\.)\b(abs|sqrt|max|min|exp)\(/g, 'Math.$1(');
+  return new Function('uFronts', 'uFrontCount', 'uBlastC', `${src}\nreturn { craterDepthAt, groundHeightAt };`)(Array.from(out), count, Float32Array.from(c));
+}
+
+test('M1: 中心から外れた穴の式（GLSL の craterDepthAt / groundHeightAt）を動かすと、JS と同じ値（中心・穴・縁・原点のそば）', () => {
+  for (const c of [[0, 0], [212.5, -88], [-301, 140.75]]) {
+    for (const fronts of [[100], [440, 60], [12]]) {
+      const g = glslGroundAt(fronts, c);
+      const F = Math.max(...fronts), tol = 2e-3 * Math.max(1, F) + 1e-3;
+      for (const [dx, dz] of [[0, 0], [3, 4], [F * 0.5, 0], [0, -(F - 0.01)], [F * 0.7, F * 0.7], [F + 2, 0], [-F * 1.2, 10], [-c[0], -c[1]]]) {
+        const x = c[0] + dx, z = c[1] + dz;
+        expect(Math.abs(g.groundHeightAt([x, z]) - groundHeightAt(x, z, fronts, c))).toBeLessThan(tol);
+        expect(Math.abs(g.craterDepthAt([x, z]) - craterDepth(blastR(x, z, c), fronts))).toBeLessThan(tol);
+      }
+    }
   }
 });

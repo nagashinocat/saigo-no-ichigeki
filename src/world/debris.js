@@ -20,14 +20,14 @@ export const DEBRIS = {
   crushUpward: [2, 10],     // m/s
   slumpHorizontal: [3, 18], // m/s。押しつぶされたビルの破片のうち、穴の中へ崩れ落ちるもの（内向き）
   slumpUpward: [0, 4],      // m/s
-  explosionCenter: [0, 0],  // 爆心は常に主人公の位置
+  explosionCenter: [0, 0],  // 爆心の既定（M1: 爆心は放った瞬間の主人公の位置。各関数の centre [x, z] で渡す）
 };
 
 const clamp01 = (v) => Math.min(1, Math.max(0, v));
 
-// 中心から外向き（水平）の単位ベクトルを、少しばらした向きで返す
-function outward(c, rng) {
-  const dx = c[0] - DEBRIS.explosionCenter[0], dz = c[2] - DEBRIS.explosionCenter[1];
+// 中心（centre [x, z]）から外向き（水平）の単位ベクトルを、少しばらした向きで返す
+function outward(c, rng, centre = DEBRIS.explosionCenter) {
+  const dx = c[0] - centre[0], dz = c[2] - centre[1];
   const len = Math.hypot(dx, dz);
   let ux, uz;
   if (len < 1e-6) { const a = rng() * Math.PI * 2; ux = Math.cos(a); uz = Math.sin(a); } else { ux = dx / len; uz = dz / len; }
@@ -37,8 +37,8 @@ function outward(c, rng) {
 }
 
 // 破片の初速。中心から外向き（水平）と上向き。blastFront が大きい（大きな一発）ほど速くなりやすい。
-export function pushVelocity(chunkCenter, blastFront, rng) {
-  const [dirX, dirZ] = outward(chunkCenter, rng);
+export function pushVelocity(chunkCenter, blastFront, rng, centre) {
+  const [dirX, dirZ] = outward(chunkCenter, rng, centre);
   const t = clamp01(0.25 + 0.5 * (blastFront / CONFIG.radius.max) + (rng() - 0.5) * 0.5);
   const h = DEBRIS.horizontal[0] + (DEBRIS.horizontal[1] - DEBRIS.horizontal[0]) * t;
   const up = DEBRIS.upward[0] + (DEBRIS.upward[1] - DEBRIS.upward[0]) * rng();
@@ -46,8 +46,8 @@ export function pushVelocity(chunkCenter, blastFront, rng) {
 }
 
 // 球の線で押しつぶされたビルの破片の初速。飛び散らず、表面に沿って外へ崩れ流れる遅さ。
-export function crushVelocity(chunkCenter, rng) {
-  const [dirX, dirZ] = outward(chunkCenter, rng);
+export function crushVelocity(chunkCenter, rng, centre) {
+  const [dirX, dirZ] = outward(chunkCenter, rng, centre);
   const [h0, h1] = DEBRIS.crushHorizontal, [u0, u1] = DEBRIS.crushUpward;
   const h = h0 + (h1 - h0) * rng();
   const up = u0 + (u1 - u0) * rng();
@@ -55,8 +55,8 @@ export function crushVelocity(chunkCenter, rng) {
 }
 
 // 穴の縁で押しつぶされたビルの破片が、穴の中へ崩れ落ちる初速（中心へ向かう）。底や斜面に瓦礫として積もる
-export function slumpVelocity(chunkCenter, rng) {
-  const [dirX, dirZ] = outward(chunkCenter, rng);
+export function slumpVelocity(chunkCenter, rng, centre) {
+  const [dirX, dirZ] = outward(chunkCenter, rng, centre);
   const [h0, h1] = DEBRIS.slumpHorizontal, [u0, u1] = DEBRIS.slumpUpward;
   const h = h0 + (h1 - h0) * rng();
   const up = u0 + (u1 - u0) * rng();
@@ -84,7 +84,8 @@ export function createDebrisPool(capacity, rng) {
   const fifo = new Int32Array(capacity * 2 + 2); // 古い順の slot 番号（リング）
   const fifoSeq = new Uint32Array(capacity * 2 + 2);
   let head = 0, tail = 0, fifoLen = 0, counter = 0, count = 0, limit = capacity;
-  let crater = 0; // えぐれた地面の半径（原点中心の球の下半分が穴になる）
+  let crater = 0; // えぐれた地面の半径（爆心が中心の球の下半分が穴になる）
+  let ccx = 0, ccz = 0; // M1: 穴の中心（爆心。setCentre）
   let craterList = []; // groundHeight に渡す球の一覧（[crater]）
   let evicted = []; // 上限で置き換えた破片。途中で消えたように見えないよう、次の update で粉にする
 
@@ -129,6 +130,9 @@ export function createDebrisPool(capacity, rng) {
       evicted = [];
       crater = 0; craterList = [];
     },
+    // M1: 穴の中心（爆心 [x, z]。放った瞬間の主人公の位置）
+    setCentre(c) { ccx = c?.[0] ?? 0; ccz = c?.[1] ?? 0; },
+    get centre() { return [ccx, ccz]; },
     // 地面のえぐれ（半径）。穴の上の破片は球の面まで落ちる
     setCrater(r) {
       const c = Math.max(0, r);
@@ -179,17 +183,18 @@ export function createDebrisPool(capacity, rng) {
         // 面に沿った重力で滑る。壁が急（reposeTan より急）なところでは止まらずに底の方へ滑り落ち、ゆるいところで擦れて止まる
         let wall = false, steep = false;
         if (crater > 0 && d.py[s] < 0) {
-          const R = crater - half, dd = Math.hypot(d.px[s], d.py[s], d.pz[s]);
+          // M1: 穴は爆心（ccx, ccz）のまわり
+          const R = crater - half, dd = Math.hypot(d.px[s] - ccx, d.py[s], d.pz[s] - ccz);
           if (R > 0 && dd >= R) {
             const k = R / dd;
-            d.px[s] *= k; d.py[s] *= k; d.pz[s] *= k;
-            const nx = d.px[s] / R, ny = d.py[s] / R, nz = d.pz[s] / R;
+            d.px[s] = ccx + (d.px[s] - ccx) * k; d.py[s] *= k; d.pz[s] = ccz + (d.pz[s] - ccz) * k;
+            const nx = (d.px[s] - ccx) / R, ny = d.py[s] / R, nz = (d.pz[s] - ccz) / R;
             const vn = d.vx[s] * nx + d.vy[s] * ny + d.vz[s] * nz;
             if (vn > 0) {
               const j = vn + (vn > 2 ? Math.min(vn * DEBRIS.restitution, DEBRIS.maxBounce) : 0);
               d.vx[s] -= j * nx; d.vy[s] -= j * ny; d.vz[s] -= j * nz;
             }
-            const rr = Math.hypot(d.px[s], d.pz[s]);
+            const rr = Math.hypot(d.px[s] - ccx, d.pz[s] - ccz);
             steep = rr / Math.max(1e-6, -d.py[s]) > DEBRIS.reposeTan;
             const fr = steep ? DEBRIS.slideFriction : DEBRIS.groundFriction;
             // 面に沿った速さに摩擦を掛ける
@@ -202,7 +207,7 @@ export function createDebrisPool(capacity, rng) {
             wall = true;
           }
         }
-        const r = Math.hypot(d.px[s], d.pz[s]);
+        const r = Math.hypot(d.px[s] - ccx, d.pz[s] - ccz);
         const overHole = r < crater;
         // 穴の外（縁の盛り上がり・平らな地面）は地面のシェーダーと同じ groundHeight の上に止まる
         const floor = half + groundHeight(r, craterList);

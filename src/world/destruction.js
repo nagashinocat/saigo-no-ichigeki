@@ -36,13 +36,16 @@ export function createDestruction({ cityView, getTier, seed = 1 }) {
   let focus = null;
   let time = 0;
   let hole = 0; // えぐれた地面の半径（今の球を含む）。手前の物理の地面は平らなので、この内側の破片はプールへ
+  // M1（spec §16）: 爆心 [x, z]（放った瞬間の主人公の位置。setCentre）。穴・球のつぶれ・破片の外向きはここから
+  let bc = [0, 0];
+  const fromC = (p) => Math.hypot(p[0] - bc[0], p[2] - bc[1]);
   const crushing = []; // { id, target, color, at }
 
   const isNear = (c) => focus && Math.hypot(c[0] - focus[0], c[1] - focus[1], c[2] - focus[2]) <= NEAR_RANGE;
 
   function emit(center, dims, vel, color) {
     const half = dims.map((v) => v / 2);
-    if (isNear(center) && Math.hypot(center[0], center[2]) >= hole) {
+    if (isNear(center) && fromC(center) >= hole) {
       const box = { min: center.map((v, i) => v - half[i]), max: center.map((v, i) => v + half[i]), color };
       if (near.add(box, vel)) return;
     }
@@ -53,7 +56,7 @@ export function createDestruction({ cityView, getTier, seed = 1 }) {
   // 押しつぶされたビルの破片の初速: 縁のすぐ外まで穴があれば、半分ほどは穴の中へ崩れ落ちる（底や斜面の瓦礫になる）
   const crushOrSlump = (p, frac = SLUMP_FRAC) => {
     const c = pool.crater;
-    return c > 0 && Math.hypot(p[0], p[2]) <= c * 1.05 + 2 && rng() < frac ? slumpVelocity(p, rng) : crushVelocity(p, rng);
+    return c > 0 && fromC(p) <= c * 1.05 + 2 && rng() < frac ? slumpVelocity(p, rng, bc) : crushVelocity(p, rng, bc);
   };
 
   return {
@@ -69,6 +72,12 @@ export function createDestruction({ cityView, getTier, seed = 1 }) {
       hole = 0; time = 0;
     },
     setPhysicsFocus(pos) { focus = pos ? [pos[0], pos[1], pos[2]] : null; },
+    // M1: 爆心 { x, z }（省けば原点）。リプレイでも同じ爆心のまま（reset で戻さない）
+    setCentre(c) {
+      bc = [c?.x ?? 0, c?.z ?? 0];
+      pool.setCentre(bc); rubble.setCentre(bc);
+    },
+    get centre() { return { x: bc[0], z: bc[1] }; },
     // S8: 高架で起きたこと（transitView の events）。脱線した車両が落ちた（land）ら破片と土煙。次の update で粉を返す
     onTransit(events) {
       for (const e of events) if (e.kind === 'land') trainDebris(e.target, pendingDust);
@@ -109,7 +118,7 @@ export function createDestruction({ cityView, getTier, seed = 1 }) {
         for (let i = 0; i < n; i++) {
           const s = 0.4 + 0.8 * rng();
           const center = [x + (rng() - 0.5) * 2, 0.5 + rng() * 2, z + (rng() - 0.5) * 2];
-          emit(center, [s, s * (0.6 + 0.6 * rng()), s], pushVelocity(center, target.dist, rng), color);
+          emit(center, [s, s * (0.6 + 0.6 * rng()), s], pushVelocity(center, Math.hypot(target.x - bc[0], target.z - bc[1]), rng, bc), color);
         }
       }
     },
@@ -148,13 +157,13 @@ export function createDestruction({ cityView, getTier, seed = 1 }) {
       const u = (i + 0.5) / n + (rng() - 0.5) * 0.3 / n;
       const across = (rng() - 0.5) * s.width * 0.8;
       const x = s.a[0] + (s.b[0] - s.a[0]) * u - Math.sin(s.heading) * across, z = s.a[1] + (s.b[1] - s.a[1]) * u + Math.cos(s.heading) * across;
-      const p = crushPoint([x, s.y - s.thick / 2, z], fronts, 1);
+      const p = crushPoint([x, s.y - s.thick / 2, z], fronts, 1, bc);
       const L = Math.min(BIG_MAX, s.len / n * (0.8 + 0.5 * rng()));
       const k = shade();
       pool.spawn({ pos: p, vel: crushOrSlump(p), size: L, dims: [L, s.thick * (0.6 + 0.5 * rng()), s.width * (0.25 + 0.3 * rng())], color: [color[0] * k, color[1] * k, color[2] * k], keep: i % 3 === 0 });
     }
     for (let i = 0; i < 2; i++) {
-      const p = crushPoint([s.a[0] + (s.b[0] - s.a[0]) * rng(), rng() * s.y * 0.5, s.a[1] + (s.b[1] - s.a[1]) * rng()], fronts, 1);
+      const p = crushPoint([s.a[0] + (s.b[0] - s.a[0]) * rng(), rng() * s.y * 0.5, s.a[1] + (s.b[1] - s.a[1]) * rng()], fronts, 1, bc);
       dust.push({ pos: p, size: s.width * 0.7 });
     }
   }
@@ -167,7 +176,7 @@ export function createDestruction({ cityView, getTier, seed = 1 }) {
       const u = (rng() - 0.5) * t.w;
       const p = [t.x + Math.cos(t.heading) * u, Math.max(0.5, t.y + 1 + rng() * 2), t.z + Math.sin(t.heading) * u];
       const s = 1 + 2.2 * rng(), k = shade();
-      pool.spawn({ pos: p, vel: pushVelocity(p, t.dist, rng), size: s * 1.6, dims: [s * 1.6, s * 0.6, s], color: [t.color[0] * k, t.color[1] * k, t.color[2] * k], keep: i === 0 });
+      pool.spawn({ pos: p, vel: pushVelocity(p, t.dist, rng, bc), size: s * 1.6, dims: [s * 1.6, s * 0.6, s], color: [t.color[0] * k, t.color[1] * k, t.color[2] * k], keep: i === 0 });
     }
     dust.push({ pos: [t.x, Math.max(0, t.y), t.z], size: 8 });
   }
@@ -176,7 +185,7 @@ export function createDestruction({ cityView, getTier, seed = 1 }) {
   function fractureCrushed({ id, target, color }, fronts, dust) {
     const tier = getTier();
     cityView.hideBuilding(id);
-    const at = (lx, ly, lz) => crushPoint([target.x + lx, ly, target.z + lz], fronts, 1);
+    const at = (lx, ly, lz) => crushPoint([target.x + lx, ly, target.z + lz], fronts, 1, bc);
     const chunks = fractureBox(target, tier.piecesPerBuilding, id * 7919 + 13);
     for (const ch of chunks) {
       const dims = [ch.max[0] - ch.min[0], ch.max[1] - ch.min[1], ch.max[2] - ch.min[2]];

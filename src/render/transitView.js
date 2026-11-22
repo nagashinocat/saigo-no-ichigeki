@@ -301,10 +301,11 @@ export function createTransitView(transit, style, tier, { markRange } = {}) {
     lights.instanceMatrix.needsUpdate = true; // 動く光は毎フレーム全部送る（数百個）
   }
 
-  // 一両を脱線させる（外へ吹き飛ぶ）か溶かす
+  // 一両を脱線させる（外へ吹き飛ぶ）か溶かす。距離と外向きは爆心（M1: bc。放った瞬間の主人公の位置）から
+  let bcx = 0, bcz = 0;
   function derail(k, front, radius) {
     const car = train.cars[k];
-    const dist = Math.hypot(car.x, car.z);
+    const dist = Math.hypot(car.x - bcx, car.z - bcz);
     const target = { id: 't' + k, x: car.x, z: car.z, y: car.y, w: Rl.carLen, d: TRAIN.d, h: car.y + TRAIN.h, dist, heading: car.heading, color: TRAIN.body };
     if (front > 0 && radius > 0 && dist < radius * vaporizeRatio) {
       car.state = 'gone';
@@ -312,7 +313,7 @@ export function createTransitView(transit, style, tier, { markRange } = {}) {
       return;
     }
     const r = (a) => a[0] + (a[1] - a[0]) * dyn();
-    const ox = car.x / Math.max(1, dist), oz = car.z / Math.max(1, dist), out = r(DERAIL.out);
+    const ox = (car.x - bcx) / Math.max(1, dist), oz = (car.z - bcz) / Math.max(1, dist), out = r(DERAIL.out);
     Object.assign(car, { state: 'derail', vx: ox * out + (dyn() - 0.5) * 8, vy: r(DERAIL.up), vz: oz * out + (dyn() - 0.5) * 8,
       rx: 0, rz: 0, wx: (dyn() < 0.5 ? -1 : 1) * r(DERAIL.spin), wz: (dyn() < 0.5 ? -1 : 1) * r(DERAIL.spin), wy: (dyn() - 0.5) * 2, life: 0 });
     events.push({ kind: 'derail', target });
@@ -346,8 +347,10 @@ export function createTransitView(transit, style, tier, { markRange } = {}) {
       broken.add(id);
     },
     // dt 秒進める。front / radius: 今の最後の一発の前線と半径（なければ 0）。起きたこと（脱線・溶ける・落ちた）を返す
-    update(dt, { front = 0, radius = 0 } = {}) {
+    // centre（M1）: 最後の一発の爆心 { x, z }（省けば原点）
+    update(dt, { front = 0, radius = 0, centre = null } = {}) {
       events.length = 0;
+      bcx = centre?.x ?? 0; bcz = centre?.z ?? 0;
       time += dt;
       // 電車を進め、こわれた区間に入った・前線に触れた車両を脱線させる
       const running = train.cars.some((c) => c.state === 'run');
@@ -357,7 +360,7 @@ export function createTransitView(transit, style, tier, { markRange } = {}) {
         if (car.state === 'run') {
           const p = carPose(k);
           car.x = p.x; car.z = p.z; car.heading = p.heading; car.y = Rl.deckY + TRAIN.lift;
-          const hitByFront = front > 0 && Math.hypot(p.x, p.z) <= front;
+          const hitByFront = front > 0 && Math.hypot(p.x - bcx, p.z - bcz) <= front;
           if (hitByFront || broken.has(segAt(rp, 'rail', p.s).id)) derail(k, front, radius);
         } else if (car.state === 'derail' && dt > 0) {
           car.vy -= DERAIL.gravity * dt;
@@ -366,7 +369,7 @@ export function createTransitView(transit, style, tier, { markRange } = {}) {
           car.life += dt;
           if (car.y <= 0.5 || car.life >= DERAIL.life) {
             car.state = 'gone';
-            const dist = Math.hypot(car.x, car.z);
+            const dist = Math.hypot(car.x - bcx, car.z - bcz);
             events.push({ kind: 'land', target: { id: 't' + k, x: car.x, z: car.z, y: Math.max(0, car.y), w: Rl.carLen, d: TRAIN.d, h: Math.max(0, car.y) + TRAIN.h, dist, heading: car.heading, color: TRAIN.body } });
           }
         }

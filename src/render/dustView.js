@@ -13,6 +13,7 @@ attribute vec4 aLife;  // x: 生まれた時刻, y: 寿命, z: 大きさ, w: ふ
 attribute vec4 aTint;  // rgb: 色, a: 上昇の速さ
 uniform float uTime;
 uniform float uCrater; // えぐれた地面の半径。穴の上の粒は穴の面まで下りられる
+uniform vec3 uCentre;  // M1: 穴と球の中心（爆心）
 ${CRATER_FLOOR_GLSL}
 varying vec2 vUv;
 varying float vAge;
@@ -29,7 +30,8 @@ void main() {
   float t = age * aLife.y;
   float k = max(aVel.w, 1e-3);
   vec3 c = aPos + aVel.xyz * (1.0 - exp(-k * t)) / k + vec3(0.0, aTint.a * t, 0.0);
-  float rr = dot(c.xz, c.xz);
+  vec2 cr = c.xz - uCentre.xz;
+  float rr = dot(cr, cr);
   c.y = max(c.y, craterFloor(sqrt(rr), uCrater));
   float size = aLife.z * (1.0 + aLife.w * (1.0 - pow(1.0 - age, 2.2)));
   vWorld = c;
@@ -44,6 +46,7 @@ const FRAG = /* glsl */`
 uniform vec3 uSunView;
 uniform vec3 uGlowColor;
 uniform float uFront;   // 今いちばん大きな球の半径（中に入った粒は光に呑まれて見えなくする）
+uniform vec3 uCentre;
 uniform float uGlow;
 uniform float uCover;  // 球の不透明さ（消えていく球の中の粒は、だんだん見えてくる）
 varying vec2 vUv;
@@ -84,7 +87,7 @@ void main() {
   vec3 lit = srgbl(vec3(1.0, 0.78, 0.6));
   vec3 col = vTint * mix(shadow, lit, cel);
   // 球の近くにいる粒は、球の側から照らされる
-  float dc = length(vWorld);
+  float dc = length(vWorld - uCentre);
   float near = uGlow * exp(-max(dc - uFront, 0.0) / 40.0);
   col += uGlowColor * near * 0.6 * (0.5 + 0.5 * cel);
   float alpha = edge * smoothstep(0.0, 0.06, vAge) * (1.0 - smoothstep(0.6, 1.0, vAge)) * 0.8;
@@ -118,6 +121,7 @@ export function createDustView(capacity) {
   const uniforms = {
     uTime: { value: 0 },
     uCrater: { value: 0 },
+    uCentre: { value: new THREE.Vector3() }, // M1: 爆心
     uSunView: { value: new THREE.Vector3(0.6, 0.5, 0.6).normalize() },
     uGlowColor: { value: new THREE.Color(1.0, 0.62, 0.32).multiplyScalar(1.6) },
     uFront: { value: 0 },

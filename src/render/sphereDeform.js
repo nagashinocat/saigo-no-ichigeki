@@ -2,7 +2,9 @@
 // - deformPoint: 球の内側に入った点を、中心からの向きを保ったまま球の表面へ押し出す（ビルが球の壁に押し付けられて曲がる）
 // - craterDepth: 地面の水平距離 r の点が、球の形にえぐれる深さ（主人公は浮いているので、真下も球の深さまで下がる）
 // - crushPoint: つぶれていく途中（k: 0→1）。高さを押しつぶしてから deformPoint をかける
-// fronts は球の半径の一覧。球はどれも原点が中心なので、点を含む球のうち一番大きなものが効く。
+// fronts は球の半径の一覧。球はどれも同じ中心なので、点を含む球のうち一番大きなものが効く。
+// M1（spec §16）: 中心は爆心（放った瞬間の主人公の位置）。JS は c = [x, z]（省けば原点）、シェーダーは uniform uBlastC。
+// craterDepth / groundHeight は中心からの水平の距離 r を受ける（blastR で求める。groundHeightAt は世界の点から）
 
 export const MAX_FRONTS = 4;
 export const CRUSH_SQUASH = 0.72; // k=1 で高さがこの割合だけ縮む
@@ -13,13 +15,18 @@ function containingFront(d, fronts) {
   return F;
 }
 
-export function deformPoint(p, fronts) {
-  const d = Math.hypot(p[0], p[1], p[2]);
+// 世界の点 (x, z) の、中心 c からの水平の距離
+export const blastR = (x, z, c = null) => (c ? Math.hypot(x - c[0], z - c[1]) : Math.hypot(x, z));
+
+export function deformPoint(p, fronts, c = null) {
+  const cx = c ? c[0] : 0, cz = c ? c[1] : 0;
+  const qx = p[0] - cx, qz = p[2] - cz;
+  const d = Math.hypot(qx, p[1], qz);
   const F = containingFront(d, fronts);
   if (F <= 0) return [p[0], p[1], p[2]];
-  if (d < 1e-6) return [0, F, 0];
+  if (d < 1e-6) return [cx, F, cz];
   const k = F / d;
-  return [p[0] * k, p[1] * k, p[2] * k];
+  return [cx + qx * k, p[1] * k, cz + qz * k];
 }
 
 export function craterDepth(r, fronts) {
@@ -44,9 +51,12 @@ export function groundHeight(r, fronts) {
 
 const smooth = (k) => { const t = Math.min(1, Math.max(0, k)); return t * t * (3 - 2 * t); };
 
-export function crushPoint(p, fronts, k) {
-  return deformPoint([p[0], p[1] * (1 - CRUSH_SQUASH * smooth(k)), p[2]], fronts);
+export function crushPoint(p, fronts, k, c = null) {
+  return deformPoint([p[0], p[1] * (1 - CRUSH_SQUASH * smooth(k)), p[2]], fronts, c);
 }
+
+// 世界の点 (x, z) の地面の高さ（中心 c のえぐれ）
+export const groundHeightAt = (x, z, fronts, c = null) => groundHeight(blastR(x, z, c), fronts);
 
 // シェーダーの uFronts へ、大きい順に最大 MAX_FRONTS 個を詰める。残りは 0。詰めた数を返す。
 export function packFronts(fronts, out) {
@@ -86,10 +96,12 @@ export function createFrontTracker() {
 
 const CRATER_LIP_GLSL = { h: CRATER_LIP.height.toFixed(4), w: CRATER_LIP.width.toFixed(4) };
 
-// 上と同じ式の GLSL。uniform: uFronts[4], uFrontCount
+// 上と同じ式の GLSL。uniform: uFronts[4], uFrontCount, uBlastC（球の中心の x, z）
 export const SPHERE_DEFORM_GLSL = /* glsl */`
 uniform float uFronts[${MAX_FRONTS}];
 uniform int uFrontCount;
+uniform vec2 uBlastC;
+float blastR(vec2 xz) { return length(xz - uBlastC); }
 float sdContainingFront(float d) {
   float F = 0.0;
   for (int i = 0; i < ${MAX_FRONTS}; i++) {
@@ -98,12 +110,19 @@ float sdContainingFront(float d) {
   }
   return F;
 }
-vec3 deformPoint(vec3 p) {
+// 中心を原点とした点の押し出し
+vec3 sdDeformLocal(vec3 p) {
   float d = length(p);
   float F = sdContainingFront(d);
   if (F <= 0.0) return p;
   if (d < 1e-6) return vec3(0.0, F, 0.0);
   return p * (F / d);
+}
+vec3 deformPoint(vec3 p) {
+  vec3 c = vec3(uBlastC.x, 0.0, uBlastC.y);
+  vec3 q = p - c;
+  if (sdContainingFront(length(q)) <= 0.0) return p;
+  return c + sdDeformLocal(q);
 }
 float craterDepth(float r) {
   float best = 0.0;
@@ -123,6 +142,9 @@ float groundHeight(float r) {
   float x = (abs(r) - F) / W;
   return L * x * exp(1.0 - x);
 }
+// 世界の点 xz の穴の深さ・地面の高さ（中心 uBlastC から）
+float craterDepthAt(vec2 xz) { return craterDepth(blastR(xz)); }
+float groundHeightAt(vec2 xz) { return groundHeight(blastR(xz)); }
 vec3 crushSquash(vec3 p, float k) {
   float t = clamp(k, 0.0, 1.0);
   p.y *= 1.0 - ${CRUSH_SQUASH.toFixed(4)} * t * t * (3.0 - 2.0 * t);
