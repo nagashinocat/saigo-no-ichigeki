@@ -69,7 +69,7 @@
     @keyframes hud-announce { 0% { opacity: 0; transform: scaleX(1.6); filter: brightness(3); } 8% { opacity: 1; transform: scaleX(1); filter: brightness(1.6); } 14% { opacity: 0.55; } 20% { opacity: 1; filter: brightness(1); } 78% { opacity: 1; } 100% { opacity: 0; transform: scaleX(1.04); } }
     /* M1: 上の帯の真ん中の「中心まで ◯ m」と、街の中心への小さな矢印（右向きの三角を回す） */
     .hud-centre { position: absolute; display: flex; align-items: center; justify-content: center; gap: 0.45em; font-size: clamp(12px, 3.3vw, 16px); font-weight: 800; color: #fff3d8; font-variant-numeric: tabular-nums; white-space: nowrap; text-shadow: 0 1px 3px rgba(20, 10, 30, 0.9), 0 0 8px rgba(20, 10, 30, 0.55); }
-    .hud-arrow { display: inline-block; width: 0; height: 0; border-top: 0.42em solid transparent; border-bottom: 0.42em solid transparent; border-left: 0.82em solid #ffd27a; filter: drop-shadow(0 0 3px rgba(255, 170, 60, 0.8)); transform-origin: 35% 50%; }
+    .hud-arrow { display: inline-block; width: 0; height: 0; border-top: 0.27em solid transparent; border-bottom: 0.27em solid transparent; border-left: 1em solid #ffd27a; filter: drop-shadow(0 0 3px rgba(255, 170, 60, 0.8)); transform-origin: 40% 50%; }
     .hud-centre.near .hud-arrow { width: 0.6em; height: 0.6em; border: 0; border-radius: 50%; background: #ffd27a; transform: none !important; }
     /* M1: 溜めている間の 2 本目の指で出る、浮かぶジョイスティック（輪とつまみ） */
     #stick { position: fixed; left: 0; top: 0; pointer-events: none; display: none; }

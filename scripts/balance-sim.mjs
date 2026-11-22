@@ -12,6 +12,8 @@
 // QUICK=1 で最善の操作の候補を、よく選ばれる数通りに絞る（調整の下見用）
 // R1: 軍勢の種類（重い者・吸う者・大物）は game.js の中で動く。各操作の行に、×3 以上の払いの回数（p50）も出す。
 //  KINDS='{...}' で CONFIG.enemy.kinds の一部を差し替えられる
+// M1（主人公が動く）: 動くボット（steerBot: 街の中心へ寄り、突っ込んでくる者を横へかわし、掴まれたら払う）でも同じ数を出す
+//  （「動くボット」の節。最善の操作の払うきっかけはそのまま、動きだけ足す）。MOVE=0 で動くボットの節を省く
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -51,22 +53,45 @@ for (let t = 0; t < CONFIG.roundSeconds; t += 0.01) total += spawnRateAt(t + 0.0
 const rate = (t) => spawnRateAt(t, CONFIG).toFixed(2);
 console.log(`60 秒で湧く数: ${total.toFixed(1)}（0〜40 秒 ${(() => { let a = 0; for (let t = 0; t < 40; t += 0.01) a += spawnRateAt(t + 0.005, CONFIG) * 0.01; return a.toFixed(1); })()}）  湧く速さ 0/20/40/45/50/55/60 秒: ${[0, 20, 40, 45, 50, 55, 60].map(rate).join(' / ')}`);
 
+// M1: 動くボット。溜めている間（ずっと）、街の中心へ寄る（中心から centreSlack m より外なら）＋ 突っ込んでくる者（chase で
+// dodgeDist m の内、こちらへ向かう）を、その者の進む線から横へかわす。向きの重みを足して長さ 1 に
+const BOT = { centreSlack: 6, dodgeDist: 16, dodgeW: 1.6 };
+function steerBot(g) {
+  const h = g.hero;
+  let mx = 0, mz = 0;
+  const r = Math.hypot(h.x, h.z);
+  if (r > BOT.centreSlack) { mx -= h.x / r; mz -= h.z / r; }
+  for (const e of g.enemies.list) {
+    if (e.state !== 'chase' || e.dist > BOT.dodgeDist || e.x == null) continue;
+    const hx = Math.cos(e.heading), hz = Math.sin(e.heading);
+    const rx = h.x - e.x, rz = h.z - e.z;
+    if (hx * rx + hz * rz <= 0) continue; // こちらへ向かっていない
+    // 進む線のどちら側にいるか → その側へ（線から離れる向き）
+    const side = Math.sign(hx * rz - hz * rx) || 1;
+    const w = BOT.dodgeW * (1 - e.dist / BOT.dodgeDist);
+    mx += -hz * side * w; mz += hx * side * w;
+  }
+  const m = Math.hypot(mx, mz);
+  g.setMove(m > 1 ? mx / m : mx, m > 1 ? mz / m : mz);
+}
+
 // 2) 最善の操作: ずっと長押しし、「掴まれている数が grab 以上」か「主人公から trigger m 以内に crowd 人以上」で払う（払わない操作も候補に入れる）。
 //    その組み合わせのうち、満タンに届く seed が多く、届く時刻が早いものを「最善」とする
-function play(seed, { grab, trigger, crowd }) {
+function play(seed, { grab, trigger, crowd }, move = false) {
   const g = createGame({ seed, cfg: CONFIG });
   const combos = new Set();
   g.on('combo', (c) => combos.add(c.blastId));
   g.pressStart();
-  let t = 0, full = Infinity, puffs = 0, grabSec = 0;
+  let t = 0, full = Infinity, puffs = 0, grabSec = 0, centreSum = 0, centreN = 0;
   while (g.phase === 'playing' && t < CONFIG.roundSeconds - DT / 2) {
+    if (move) { steerBot(g); centreSum += Math.hypot(g.hero.x, g.hero.z); centreN++; }
     const n = g.enemies.list.filter((e) => e.state !== 'dead' && e.dist <= trigger).length;
     if ((grab === 'spam' || g.grabbing >= grab || n >= crowd) && g.puff()) puffs++;
     g.update(DT); t += DT;
     grabSec += g.grabbing * DT;
     if (full === Infinity && g.power.value >= CONFIG.power.max - 1e-6) full = t;
   }
-  return { full, end: g.power.value, puffs, grabSec, combos: combos.size };
+  return { full, end: g.power.value, puffs, grabSec, combos: combos.size, centre: centreN ? centreSum / centreN : 0 };
 }
 const NO_PUFF = { grab: Infinity, trigger: 0, crowd: Infinity };
 const SPAM = { grab: 'spam', trigger: 0, crowd: Infinity }; // 払える力があればいつでも払う
@@ -96,12 +121,13 @@ console.log('最善: ' + best.line);
 // 4) 撃退成功の割合: 最善の操作で、力が L に届いた瞬間に離す（届かないまま時間切れならブラックホール＝失敗）。
 //    放つと遊びは止まる（軍勢も止まる）ので、一回の流れの中で L ごとに「届いた瞬間に生きている軍勢がみな radiusFor(力) の内か」を見る
 const LEVELS = Array.from({ length: 16 }, (_, i) => 85 + i);
-function releaseRun(seed, st) {
+function releaseRun(seed, st, move = false) {
   const g = createGame({ seed, cfg: CONFIG });
   g.pressStart();
   let t = 0, li = 0;
   const out = [];
   while (g.phase === 'playing' && t < CONFIG.roundSeconds - DT / 2 && li < LEVELS.length) {
+    if (move) steerBot(g);
     const n = g.enemies.list.filter((e) => e.state !== 'dead' && e.dist <= st.trigger).length;
     if (g.grabbing >= st.grab || n >= st.crowd) g.puff();
     g.update(DT); t += DT;
@@ -109,7 +135,8 @@ function releaseRun(seed, st) {
       const alive = g.enemies.list.filter((e) => e.state !== 'dead');
       const r = radiusFor(g.power.value, CONFIG);
       const left = alive.filter((e) => e.dist > r);
-      out[li++] = { t, clear: left.length === 0, left: left.length, patrolLeft: left.filter((e) => e.patrol).length, alive: alive.length };
+      // e.dist は今の主人公（＝放ったときの爆心）からの距離
+      out[li++] = { t, clear: left.length === 0, left: left.length, patrolLeft: left.filter((e) => e.patrol).length, alive: alive.length, centre: Math.hypot(g.hero.x, g.hero.z) };
     }
   }
   return out;
@@ -126,3 +153,22 @@ for (const [i, level] of LEVELS.entries()) {
   if (!bestL || ok > bestL.ok) bestL = { level, ok };
 }
 console.log(`最善の放ち方: L=${bestL.level} で撃退成功 ${bestL.ok}/${SEEDS.length}（${(100 * bestL.ok / SEEDS.length).toFixed(0)}%）`);
+
+// M1: 動くボット（steerBot）で、同じ最善の払うきっかけのまま、満タンの時刻と撃退成功を出す
+if (process.env.MOVE !== '0') {
+  console.log('--- 動くボット（M1: 中心へ寄る・突っ込んでくる者を横へかわす・同じ払うきっかけ） ---');
+  for (const st of [NO_PUFF, best.st]) {
+    const runs = SEEDS.map((s) => play(s, st, true));
+    console.log((st === NO_PUFF ? '動く・払わない: ' : '動く・最善の払うきっかけ: ') + summary(st, runs).line.replace(/^[^:]*: /, '') + `  中心からの平均の距離 p50=${q(runs.map((r) => r.centre), 0.5).toFixed(1)} m`);
+  }
+  const relM = SEEDS.map((s) => releaseRun(s, best.st, true));
+  let bestM = null;
+  for (const [i, level] of LEVELS.entries()) {
+    const got = relM.map((r) => r[i]).filter(Boolean);
+    const ok = got.filter((r) => r.clear).length;
+    const extra = got.length ? `  放った時刻 p50=${q(got.map((r) => r.t), 0.5).toFixed(1)}  放った所の中心からの距離 p50=${q(got.map((r) => r.centre), 0.5).toFixed(1)} m 最大=${Math.max(...got.map((r) => r.centre)).toFixed(1)} m  残り p50=${q(got.map((r) => r.left), 0.5)}` : '';
+    console.log(`  動く L=${String(level).padStart(3)}: 届いた ${got.length}/${SEEDS.length}  撃退成功 ${ok}/${got.length}（全体 ${ok}/${SEEDS.length}）${extra}`);
+    if (!bestM || ok > bestM.ok) bestM = { level, ok };
+  }
+  console.log(`動くボットの最善の放ち方: L=${bestM.level} で撃退成功 ${bestM.ok}/${SEEDS.length}（${(100 * bestM.ok / SEEDS.length).toFixed(0)}%）`);
+}
