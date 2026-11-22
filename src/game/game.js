@@ -4,7 +4,8 @@ import { generateCity } from '../world/cityGen.js';
 import { createPower } from './power.js';
 import { createCharge } from './charge.js';
 import { createTimer } from './timer.js';
-import { createScore } from './score.js';
+import { createScore, releaseBonus } from './score.js';
+import { nearCount } from './reach.js';
 import { createBlast } from './blast.js';
 import { createEnemies } from './enemies.js';
 import { createHeroMotion } from './hero.js';
@@ -55,6 +56,7 @@ export function createGame({ seed, cfg = CONFIG }) {
   let finalBlast = null;
   let blasts = []; // { id, shot, blast, values }
   let releaseIds = null; // 放った瞬間に生きていた軍勢の id
+  let releaseInfo = null; // R2: 放った瞬間の残り時間・すぐそばの数（ギリギリのボーナス）と払った回数（ランク）
   let outcome = null; // { clear, total, survivors: [{ id, x, z, patrol }] }（最後の一発のときだけ）
   let nextBlastId = 1;
 
@@ -82,7 +84,7 @@ export function createGame({ seed, cfg = CONFIG }) {
       if (!releaseIds.has(e.id) || e.state === 'dead') continue;
       survivors.push({ id: e.id, x: e.x, z: e.z, patrol: !!e.patrol, ...(e.kind ? { kind: e.kind } : {}) });
     }
-    outcome = { clear: survivors.length === 0, total: releaseIds.size, survivors };
+    outcome = { clear: survivors.length === 0, total: releaseIds.size, survivors, ...releaseInfo.extra };
   }
 
   // settled: settle が一気に進めた分の命中（描く側は見た目を作らなくてよい）
@@ -112,7 +114,11 @@ export function createGame({ seed, cfg = CONFIG }) {
     pendingShot = null;
   }
   function scoreFinale() {
-    const added = score.addShot(finalBlast.values);
+    // R2（spec §15 ギリギリのボーナス）: 一発の被害額（基）に、放った瞬間の残り時間とすぐそばの数の倍率をかける
+    const base = score.addShot(finalBlast.values);
+    const bonus = { base, ...releaseBonus(releaseInfo) };
+    const added = base + score.addBonus(base * (bonus.mul - 1));
+    releaseInfo.extra = { bonus, puffsUsed: releaseInfo.puffsUsed };
     emit('shotScored', { added, total: score.total });
     judge();
     finish('released');
@@ -213,6 +219,7 @@ export function createGame({ seed, cfg = CONFIG }) {
       releaseIds = new Set(enemies.list.filter((e) => e.state !== 'dead').map((e) => e.id));
       // M1: 爆心は放った瞬間の主人公の位置。ここから主人公は止まる
       shot.centre = { x: hero.x, z: hero.z };
+      releaseInfo = { timeLeft: timer.remaining, near: nearCount(enemies.list, shot.centre), puffsUsed: Number.isFinite(cfg.puff.uses) ? cfg.puff.uses - puffsLeft : 0 };
       motion.stop();
       hero.hidden = false;
       emit('shot', shot);
