@@ -95,7 +95,7 @@ test('M1: 上空カメラは主人公についていく: なめらかに（一�
   const target = { x: 60, z: -40 };
   views.follow(target);
   views.updateCamera(1 / 60);
-  // 一歩では跳ばない（主人公 11 m/s より少しだけ遅れて動き出す）
+  // 一歩では跳ばない（主人公より少しだけ遅れて動き出す）
   expect(cam.position.x).toBeGreaterThan(0);
   expect(cam.position.x).toBeLessThan(5);
   for (let i = 0; i < 240; i++) views.updateCamera(1 / 60);
@@ -107,16 +107,19 @@ test('M1: 上空カメラは主人公についていく: なめらかに（一�
   // 全体の見える構図（widePosition）も主人公のまわり
   const w = views.widePosition(300, 390 / 844, new THREE.Vector3());
   expect(w.x).toBeCloseTo(cam.position.x, 3);
-  // 速く走っても主人公は画面の真ん中の近くから外れない（11 m/s、遅れは数 m）
+  // R1d（持ち主 13:36）: 速く走っても（22 m/s）主人公は画面の真ん中の近くから外れない。一定の速さで走り続けたときの遅れは 2 m 以下
   const moving = { x: 60, z: -40 };
   views.follow(moving);
-  let worst = 0;
+  let worst = 0, lag = 0;
   for (let i = 0; i < 180; i++) {
-    moving.x += 11 / 60;
+    moving.x += 22 / 60;
     views.updateCamera(1 / 60);
     const p = new THREE.Vector3(moving.x, 1, moving.z).project(cam);
     worst = Math.max(worst, Math.abs(p.x - at0.x));
+    if (i >= 120) lag = Math.max(lag, Math.hypot(moving.x - views.followAt.x, moving.z - views.followAt.z)); // 走り出して 2 秒からの遅れ
   }
   expect(worst).toBeGreaterThan(0.001);
-  expect(worst).toBeLessThan(0.12);
+  expect(worst).toBeLessThan(0.06);
+  expect(lag).toBeGreaterThan(0.5); // 少しは遅れる（ばね）
+  expect(lag).toBeLessThanOrEqual(2);
 });

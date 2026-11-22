@@ -14,10 +14,11 @@ const H = CONFIG.hero;
 // ビルの足元（主人公の半径だけ広げた四角）の内か
 const inside = (g, x, z) => g.city.buildings.some((b) => Math.abs(x - b.x) < b.w / 2 + H.radius - 1e-6 && Math.abs(z - b.z) < b.d / 2 + H.radius - 1e-6);
 
-test('M1: 速さの値は config にある（10〜12 m/s、掴まれる 1 人ごとに 20%、下限 40%）。操作の値も（長押し 0.18 秒・タップは 10 px 未満）', () => {
-  expect(H.speed).toBeGreaterThanOrEqual(10);
-  expect(H.speed).toBeLessThanOrEqual(12);
-  expect(H.speed).toBeLessThan(CONFIG.enemy.searchSpeed); // 軍勢より遅い
+// R1d（持ち主 13:36「キャラクターの移動速度をかなり上げよう」）: 約 2 倍の 22 m/s。軍勢の突っ込む速さ（32 m/s）よりは遅いまま
+test('M1 / R1d: 速さの値は config にある（22 m/s、軍勢の突っ込む速さより遅い。掴まれる 1 人ごとに 20%、下限 40%）。操作の値も（長押し 0.18 秒・タップは 10 px 未満）', () => {
+  expect(H.speed).toBe(22);
+  expect(H.speed).toBeLessThan(CONFIG.enemy.speed); // 軍勢の突っ込む速さより遅い
+  expect(H.speed).toBeLessThan(CONFIG.enemy.searchSpeed); // 探す速さよりも遅い
   expect(H.grabSlow).toBe(0.2);
   expect(H.minSpeedFrac).toBe(0.4);
   expect(CONFIG.controls.longPressSec).toBe(0.18);
@@ -37,7 +38,10 @@ test('M1: 溜めていない（1 本目の指がない）ときは動かない�
   const v1 = Math.hypot(g.hero.vx, g.hero.vz);
   expect(v1).toBeGreaterThan(0);
   expect(v1).toBeLessThan(H.speed * 0.5); // 一気に全速にならない
-  step(g, 0.6);
+  // R1d: 加速も速い（約 0.25 秒で全速の 9 割より上）
+  step(g, 0.25 - DT);
+  expect(Math.hypot(g.hero.vx, g.hero.vz)).toBeGreaterThan(H.speed * 0.9);
+  step(g, 0.35);
   expect(Math.hypot(g.hero.vx, g.hero.vz)).toBeCloseTo(H.speed, 0);
   expect(g.hero.z).toBeLessThan(-4);
   // 離した（溜めをやめた）ら止まっていく
@@ -65,6 +69,29 @@ test('M1: ビルの足元は通り抜けず、壁に沿って滑る。斜めに�
   }
   expect(slid).toBeGreaterThan(5);
   expect(Math.hypot(g.hero.x, g.hero.z)).toBeGreaterThan(20); // 広場から出ている
+});
+
+// R1d: 速くなっても、一歩が主人公の半径より長いときは刻んで動かす（薄いビルの足元を一歩で飛び越えない）
+test('R1d: 一歩が長くても（大きな dt・22 m/s）薄いビルの足元を通り抜けない。一歩を主人公の半径以下に刻む', async () => {
+  const { createHeroMotion } = await import('../../src/game/hero.js');
+  // 主人公の前（+x の 3 m 先）に、厚さ 0.2 m の薄い壁（足元は半径 1.2 m ずつ広がって 2.6 m）
+  const city = { radius: 680, buildings: [{ x: 3, z: 0, w: 0.2, d: 400, h: 10 }] };
+  for (const dt of [1 / 30, 0.1, 0.25, 0.5]) {
+    const m = createHeroMotion(city, CONFIG);
+    m.setMove(1, 0);
+    m.hero.vx = H.speed; // もう全速
+    for (let i = 0; i < 20; i++) {
+      m.update(dt);
+      expect(m.hero.x, `dt ${dt} step ${i}`).toBeLessThanOrEqual(3 - 0.1 - H.radius + 1e-9);
+    }
+    expect(m.hero.x).toBeCloseTo(3 - 0.1 - H.radius, 6); // 壁に当たって止まっている
+  }
+  // 斜めに当たれば、壁に沿って滑る（z へは進む）
+  const m = createHeroMotion(city, CONFIG);
+  m.setMove(Math.SQRT1_2, Math.SQRT1_2);
+  for (let i = 0; i < 10; i++) m.update(0.25);
+  expect(m.hero.x).toBeLessThanOrEqual(3 - 0.1 - H.radius + 1e-9);
+  expect(m.hero.z).toBeGreaterThan(10);
 });
 
 test('M1: 街から出ない（中心から cityRadius − edgePad より外へ行けない）', () => {

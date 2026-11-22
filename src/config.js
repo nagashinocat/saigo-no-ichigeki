@@ -84,7 +84,9 @@ export const CONFIG = {
   // ばねで目標の速さへ）動く。ビルの足元（radius m 広げた四角）は通り抜けず、壁に沿って滑る。街の中心から cityRadius − edgePad m より外へは出ない。
   // 掴んでいる者 1 人ごとに grabSlow（20%）遅くなり、minSpeedFrac（40%）より遅くはならない。動くのは溜めている間だけ（1 本目の指がないと動かない）。
   // 体は進む向きへ turnRate rad/s で向き直り、速さに応じて leanMax rad まで前へ傾く
-  hero: { speed: 11, accelRate: 7, radius: 1.2, edgePad: 30, grabSlow: 0.2, minSpeedFrac: 0.4, turnRate: 9, leanMax: 0.3 },
+  // R1d（持ち主 13:36「キャラクターの移動速度をかなり上げよう」）: 11 → 22 m/s（軍勢の突っ込む 32 m/s より遅いまま）。加速 7 → 12（約 0.25 秒で全速の 9 割強）、
+  // 向き直り 9 → 16 rad/s、前への傾き 0.3 → 0.42 rad。一歩が radius より長いときは刻んで動かす（薄い足元を飛び越えない）
+  hero: { speed: 22, accelRate: 12, radius: 1.2, edgePad: 30, grabSlow: 0.2, minSpeedFrac: 0.4, turnRate: 16, leanMax: 0.42 },
   // M1 の操作（持ち主 09:15、制作側の判断）: 溜めているあいだの 2 本目の指は、longPressSec 秒以上で浮かぶジョイスティック（押した所に出て、
   // 指を離すと消える。stickRadiusPx の輪いっぱいで全速、deadPx より内は止まる）、それより短く tapMovePx px 未満の動きで離せば払う
   controls: { longPressSec: 0.18, tapMovePx: 10, stickRadiusPx: 56, deadPx: 6 },

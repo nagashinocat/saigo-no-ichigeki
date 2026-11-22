@@ -71,8 +71,12 @@ export function createHeroMotion(city, cfg = CONFIG) {
       hero.vx += (tx - hero.vx) * k;
       hero.vz += (tz - hero.vz) * k;
       if (Math.hypot(hero.vx, hero.vz) < 1e-3 && !tx && !tz) { hero.vx = 0; hero.vz = 0; }
-      slide('x', hero.vx * dt);
-      slide('z', hero.vz * dt);
+      // R1d: 一歩が主人公の半径より長ければ刻む（速くなっても、大きな dt でも、薄いビルの足元を一歩で飛び越えない）
+      const n = Math.max(1, Math.ceil((Math.hypot(hero.vx, hero.vz) * dt) / H.radius));
+      for (let i = 0; i < n; i++) {
+        slide('x', (hero.vx * dt) / n);
+        slide('z', (hero.vz * dt) / n);
+      }
       // 街の端: 外へは出ない（外へ向かう速さを消す）
       const r = Math.hypot(hero.x, hero.z);
       if (r > maxR) {
