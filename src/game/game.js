@@ -64,6 +64,8 @@ export function createGame({ seed, cfg = CONFIG }) {
   let nextBlastId = 1;
   let maxCombo = 0; // R3: 一度の払うで払った数のいちばん多い回（称号「一掃」）
   let draggedIds = null; // R3: 放った瞬間に主人公を掴んでいた大物の id（称号「道連れ」）
+  // R3 fix1（称号を多めに）: 隠れられた回数・見つかった回数（追われていない → 追われる、に変わった回）・大物に掴まれたか
+  let hides = 0, spotted = 0, pursuedPrev = false, bossGrabbed = false;
 
   // 小爆発は軍勢だけを払う（対象のビル・props はなし）。最後の一発はまだ壊れていないものすべて。距離は爆心（shot.centre）から
   function startBlast(shot) {
@@ -172,6 +174,15 @@ export function createGame({ seed, cfg = CONFIG }) {
     get grabbing() { return grabbing; },
     // R3: 一度の払うで払った数のいちばん多い回（称号「一掃」）
     get maxCombo() { return maxCombo; },
+    // R3 fix1: 称号の元になる、その回の数（titles.js）。release は放ったとき（時間切れは null）の残り時間・すぐそばの数・力・中心からの距離
+    get runStats() {
+      const kills = { normal: 0, patrol: 0, heavy: 0, drainer: 0, boss: 0 };
+      for (const e of enemies.list) if (e.state === 'dead') kills[e.kind ?? (e.patrol ? 'patrol' : 'normal')]++;
+      return {
+        puffs: Number.isFinite(cfg.puff.uses) ? cfg.puff.uses - puffsLeft : 0, maxCombo, hides, spotted, bossGrabbed, kills,
+        release: releaseInfo ? { timeLeft: releaseInfo.timeLeft, near: releaseInfo.near, power: releaseInfo.power, centreDist: releaseInfo.centreDist } : null,
+      };
+    },
     // R1b: 掴まれて実際に吸われた力の合計（増えるだけ。HUD の「−N」と吸われる音が、フレームごとの差を使う）
     get drainedTotal() { return drainedTotal; },
     // 今、街に生きている軍勢の数（見回る者を含む。HUD の「街の軍勢 N」）
@@ -203,6 +214,7 @@ export function createGame({ seed, cfg = CONFIG }) {
       const lost = enemies.loseHero(from);
       motion.dash(spot, cfg.hide.dashSec);
       hideCool = cfg.hide.cooldown;
+      hides++;
       emit('hide', { from, to: spot, lost });
       return true;
     },
@@ -235,7 +247,8 @@ export function createGame({ seed, cfg = CONFIG }) {
       draggedIds = new Set(enemies.list.filter((e) => e.kind === 'boss' && (e.state === 'grab' || e.state === 'cling')).map((e) => e.id));
       // M1: 爆心は放った瞬間の主人公の位置。ここから主人公は止まる
       shot.centre = { x: hero.x, z: hero.z };
-      releaseInfo = { timeLeft: timer.remaining, near: nearCount(enemies.list, shot.centre), puffsUsed: Number.isFinite(cfg.puff.uses) ? cfg.puff.uses - puffsLeft : 0 };
+      releaseInfo = { timeLeft: timer.remaining, near: nearCount(enemies.list, shot.centre), puffsUsed: Number.isFinite(cfg.puff.uses) ? cfg.puff.uses - puffsLeft : 0,
+        power: shot.amount, centreDist: Math.hypot(shot.centre.x, shot.centre.z) };
       motion.stop();
       hero.hidden = false;
       emit('shot', shot);
@@ -301,6 +314,14 @@ export function createGame({ seed, cfg = CONFIG }) {
       // 主人公が先に動き、軍勢は今の主人公を追う（掴んでいる者はついてくる）。動くのは溜めている間だけ
       motion.update(dt, { active: charge.active, grabbing });
       grabbing = enemies.update(dt);
+      // R3 fix1: 見つかった回数と大物に掴まれたか（称号）
+      let pursued = false;
+      for (const e of enemies.list) {
+        if (e.state === 'chase' || e.state === 'approach' || e.state === 'grab' || e.state === 'cling') pursued = true;
+        if (e.kind === 'boss' && (e.state === 'grab' || e.state === 'cling')) bossGrabbed = true;
+      }
+      if (pursued && !pursuedPrev) spotted++;
+      pursuedPrev = pursued;
       // M2: 物陰で見つかった（照らされて追われる・掴まれた）ら、もう隠れていない
       if (hero.hidden && hero.dashing == null && enemies.list.some((e) => e.state === 'chase' || e.state === 'grab' || e.state === 'cling')) { hero.hidden = false; emit('found', { x: hero.x, z: hero.z }); }
       // 掴んでいる者の吸う力（R1: 吸う者 ×2.5、大物 ×4）
