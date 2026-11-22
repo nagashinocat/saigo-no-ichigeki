@@ -132,9 +132,16 @@ export function buildCopyFallback(doc, text, onClose) {
   return box;
 }
 
-// 結果画面。「もう一度」は onRetry、「リプレイ」は onReplay（最後の一発をもう一度見る）、
+// R4（spec §15 爆発の短い縦動画）: 下の段のボタン。「リプレイ」（最後の一発を見せ直せるとき）と「動画で共有」（録画できる端末で、
+// 最後の一発のリプレイの写しがあるとき・ブラックホールの結末）。どちらも無ければ下の段ごと出さない
+export function subButtons({ canReplay = false, canClip = false } = {}) {
+  return { replay: !!canReplay, clip: !!canClip, row: !!(canReplay || canClip) };
+}
+export const CLIP_LABEL = '動画で共有';
+
+// 結果画面。「もう一度」は onRetry、「リプレイ」は onReplay（最後の一発をもう一度見る）、「動画で共有」は onClip（R4）、
 // 「共有」は Web Share か、使えなければクリップボードへ写す（R3）。getShare: () => ({ url, city, titles })（街のリンクと称号）
-export function createResult(root, { onRetry, onReplay = null, share: shareFn = shareOrCopy }) {
+export function createResult(root, { onRetry, onReplay = null, onClip = null, share: shareFn = shareOrCopy }) {
   const title = el('div', 'result-title', GAME_TITLE);
   // R3: 街の名前（題字の下）・称号のバッジ（見出しの下）・被害額のたとえ（被害額の下）・自己ベスト（内訳の下）・共有の知らせ
   const cityEl = el('div', 'result-city');
@@ -155,13 +162,15 @@ export function createResult(root, { onRetry, onReplay = null, share: shareFn = 
   const replay = el('button', 'result-btn ghost', 'リプレイ');
   const row = el('div', 'result-row');
   row.append(retry, share);
+  const clipBtn = el('button', 'result-btn ghost clip', CLIP_LABEL);
   const row2 = el('div', 'result-row sub');
-  row2.append(replay);
+  row2.append(replay, clipBtn);
   root.append(title, cityEl, rankEl, headline, titlesEl, label, amount, compare, breakdown, bestEl, row, row2, note);
   root.hidden = true;
   let total = 0, outcome = null, reason = null, extra = null, noteTimer = 0;
   retry.addEventListener('click', () => onRetry());
   replay.addEventListener('click', () => onReplay?.());
+  clipBtn.addEventListener('click', () => onClip?.({ total, outcome, reason, extra }));
   let copyBox = null;
   const closeCopyBox = () => { copyBox?.remove(); copyBox = null; };
   share.addEventListener('click', async () => {
@@ -187,7 +196,8 @@ export function createResult(root, { onRetry, onReplay = null, share: shareFn = 
   return {
     // o: game.outcome（時間切れは null）。opts.replay: 「リプレイ」を出す（最後の一発を見せ直せるとき）。
     // opts.extra（R3）: { city: { label, share, link }, titles: [{ id, name, isNew }], best: records.submitBest の答え }
-    show(t, why, o = null, { replay: canReplay = false, extra: ex = null } = {}) {
+    // opts.clip（R4）: 「動画で共有」を出す（録画できる端末で、動画にできる一発・結末のとき）
+    show(t, why, o = null, { replay: canReplay = false, clip: canClip = false, extra: ex = null } = {}) {
       total = t; outcome = o; reason = why; extra = ex;
       const c = resultContent(t, why, o, ex);
       cityEl.textContent = c.city ?? '';
@@ -220,9 +230,21 @@ export function createResult(root, { onRetry, onReplay = null, share: shareFn = 
       breakdown.hidden = !c.breakdown?.length;
       label.hidden = amount.hidden = c.amount === null;
       share.hidden = !c.share;
-      row2.hidden = replay.hidden = !(canReplay && onReplay);
+      const sub = subButtons({ canReplay: canReplay && !!onReplay, canClip: canClip && !!onClip });
+      replay.hidden = !sub.replay;
+      clipBtn.hidden = !sub.clip;
+      row2.hidden = !sub.row;
       root.hidden = false;
     },
     hide() { closeCopyBox(); root.hidden = true; },
+    // R4: 録画の間は結果画面のボタンを押せなくする（キーの Space で「もう一度」が押されない）
+    setBusy(on) { root.inert = !!on; root.classList.toggle('busy', !!on); },
+    // R4: 結果画面の小さな知らせ（動画を保存した・保存できないかもしれない、など）
+    notify(m, ms = 4200) {
+      note.textContent = m;
+      note.hidden = false;
+      clearTimeout(noteTimer);
+      noteTimer = setTimeout(() => { note.hidden = true; }, ms);
+    },
   };
 }

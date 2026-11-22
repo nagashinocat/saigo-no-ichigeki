@@ -186,6 +186,9 @@
       #result.fail .result-row { grid-column: 3; margin: 0; flex-direction: column; align-items: stretch; gap: 0.6em; }
       #result.fail .result-row:not(.sub) { grid-row: 1 / 9; align-self: end; }
       #result.fail .result-row.sub { grid-row: 9 / 11; align-self: start; margin-top: 0.6em; }
+      /* R4: 下の段（リプレイ・動画で共有）は横に並べる（縦に積むと左の列が押し上げられ、題字が画面の上で切れた） */
+      #result.fail .result-row.sub { flex-direction: row; justify-content: center; gap: 0.5em; }
+      #result.fail .result-row.sub .result-btn.ghost { padding: 0.4em 0.9em; font-size: clamp(13px, 3.4vh, 16px); }
     }
     /* R2（spec §15 評価のランク）: ランクは大きく、題字のすぐ下。被害額の下に倍率の内訳を小さな行で */
     .result-rank { display: flex; align-items: baseline; gap: 0.35em; line-height: 1; margin-top: 0.2em; }
@@ -280,6 +283,30 @@
     .result-btn.primary { background: #fff; color: #1b1030; }
     .result-row.sub { margin-top: 0.6em; }
     .result-btn.ghost { border-color: rgba(255, 255, 255, 0.45); font-size: clamp(14px, 3.8vw, 18px); padding: 0.5em 1.4em; opacity: 0.85; }
+    /* R4（spec §15 爆発の短い縦動画）: 下の段の「動画で共有」（リプレイの隣）。縦画面 390 で 2 つ並んで収まるよう、横の余白を少し詰める */
+    .result-row.sub .result-btn.ghost { padding-left: 1.1em; padding-right: 1.1em; }
+    .result-btn.clip { border-color: rgba(255, 214, 120, 0.75); color: #ffe7a8; opacity: 1; }
+    #result.busy { pointer-events: none; }
+    /* 録画の知らせ: 録っている縦の絵・進みの帯・やめる。できたら録った動画と共有（保存）・閉じる。結果画面の上に重ねる */
+    #clip { position: fixed; inset: 0; z-index: 40; display: flex; align-items: center; justify-content: center; background: #06030e; color: #fff; touch-action: manipulation; }
+    #clip[hidden] { display: none; }
+    #clip .clip-card { display: flex; flex-direction: column; align-items: center; gap: 0.9em; max-height: 100%; padding: 2vh 4vw; box-sizing: border-box; }
+    #clip .clip-view { height: min(62vh, 150vw); aspect-ratio: 9 / 16; border-radius: 12px; overflow: hidden; background: #000; box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.18), 0 8px 30px rgba(0, 0, 0, 0.6); }
+    #clip .clip-view canvas, #clip .clip-view video { width: 100%; height: 100%; display: block; object-fit: contain; }
+    #clip .clip-side { display: flex; flex-direction: column; align-items: center; gap: 0.6em; text-align: center; max-width: 86vw; }
+    #clip .clip-status { font-size: clamp(15px, 4.2vw, 20px); font-weight: 700; }
+    #clip .clip-bar { width: min(70vw, 320px); height: 6px; border-radius: 3px; background: rgba(255, 255, 255, 0.18); overflow: hidden; }
+    #clip .clip-bar[hidden] { display: none; }
+    #clip .clip-bar i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, #ffb35c, #fff1c8); }
+    #clip .clip-note { font-size: clamp(12px, 3.4vw, 15px); opacity: 0.85; max-width: 80vw; line-height: 1.4; }
+    #clip .clip-note[hidden], #clip [hidden] { display: none; }
+    #clip .clip-row { display: flex; gap: 0.8em; margin-top: 0.2em; }
+    #clip .clip-row .result-btn { padding: 0.55em 1.4em; }
+    @media (min-aspect-ratio: 1/1) {
+      #clip .clip-card { flex-direction: row; gap: 4vw; }
+      #clip .clip-view { height: 86vh; }
+      #clip .clip-side { max-width: 40vw; }
+    }
     /* リプレイの印（上の黒い帯の中）と、飛ばし方（下の黒い帯の中） */
     #replay { position: fixed; inset: 0; pointer-events: none; font-weight: 700; letter-spacing: 0.18em; color: rgba(255, 255, 255, 0.82); }
     #replay[hidden] { display: none; }
@@ -322,6 +349,7 @@
   <div id="start">長押しで力を貯め、離して最後の一撃<br><small>貯めながら、もう一本の指を長押しで動く・短くタップで払う（3 回まで）<br>LOOK OUT! が出たら 矢印をタップで物陰に隠れる<br>払うは まわりの者を はがす（重い者・大物は倒れず よろめく）</small></div>
   <div id="replay" hidden><span class="replay-tag">リプレイ</span><span class="replay-hint">タップでとばす</span></div>
   <div id="result" hidden></div>
+  <div id="clip" role="dialog" aria-label="動画で共有" hidden></div>
   <script type="module" src="./src/main.js"></script>
 </body>
 </html>

@@ -42,7 +42,9 @@ import { reachNow } from './game/reach.js';
 import { createReachRing } from './render/reachRing.js';
 import { createHud, OUT_TEXT } from './ui/hud.js';
 import { createTimeTicks } from './ui/timeLeft.js';
-import { createResult, allowsNativeMenu } from './ui/result.js';
+import { createResult, allowsNativeMenu, resultContent, shareText } from './ui/result.js';
+import { createClipRecorder, createClipPanel, clipSize, planClip, planBlackholeClip, clipOverlay, deliverClip, clipFileName, CLIP_NOTE } from './share/clip.js';
+import { INTRO_FONT } from './ui/introOverlay.js';
 import { createAudio, finaleBoomOpts } from './audio/audio.js';
 import { createHitFeed } from './audio/hitFeed.js';
 import { screenPan } from './audio/cues.js';
@@ -68,6 +70,8 @@ const MAX_FRAME_DT = 0.1;
 const GRABBED_STEADY = 0.15; // 掴まれている間の手の画面の光の安定（弱く瞬く）
 
 const params = new URLSearchParams(location.search);
+// R4: 縦動画を録っている間（と元へ戻す間）。ゲームの毎フレーム・画面の大きさの合わせ直し・入力を止める（share/clip.js）
+let clipping = false;
 // 撮影・計測用のフック（window.__debug など）は URL に ?debug があるときだけ公開する
 const debugMode = params.has('debug');
 // R3（spec §15 今日の街）: 種は ?seed=（撮影・試し）> ?city=YYYYMMDD（友達のリンク）> 今日の街（日本時間の日付）。
@@ -155,6 +159,8 @@ const result = createResult(document.getElementById('result'), {
   },
   // 最後の一発をもう一度見る（放つ直前の街へ戻して起こし直す。何度でも同じリプレイ）
   onReplay() { startReplay(); },
+  // R4（spec §15）: その人の一撃を縦動画にして共有（共有できなければ保存）
+  onClip(info) { startClip(info); },
 });
 const replayTag = document.getElementById('replay');
 // M1（持ち主 09:15、spec §16）: 1 本目の指はどこでも溜め（離すと最後の一発）、溜めている間の 2 本目の指は長押しで浮かぶジョイスティック・
@@ -209,6 +215,7 @@ const pointerInput = bindPointerInput(canvas, {
     if (introFlow.consumePointer(ms)) return true;
     // R1f: メニューが開いている（一時停止）間の画面のタップは何もしない（溜めにならない）
     if (menu.isOpen || pause.paused) return true;
+    if (clipping) return true; // R4: 録画の間の画面のタップは何もしない（リプレイを飛ばさない）
     // リプレイの間は、画面のタップで飛ばして結果へ
     if (replay.active && !replay.finished) { skipReplay(); return true; }
     return false;
@@ -239,7 +246,7 @@ const menu = createMenu({ button: document.getElementById('menuBtn'), panel: doc
     if (kind && t - previewAt > 150) { previewAt = t; audio.preview(kind); }
   },
 });
-function leavePage() { if (menuAvailable()) { menu.setAvailable(true); menu.open(); } pause.set('tab', true); }
+function leavePage() { if (clipRec.busy) clipRec.cancel(); if (menuAvailable()) { menu.setAvailable(true); menu.open(); } pause.set('tab', true); }
 window.addEventListener('pagehide', leavePage);
 // fix1（見直し Minor 7）: iOS の一部（コントロールセンターなど）は visibilitychange が来ない。タッチの端末だけ、blur でも一時停止する（PC で誤って止めない）
 const touchDevice = (() => { try { return matchMedia('(pointer: coarse)').matches || (navigator.maxTouchPoints ?? 0) > 0; } catch { return false; } })();
@@ -260,6 +267,8 @@ window.addEventListener('keydown', (e) => {
     }
     return;
   }
+  // R4: 録画の間は Esc でやめる。ほかのキーは使わない（リプレイを飛ばさない・結果のボタンを押さない）
+  if (clipping) { if (e.code === 'Escape') { e.preventDefault(); clipRec.cancel(); } return; }
   // R1f: Esc でメニュー（遊んでいる間）。開いている間は Esc で閉じ、ほかのキーは使わない
   if (menu.isOpen) { if (e.code === 'Escape') { e.preventDefault(); menu.close(); } return; }
   if (e.code === 'Escape' && menuAvailable() && !(replay.active && !replay.finished)) { e.preventDefault(); menu.open(); return; }
@@ -309,7 +318,7 @@ function updateResult(dt) {
   if (!pendingResult || (!finaleDone && (cinematic.active || replay.active || blackhole.active))) return;
   pendingResult.wait -= dt;
   if (pendingResult.wait > 0) return;
-  result.show(pendingResult.total, pendingResult.reason, pendingResult.outcome, { replay: !!replaySnap, extra: pendingResult.extra });
+  result.show(pendingResult.total, pendingResult.reason, pendingResult.outcome, { replay: !!replaySnap, clip: canClip(pendingResult.reason), extra: pendingResult.extra });
   lastResult = pendingResult;
   pendingResult = null;
 }
@@ -317,6 +326,7 @@ function updateResult(dt) {
 const views = createViews(renderer, () => TIERS[tier]);
 // CSS で決まったキャンバスの実寸に合わせる（スマホのアドレスバーで 100vh がずれる問題を避ける）
 const resize = () => {
+  if (clipping) return; // R4: 録画の間は動画の大きさのまま（終わったら合わせ直す）
   views.resize(canvas.clientWidth || window.innerWidth, canvas.clientHeight || window.innerHeight);
   const r = views.layout.hand;
   hand.resize(r.w / Math.max(1, r.h));
@@ -546,6 +556,7 @@ const blackhole = createBlackhole(views, hand, { renderer, scene: cityScene, sky
 warmBoth(() => blackhole.warmup());
 warmTarget.dispose();
 blackhole.on('cue', ({ name }) => {
+  if (clipping) return; // R4: 録画の間（と戻す間）の音は録画が段取りする
   if (name === 'collapse') audio.blackholeDrone(BLACKHOLE_DRONE_SEC);
   // 飲み込みが始まると、BGM は音程が下がりながら引き伸ばされ、渦に吸い込まれるように消える（何もない空間の手前で）
   else if (name === 'cut') bgm.stretchOut(blackhole.timeline.stretchSec);
@@ -678,7 +689,7 @@ const replay = createReplay(views, {
 });
 replay.warmup(renderer, views.cityCamera);
 // 音: リプレイの間は世界の音を鳴らさない（BGM は 'replayStart' で静かな変奏になり、結果画面でもそのまま続く）
-replay.on('replayStart', () => { replayTag.hidden = false; bgm.quiet(); audio.debrisMode('replay'); });
+replay.on('replayStart', () => { if (clipping) return; replayTag.hidden = false; bgm.quiet(); audio.debrisMode('replay'); }); // R4: 録画の間は録画が段取りする
 // S9: 撃退失敗: リプレイの最後は生き残りの引きの絵。その絵と結果の後ろで、生き残りの光が赤と緑に脈打つ。
 // 結果（replayEnd）は、その絵が明けきって少し見せてから（replay.js の AFTERMATH_TIMING。タップで先へ飛ばせる）
 replay.on('aftermath', () => {
@@ -698,6 +709,121 @@ function startReplay() {
   replay.play({ shot: replaySnap.shot, buildings: replaySnap.buildings, heroYaw: enemyView.heroYaw, survivors: o && !o.clear ? o.survivors : null });
 }
 function skipReplay() { replay.skip(); }
+
+// ---- R4（spec §15 爆発の短い縦動画・珍しい結末の短い動画）----
+// 結果画面の「動画で共有」: その人の一撃を、リプレイの写し（replaySnap）と演出の時刻表（cinematic.timeline）から描き直して 6〜10 秒の縦動画にする
+// （爆発の寄り → 見せ場 → 宇宙 → 縦一線の光。share/clip.js の planClip）。時間切れはブラックホールの結末（planBlackholeClip）。
+// 9:16 の大きさ（画質の段の画素、mid / low は 720×1280 まで）で同じ renderer に描き、2D の canvas へ写して文字を重ね、MediaRecorder で録る。
+// 音は master の出口の写し（audio.tap）。終わったら（やめても）大きさ・リプレイの最後の絵（暗くして早送り）・ブラックホールの暗転・BGM を元へ戻す
+const clipPanel = createClipPanel(document.getElementById('clip'));
+const replayArgs = () => { const o = game.outcome; return { shot: replaySnap.shot, buildings: replaySnap.buildings, heroYaw: enemyView.heroYaw, survivors: o && !o.clear ? o.survivors : null }; };
+let clipKind = null, clipSparks = null, clipTap = null;
+const clipHost = {
+  get canvas() { return renderer.domElement; },
+  begin(kind, size) {
+    clipping = true; clipKind = kind;
+    bgm.stop(); audio.rumbleStop(); audio.droneCut(); audio.silence();
+    renderer.setPixelRatio(1);
+    views.resize(size.w, size.h);
+    cityView.setCloseView(true);
+    if (kind === 'blackhole') {
+      blackhole.play(game.hero);
+      const plan = planBlackholeClip(blackhole.timeline);
+      blackhole.update(plan.segments[0].from);
+      return plan;
+    }
+    replay.play(replayArgs());
+    const plan = planClip({ replay: replay.timeline, finale: cinematic.timeline });
+    replay.seek(plan.segments[0].from); // 寄りの始まりまで（ふつうの再生と同じ刻み）
+    audio.debrisMode('off');
+    clipSparks = new Map();
+    return plan;
+  },
+  frame(at) {
+    if (at.src === 'replay') {
+      replay.seek(at.t, { maxFine: 8 });
+      audio.collapse(collapseHits());
+      views.renderFull(cityScene, replay.camera, replay.screen);
+    } else if (at.src === 'finale') {
+      const v = cinematic.spaceShot(at.t, { shot: replaySnap.shot, timeline: cinematic.timeline, enemies: replaySnap.enemies, sparks: clipSparks });
+      views.renderFull(v.scene, v.camera, v.screen);
+    } else {
+      blackhole.update(Math.max(0, at.t - blackhole.time));
+      blackhole.draw();
+    }
+  },
+  // 音の合図（音は画面に従う。持ち主 13:06）: 寄りの始まりで世界の音と地鳴り、弾けた瞬間に爆発の音、宇宙でこもる。ブラックホールは唸りと無音
+  cue(name, plan) {
+    if (name === 'erupt') { audio.unsilence(); audio.debrisMode('replay'); audio.finaleRumble(plan.audio); }
+    else if (name === 'burst') audio.boom(Math.sqrt(replaySnap.shot.radius / CONFIG.radius.max), finaleBoomOpts(plan.audio));
+    else if (name === 'space') audio.muffle(1.4);
+    else if (name === 'drone') audio.blackholeDrone(Math.max(0.5, BLACKHOLE_DRONE_SEC - blackhole.timeline.cut));
+    else if (name === 'void') audio.droneCut();
+  },
+  audioStream() { clipTap = audio.tap(); return clipTap?.stream ?? null; },
+  shouldStop: () => document.hidden || pause.paused,
+  end() {
+    clipTap?.release(); clipTap = null; clipSparks = null;
+    audio.rumbleStop(); audio.droneCut(); audio.silence(); audio.debrisMode('replay');
+    applyPixelRatio();
+    clipping = false; resize(); clipping = true;
+    if (clipKind === 'blackhole') blackhole.update(blackhole.timeline.end + 0.05 - blackhole.time); // 暗転のまま（結果の後ろ）
+    else { replay.play(replayArgs()); replay.skip(); } // 結果の後ろの最後の絵へ（暗くして早送り。生き残りの光も戻る）
+    bgm.quiet();
+    clipping = false; clipKind = null;
+    last = performance.now();
+  },
+};
+const clipRec = createClipRecorder(clipHost);
+// 動画にできるか: 録画できる端末で、最後の一発（リプレイの写しと演出の時刻表がある）かブラックホールの結末
+const canClip = (reason) => clipRec.supported && (reason === 'blackhole' || (!!replaySnap && !!cinematic.timeline));
+const debugClipH = debugMode ? Number.parseInt(params.get('cliph') ?? '', 10) : NaN; // 撮影用: 動画の高さを上書き
+let clipLast = null; // 撮影用: 最後に録った動画（?debug の __debug.clip）
+function downloadFile(file) {
+  const url = URL.createObjectURL(file);
+  const a = document.createElement('a');
+  a.href = url; a.download = file.name; a.rel = 'noopener'; a.style.display = 'none';
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  return true;
+}
+async function startClip({ total, outcome, reason, extra }) {
+  if (clipRec.busy || !canClip(reason)) return null;
+  const kind = reason === 'blackhole' ? 'blackhole' : 'blast';
+  const size = Number.isFinite(debugClipH) && debugClipH >= 160
+    ? { w: 2 * Math.floor(debugClipH * 9 / 32), h: 2 * Math.round(debugClipH / 2) }
+    : clipSize({ tier, viewW: window.innerWidth, viewH: window.innerHeight, dpr: window.devicePixelRatio || 1 });
+  const overlay = clipOverlay(resultContent(total, reason, outcome, extra));
+  // 題字は同梱の明朝（「最後の一撃」の字が入っている）。読めなければ太いシステムの字
+  let titleFont = null;
+  try { await document.fonts.load(`900 40px "${INTRO_FONT}"`, overlay.title); titleFont = document.fonts.check(`900 40px "${INTRO_FONT}"`, overlay.title) ? INTRO_FONT : null; } catch { titleFont = null; }
+  result.setBusy(true);
+  clipPanel.start({ cancel: () => clipRec.cancel() });
+  const r = await clipRec.record({ kind, size, overlay, titleFont, onProgress: (p, ph) => clipPanel.progress(p, ph), onPreview: (c) => clipPanel.preview(c) });
+  clipLast = r;
+  if (!r.blob) {
+    clipPanel.close(); result.setBusy(false);
+    if (r.error) result.notify('動画を作れませんでした（文の「共有」はそのまま使えます）');
+    return r;
+  }
+  const file = new File([r.blob], clipFileName(new Date(), r.ext), { type: r.blob.type });
+  const text = shareText(total, outcome, extra?.city ? (extra.city.link ?? null) : null, { reason, city: extra?.city ?? null, titles: extra?.titles ?? [] });
+  let canShareFile = false;
+  try { canShareFile = typeof navigator.share === 'function' && !!navigator.canShare?.({ files: [file] }); } catch { canShareFile = false; }
+  const close = () => { clipPanel.close(); result.setBusy(false); };
+  clipPanel.done({
+    blob: r.blob,
+    label: canShareFile ? '共有する' : '保存する',
+    // Web Share はボタンを押したその操作の中で呼ぶ（録画のあとでは押した操作の期限が切れている）
+    async deliver() {
+      const res = await deliverClip(file, { nav: navigator, text, download: downloadFile, framed: framedPage });
+      if (res === 'shared') close();
+      else if (CLIP_NOTE[res]) clipPanel.say(CLIP_NOTE[res]);
+    },
+    close,
+  });
+  return r;
+}
 
 // 画質の自動調整。ここでは画素比だけを下げる（破片数などの他の値は後の Task が TIERS[tier] から読む）
 const governor = createFpsGovernor({ target: isMobile ? 30 : 55 });
@@ -972,7 +1098,8 @@ function onFirstFrame() { bodyPrep.startIdle(); }
 function frame(now) {
   const dt = Math.min(Math.max((now - last) / 1000, 0), MAX_FRAME_DT);
   last = now;
-  if (!paused) {
+  // R4: 録画の間は、録画（share/clip.js）が自分で描く。ゲームの毎フレームは止める
+  if (!paused && !clipping) {
     // R1f: メニューを出せるか（遊んでいる間・演出の間）
     menu.setAvailable(menuAvailable());
     // R1f: 一時停止（メニュー・タブの切り替え）の間は進めず、今の絵を描くだけ
@@ -1048,6 +1175,22 @@ const debugHooks = {
     debugCam.lookAt(new THREE.Vector3().fromArray(o.look));
     debugCam.updateMatrixWorld();
   },
+  // R4: 縦動画を録る（撮影用。結果画面の「動画で共有」と同じ）。戻り値 { ok, type, bytes, ms, plan } と、__debug.clipData() で base64
+  async clip() {
+    if (!lastResult) return { ok: false, why: 'no result' };
+    const t0 = performance.now();
+    const { total, reason, outcome, extra } = lastResult;
+    const r = await startClip({ total, reason, outcome, extra });
+    return { ok: !!r?.blob, why: r?.error ? String(r.error?.message ?? r.error) : r?.cancelled ? 'cancelled' : null, type: r?.blob?.type ?? null, mime: r?.mimeType ?? null, bytes: r?.blob?.size ?? 0, ms: performance.now() - t0, total: r?.plan?.total ?? null, segments: r?.plan?.segments ?? null };
+  },
+  async clipData() {
+    if (!clipLast?.blob) return null;
+    const bytes = new Uint8Array(await clipLast.blob.arrayBuffer());
+    let bin = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    return btoa(bin);
+  },
+  get clipSupported() { return clipRec.supported; },
   // R2: 決まったカメラ（look）でも届く範囲の輪を描く（撮影用）
   ringInLook(on) { debugRing = !!on; },
   // 手の画面の入力を固定する: { level, active, steady }（steady は光の安定 0〜1）。null で戻す

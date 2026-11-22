@@ -228,3 +228,13 @@ test('fix2: contextmenu の止めは、手で写す箱の中では効かせな�
   const main = readFileSync(new URL('../../src/main.js', import.meta.url), 'utf8');
   expect(main).toMatch(/addEventListener\('contextmenu', \(e\) => \{ if \(!allowsNativeMenu\(e\.target\)\) e\.preventDefault\(\); \}\)/);
 });
+
+// R4（spec §15 爆発の短い縦動画）
+test('R4: 下の段のボタン: リプレイ・動画で共有のどちらかがあれば下の段を出す（ブラックホールは動画で共有だけ）', async () => {
+  const { subButtons, CLIP_LABEL } = await import('../../src/ui/result.js');
+  expect(CLIP_LABEL).toBe('動画で共有');
+  expect(subButtons({ canReplay: true, canClip: true })).toEqual({ replay: true, clip: true, row: true });
+  expect(subButtons({ canReplay: false, canClip: true })).toEqual({ replay: false, clip: true, row: true }); // ブラックホール
+  expect(subButtons({ canReplay: true, canClip: false })).toEqual({ replay: true, clip: false, row: true }); // 録画できない端末
+  expect(subButtons({})).toEqual({ replay: false, clip: false, row: false });
+});
