@@ -159,8 +159,10 @@ test('見つけたら（R0、持ち主 22:15「まだ主人公前で止まる感
 });
 
 test('外を向いているときに見つけても、その場で止まらず、主人公のまわりを回りながら向き直って突っ込む（主人公からは離れない）', () => {
-  // 主人公に背を向けて（+x へ）走っている者
-  const { e, x } = solo({ x: 14, z: 0.5, heading: 0, ni: 0, nj: 0, di: 1, dj: 0, state: 'chase', speed: E.searchSpeed });
+  // 主人公に背を向けて（+x へ）走っている者。fix1: ライトの向きによらず見えるのは chase.hearDist（9 m）の内なので、その内に置く
+  // （それより遠くで背を向けていれば、最後に見た所へ向かう: spottedChase.test.js）
+  expect(E.chase.hearDist).toBeGreaterThan(8.5);
+  const { e, x } = solo({ x: 8.5, z: 0.5, heading: 0, ni: 0, nj: 0, di: 1, dj: 0, state: 'chase', speed: E.searchSpeed });
   let prev = x.dist, px = x.x, pz = x.z;
   for (let i = 0; i < 20 && x.state === 'chase'; i++) {
     e.update(1 / 60);

@@ -110,7 +110,10 @@ export const CONFIG = {
     // hearDist m の内の見通しのある主人公は、ライトの向きによらず見えている（すぐ後ろは撒けない。見つけた直後に背を向けていても突っ込める）。
     // navTurnRate rad/s で向き直り、見えない間は blindSpeed m/s（探す 30・主人公の 28 より遅い。見えていれば突っ込む 32 のまま: 開けた所では追いつかれ、
     // 角を曲がって見えなくすれば速さで振り切れる）。動いたあと足元（riderPad m 広げた四角）から押し出す
-    chase: { loseSec: 2, hearDist: 15, blindSpeed: 20, reachLastSeen: 3, guessDist: 20, navCell: 2, navPad: 0.9, navHalf: 64, rebuildSec: 0.2, rebuildDist: 3, navAhead: 3, navTurnRate: 18, riderPad: 0.6 },
+    // fix1（見直し Important 3）: 見えない追う者が向かうのは、皆で一つの「最後に誰かが見た所」（今の主人公ではない。道しるべもそこへ作る）。
+    // loseSec 2 → 1.5（spec「約 2 秒」の内。持ち主が直せる）、hearDist 15 → 9、blindSpeed 20 → 16（28〜34 m 後ろから角を 2 つ曲がれば、
+    // 今日の街 24 のうち 15〜19 で撒ける。25 m では 3。tests/game/spottedChase.test.js）
+    chase: { loseSec: 1.5, hearDist: 9, blindSpeed: 16, reachLastSeen: 3, guessDist: 20, navCell: 2, navPad: 0.9, navHalf: 64, rebuildSec: 0.2, rebuildDist: 3, navAhead: 3, navTurnRate: 18, riderPad: 0.6 },
   },
   score:   { comboStep: 0.1, comboMax: 3 },
   // M1（持ち主 09:11 / 09:15、spec §16）: 主人公が動く。通りと広場の上を浮いたまま speed m/s（軍勢より遅い）で、なめらかに（accelRate 1/秒の

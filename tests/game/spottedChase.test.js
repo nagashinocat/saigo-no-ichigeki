@@ -73,11 +73,14 @@ function run(seed, sec = 45) {
       if (e.state === 'search') {
         // 見失ったのは、見通しが loseSec 秒より長く切れたときだけ（それより早く search に戻った者はいない）。また見つければ数え直す
         // （ゲームは動く前に見え方を確かめ、ここは動いたあとに確かめるので、数フレームのずれは許す）
-        if (blindBefore + DT >= LOSE - 3 * DT) lostOk++; else { lostEarly++; backToSearch++; }
+        if (blindBefore + DT >= LOSE - 0.2) lostOk++; // fix1: ライトの扇の縁で、動く前と後の向きの違いが数フレーム重なる（0.2 秒まで許す） else { lostEarly++; backToSearch++; }
         rec.delete(e.id);
         continue;
       }
-      const clear = sees && blindBefore === 0; // 回り込んでいる間（見通しのない者）は距離の決まりの外
+      // 回り込んでいる間（見通しのない者）は距離の決まりの外。fix1: 壁のそばで輪を縮めていた掴む者・群がる者が、壁を過ぎて元の輪へ戻る間
+      // （e.orbitR より内。外へ swarm.inSpeed m/s まで）も外（tests/game/chaseNav.test.js）
+      const regrow = (e.state === 'grab' || e.state === 'cling') && e.orbitR != null && (b ? b.d : d) < e.orbitR - 1e-6;
+      const clear = sees && blindBefore === 0 && !regrow;
       // 距離が増え続けた秒（よろめきは押し戻されるので除く）
       if (clear && e.state !== 'stagger' && b && b.state !== 'stagger') {
         r.growSec = d > b.d + 1e-6 ? r.growSec + DT : 0;
@@ -226,34 +229,65 @@ test('R1f: 見えている間は見失わない。掴む者は（壁の陰に回
   }
 });
 
-test('R1f: ライトの届く端（約 34 m 後ろ）の追う者は、角を曲がり続ければ撒ける（見えない間は遅くなり、loseSec 秒で見失う）。すぐ後ろ（12 m）の追う者は撒けない', () => {
+// fix1（見直し Important 3）: 見えない追う者は「最後に誰かが見た所」へ向かい（今の主人公は知らない）、そこで見えなければ行き過ぎて見失う。
+// 街ごとに、角の内側にビルがあって角の向こうが見えない 2 つ角の道すじ（真っすぐ 1 区画 → 曲がって 1 区画 → 曲がり戻して 1 区画）を選び、
+// 28〜34 m 後ろの追う者から逃げる。今日の街 12（120 日を 10 日おき）
+import { citySeed } from '../../src/game/daily.js';
+const P = 26;
+const node = (i, j) => [(i + 0.5) * P, (j + 0.5) * P];
+function twoCornerRoute(bs) {
+  const D = [[1, 0], [0, 1], [-1, 0], [0, -1]];
+  const blocked = (A, B, C) => { const a = node(...A), b = node(...B), c = node(...C); const u = [a[0] + (b[0] - a[0]) * 0.6, a[1] + (b[1] - a[1]) * 0.6], w = [b[0] + (c[0] - b[0]) * 0.5, b[1] + (c[1] - b[1]) * 0.5]; return !lineOfSight(u[0], u[1], bs, 0, w[0], w[1]); };
+  for (let r = 1; r <= 3; r++) for (let i = -r; i <= r; i++) for (let j = -r; j <= r; j++) for (let a = 0; a < 4; a++) for (const turn of [1, 3]) {
+    const d1 = D[a], d2 = D[(a + turn) % 4];
+    const S = [i, j], C1 = [i + d1[0], j + d1[1]], C2 = [C1[0] + d2[0], C1[1] + d2[1]], E2 = [C2[0] + d1[0], C2[1] + d1[1]];
+    if (blocked(S, C1, C2) && blocked(C1, C2, E2)) return { S, d1, d2 };
+  }
+  return null;
+}
+function shake(seed, gap) {
   const quiet = { ...CONFIG, enemy: { ...CONFIG.enemy, spawnPerSec: 0, patrol: { ...CONFIG.enemy.patrol, count: 0 }, kinds: {} } };
-  const P = 26;
-  const legs = [[1, 0], [0, 1], [1, 0], [0, -1], [1, 0], [0, 1]]; // 1 区画ごとに角を曲がる
-  const chaseFrom = (seed, gap) => {
-    const g = createGame({ seed, cfg: quiet });
-    g.begin(); g.pressStart();
-    g.hero.x = 1.5 * P; g.hero.z = 1.5 * P; // 広場の外の交差点
-    const r = { id: 70, state: 'chase', x: g.hero.x - gap, z: g.hero.z, heading: 0, speed: 30, turn: 0, lane: [0, 0], dist: gap, angle: Math.PI };
-    g.enemies.list.push(r);
-    for (let i = 0; i < 6 / DT; i++) {
-      g.setMove(...legs[Math.floor((i * DT * CONFIG.hero.speed) / P) % legs.length]);
-      g.power.add(1); // 溜めたまま動く（掴まれても）
-      g.update(DT);
-      if (r.state !== 'chase') break;
-      expect(r.speed).toBeLessThanOrEqual(CONFIG.enemy.speed + 1e-6);
-    }
-    return { state: r.state, lost: g.enemies.lostCount };
-  };
-  const far = [1, 2, 3, 4, 5, 6].map((s) => chaseFrom(s, 34));
-  expect(far.filter((r) => r.state === 'search').length).toBeGreaterThanOrEqual(1);
-  for (const r of far) if (r.state === 'search') expect(r.lost).toBe(1);
-  for (const s of [1, 2, 3]) expect(['grab', 'cling']).toContain(chaseFrom(s, 12).state);
-  // まっすぐ開けた所を逃げる主人公は撒けない（見えていれば突っ込む 32 m/s で追いつかれる）
+  const g = createGame({ seed, cfg: quiet });
+  g.begin(); g.pressStart();
+  const rt = twoCornerRoute(g.city.buildings);
+  if (!rt) return null;
+  const [sx, sz] = node(...rt.S);
+  g.hero.x = sx; g.hero.z = sz;
+  const r = { id: 70, state: 'chase', x: sx - rt.d1[0] * gap, z: sz - rt.d1[1] * gap, heading: Math.atan2(rt.d1[1], rt.d1[0]), speed: 30, turn: 0, lane: [0, 0], dist: gap, angle: 0 };
+  g.enemies.list.push(r);
+  const legs = [rt.d1, rt.d2, rt.d1, rt.d2, rt.d1];
+  for (let i = 0; i < 6 / DT && r.state === 'chase'; i++) {
+    g.setMove(...legs[Math.min(legs.length - 1, Math.floor((i * DT * CONFIG.hero.speed) / P))]);
+    g.power.add(1);
+    g.update(DT);
+  }
+  return { state: r.state, lost: g.enemies.lostCount, heard: r.heard, known: g.enemies.known };
+}
+const DAILY12 = Array.from({ length: 12 }, (_, k) => { const d = new Date(Date.UTC(2026, 10, 1) + k * 10 * 864e5); return citySeed(`${d.getUTCFullYear()}${String(d.getUTCMonth() + 1).padStart(2, '0')}${String(d.getUTCDate()).padStart(2, '0')}`); });
+
+test('R1f fix1: 28〜34 m 後ろの追う者は、角を 2 つ曲がれば、たいていの街で撒ける（見失って最後に誰かが見た所を探す）', () => {
+  expect(CH.loseSec).toBeCloseTo(1.5, 6);
+  expect(CH.hearDist).toBeGreaterThanOrEqual(8);
+  expect(CH.hearDist).toBeLessThanOrEqual(10);
+  expect(CH.blindSpeed).toBeLessThan(CONFIG.hero.speed);
+  for (const gap of [28, 34]) {
+    const runs = DAILY12.map((s) => shake(s, gap)).filter(Boolean);
+    expect(runs.length).toBe(12);
+    const shaken = runs.filter((r) => r.state === 'search');
+    expect(shaken.length, `gap ${gap}`).toBeGreaterThanOrEqual(7);
+    for (const r of shaken) { expect(r.lost).toBe(1); expect(r.heard.x).toBeCloseTo(r.known.x, 6); expect(r.heard.z).toBeCloseTo(r.known.z, 6); }
+  }
+});
+
+test('R1f fix1: 開けた所で 12 m 後ろの追う者は撒けない（見えている間は突っ込む 32 m/s で追いつく）', () => {
   const open = createEnemies(createRng(3), quietEnemy, { buildings: [] });
   const H = open.heroPos;
-  const c = { id: 71, state: 'chase', x: -30, z: 0, heading: 0, speed: 30, turn: 0, lane: [0, 0], dist: 30, angle: Math.PI };
-  open.list.push(c);
-  for (let t = 0; t < 10 && c.state === 'chase'; t += DT) { H.x += CONFIG.hero.speed * DT; open.update(DT); }
-  expect(['grab', 'cling']).toContain(c.state);
+  for (const gap of [12, 20]) {
+    H.x = 0; H.z = 0;
+    const c = { id: 71 + gap, state: 'chase', x: -gap, z: 0, heading: 0, speed: 30, turn: 0, lane: [0, 0], dist: gap, angle: Math.PI };
+    open.list.push(c);
+    for (let t = 0; t < 10 && c.state === 'chase'; t += DT) { H.x += CONFIG.hero.speed * DT; open.update(DT); }
+    expect(['grab', 'cling']).toContain(c.state);
+  }
+  expect(open.lostCount).toBe(0);
 });

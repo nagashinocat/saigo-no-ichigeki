@@ -1,0 +1,46 @@
+import { test, expect } from 'vitest';
+import { createGame } from '../../src/game/game.js';
+import { CONFIG } from '../../src/config.js';
+
+// R1f fix1（見直し Important 1）: R0（主人公から 25 m の内の軍勢は、どのフレームでも 6 m/s 以上で動く）を、主人公が動く・壁に沿って滑る・
+// 追う者が見失う・払ってよろめく場面で確かめる（enemies.test.js の R0 は主人公を広場の真ん中に止めたまま）。
+// 掴む者・群がる者は主人公と一緒に動くので、主人公に対する動き（相対位置の変わり方）で測る。ほかの者は世界での動き
+const DT = 1 / 30;
+const LEGS = [[0, -1], [1, 0], [0, 1], [1, 0], [0, -1], [-1, 0], [0.7, 0.7], [0, 1], [-1, 0], [0, -1], [-0.7, 0.7], [1, 0]];
+test('R1f fix1: 動く主人公（通りを渡り角を曲がり、壁に沿って滑る）でも、25 m の内の軍勢はどのフレームでも 6 m/s 以上（見失う・よろめく・掴む・群がるも）', () => {
+  const cfg = { ...CONFIG, puff: { ...CONFIG.puff, uses: Infinity } };
+  const bad = [], seen = { lose: 0, stagger: 0, grab: 0, cling: 0, wall: 0 };
+  let frames = 0;
+  for (const seed of [1, 2, 3, 4, 5, 6]) {
+    const g = createGame({ seed, cfg });
+    g.begin(); g.pressStart();
+    const prev = new Map();
+    for (let i = 0; i < 45 / DT && g.phase === 'playing'; i++) {
+      const [mx, mz] = LEGS[Math.floor((i * DT) / 1.5) % LEGS.length];
+      g.setMove(mx, mz);
+      if (g.grabbing >= 2) g.puff();
+      const hx = g.hero.x, hz = g.hero.z, lost0 = g.enemies.lostCount;
+      g.update(DT);
+      seen.lose += g.enemies.lostCount - lost0;
+      if (Math.hypot(g.hero.x - hx, g.hero.z - hz) < 0.6 * CONFIG.hero.speed * DT) seen.wall++; // 壁に当たって遅くなったフレーム
+      for (const e of g.enemies.list) {
+        if (e.state === 'dead' || e.x == null) { prev.delete(e.id); continue; }
+        const p = prev.get(e.id);
+        prev.set(e.id, { x: e.x, z: e.z, hx: g.hero.x, hz: g.hero.z, state: e.state });
+        if (!p || e.dist > 25) continue;
+        frames++;
+        const orbit = (e.state === 'grab' || e.state === 'cling') && (p.state === 'grab' || p.state === 'cling');
+        const moved = orbit
+          ? Math.hypot((e.x - g.hero.x) - (p.x - p.hx), (e.z - g.hero.z) - (p.z - p.hz)) / DT
+          : Math.hypot(e.x - p.x, e.z - p.z) / DT;
+        if (e.state in seen) seen[e.state]++;
+        if (e.speed < 6 || moved < 6) bad.push(`seed ${seed} t=${(i * DT).toFixed(2)} id ${e.id} ${p.state}->${e.state} speed ${e.speed.toFixed(1)} moved ${moved.toFixed(1)} dist ${e.dist.toFixed(1)}`);
+      }
+    }
+  }
+  expect(frames).toBeGreaterThan(5000);
+  expect(seen.stagger).toBeGreaterThan(0);
+  expect(seen.grab).toBeGreaterThan(500);
+  expect(seen.wall).toBeGreaterThan(30);
+  expect(bad.slice(0, 6)).toEqual([]);
+}, 120000);

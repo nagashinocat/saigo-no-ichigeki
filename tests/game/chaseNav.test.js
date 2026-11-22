@@ -35,7 +35,7 @@ test('R1f: 道しるべは足元を通らずに目標へ着き、窓の外は nu
   expect((performance.now() - t0) / 20).toBeLessThan(4);
 });
 
-test('R1f: 主人公が通りを渡り角を曲がる間、追う者（chase・よろめき）は一度もビルの足元の内に入らない（種 1〜4、毎フレーム）', () => {
+test('R1f / fix1: 主人公が通りを渡り角を曲がる間、軍勢（追う・よろめく・探す・掴む・群がる）は一度もビルの足元の内に入らない（種 1〜4、毎フレーム）', () => {
   const cfg = { ...CONFIG, puff: { ...CONFIG.puff, uses: Infinity } };
   let chaseFrames = 0;
   const bad = [];
@@ -49,7 +49,7 @@ test('R1f: 主人公が通りを渡り角を曲がる間、追う者（chase・�
       if (g.grabbing >= 2) g.puff();
       g.update(DT);
       for (const e of g.enemies.list) {
-        if (e.x == null || !['chase', 'approach', 'stagger', 'search'].includes(e.state)) continue;
+        if (e.x == null || !['chase', 'approach', 'stagger', 'search', 'grab', 'cling'].includes(e.state)) continue;
         if (e.state !== 'search') chaseFrames++;
         const b = inside(bs, e.x, e.z);
         if (b && bad.length < 5) bad.push({ seed, t: +(i * DT).toFixed(2), id: e.id, state: e.state, x: e.x, z: e.z, b: b.id });
@@ -84,4 +84,36 @@ test('R1f: ビルの向こうで見つけた者は、ビルを回り込んで主
     expect(t).toBeLessThan(2.5);
   }
   expect(tried).toBe(3);
+});
+
+// fix1（見直し Important 2）: 主人公が壁に触れて掴まれ・群がられても、回る者は壁の内へ入らない（輪をその角度で壁まで縮める）。
+// 回る速さ（主人公に対して）は 6 m/s 以上のまま（R0）
+test('R1f fix1: 壁に触れて立つ主人公を掴む者・群がる者（大きな群れ）は、回っても足元の内に入らず、主人公に対して 6 m/s 以上で回り続ける', () => {
+  const quiet = { ...CONFIG, enemy: { ...CONFIG.enemy, spawnPerSec: 0, patrol: { ...CONFIG.enemy.patrol, count: 0 }, kinds: {} } };
+  let frames = 0;
+  for (const seed of [1, 2, 3]) {
+    const g = createGame({ seed, cfg: quiet });
+    g.begin(); g.pressStart();
+    const bs = g.city.buildings;
+    const b = bs.find((x) => Math.hypot(x.x, x.z) > 30 && Math.hypot(x.x, x.z) < 70 && x.w > 10);
+    g.hero.x = b.x; g.hero.z = b.z + b.d / 2 + CONFIG.hero.radius; // 北の壁に触れる
+    for (let k = 0; k < 20; k++) {
+      const a = (k / 20) * Math.PI * 2, r = 2.5 + (k % 5) * 2;
+      g.enemies.list.push({ id: 900 + k, state: k < 6 ? 'grab' : 'cling', x: g.hero.x + Math.cos(a) * r, z: g.hero.z + Math.abs(Math.sin(a)) * r, angle: a, dist: r, heading: a + Math.PI / 2, speed: 15, turn: 0, lane: [0, 0], grabTime: 1, swarmSeq: k });
+    }
+    g.power.add(100);
+    const prev = new Map();
+    for (let i = 0; i < 90; i++) {
+      g.update(DT);
+      for (const e of g.enemies.list) {
+        if (!['grab', 'cling'].includes(e.state)) continue;
+        frames++;
+        expect(inside(bs, e.x, e.z), `seed ${seed} id ${e.id} ${e.state}`).toBeUndefined();
+        const rel = [e.x - g.hero.x, e.z - g.hero.z], p = prev.get(e.id);
+        if (p && i > 2) expect(Math.hypot(rel[0] - p[0], rel[1] - p[1]) / DT, `seed ${seed} id ${e.id}`).toBeGreaterThanOrEqual(6);
+        prev.set(e.id, rel);
+      }
+    }
+  }
+  expect(frames).toBeGreaterThan(3000);
 });

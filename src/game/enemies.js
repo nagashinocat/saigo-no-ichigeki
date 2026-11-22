@@ -171,18 +171,65 @@ export function createEnemies(rng, cfg = CONFIG, { buildings = [], patrolRng = n
   //    それも無ければ道しるべ（flowField.js、主人公の升から）で通り・広場を回り込む
   //  - 見通しがない間が loseSec 秒を越えると見失い、最後に見た所を探す者へ戻る（知らされた者と同じ。また見つけるにはライトが要る）
   //  - 追う者・よろめく者・探す者は、動いたあとビルの足元（riderPad m 広げた四角）から押し出す
+  // fix1（見直し Important 3）: 見えない追う者は今の主人公を知らない。皆で一つの「最後に誰かが主人公を見た所」（known。ライトで見えている追う者・
+  // よろめく者と、掴む者・群がる者がいる間だけ更新）へ向かい、道しるべもそこへ作る（一枚で足りる）。着いても見えなければ行き過ぎて見失う。
+  // fix1（見直し Minor 2）: 道しるべの升の表は街を作ったときに作る（最初に見えない追う者が出たフレームで引っかからない）
   const CH = E.chase ?? null;
-  let nav = null, flow = null, flowAt = null, lostCount = 0;
+  let flow = null, flowAt = null, lostCount = 0, known = null;
+  const nav = CH && buildings.length ? createNavGrid(buildings, { cell: CH.navCell, pad: CH.navPad }) : null;
+  if (nav) flow = createFlowField(nav, { half: CH.navHalf });
   const boxesAt = CH && buildings.length ? footprintGrid(buildings, CH.riderPad) : null;
+  const seeHero = () => { known = { x: H.x, z: H.z, t: time }; };
   const flowTo = () => {
-    if (!CH || !buildings.length) return null;
-    if (!nav) { nav = createNavGrid(buildings, { cell: CH.navCell, pad: CH.navPad }); flow = createFlowField(nav, { half: CH.navHalf }); }
-    if (!flowAt || (time - flowAt.t >= CH.rebuildSec && Math.hypot(H.x - flowAt.x, H.z - flowAt.z) > 0.5) || Math.hypot(H.x - flowAt.x, H.z - flowAt.z) > CH.rebuildDist) {
-      flow.build(H.x, H.z);
-      flowAt = { x: H.x, z: H.z, t: time };
+    if (!flow) return null;
+    const K = known ?? H;
+    if (!flowAt || (time - flowAt.t >= CH.rebuildSec && Math.hypot(K.x - flowAt.x, K.z - flowAt.z) > 0.5) || Math.hypot(K.x - flowAt.x, K.z - flowAt.z) > CH.rebuildDist) {
+      flow.build(K.x, K.z);
+      flowAt = { x: K.x, z: K.z, t: time };
     }
     return flow;
   };
+  // fix1（見直し Important 1）: from から (nx, nz) へ、ビルの足元（riderPad 広げた四角）に沿って滑りながら動く。壁に当たって一歩が minStep m より
+  // 短くなったら、壁に沿う向きへ minStep m 進める（R0: 止まって見えない）
+  const insideBox = (x, z) => boxesAt(x, z).find((b) => x > b.x0 && x < b.x1 && z > b.z0 && z < b.z1);
+  function slideTo(e, nx, nz, minStep = 0) {
+    if (!boxesAt) { e.x = nx; e.z = nz; return; }
+    pushOut(e);
+    const x0 = e.x, z0 = e.z, dx = nx - x0, dz = nz - z0;
+    let bx = false, bz = false, b;
+    e.x = x0 + dx;
+    if ((b = insideBox(e.x, e.z))) { e.x = dx > 0 ? b.x0 : b.x1; bx = true; }
+    e.z = z0 + dz;
+    if ((b = insideBox(e.x, e.z))) { e.z = dz > 0 ? b.z0 : b.z1; bz = true; }
+    if (Math.hypot(e.x - x0, e.z - z0) >= minStep || (!bx && !bz)) return;
+    // 壁に沿う向き（ふさがれていない軸）へ minStep。その向きもふさがっていれば反対へ。角（両方ふさがった）なら 4 つの向きを順に
+    const cx = e.x, cz = e.z, sx = Math.sign(dx) || 1, sz = Math.sign(dz) || 1;
+    const tries = bx && !bz ? [[cx, z0 + sz * minStep], [cx, z0 - sz * minStep]]
+      : bz && !bx ? [[x0 + sx * minStep, cz], [x0 - sx * minStep, cz]]
+      : [[x0, z0 + sz * minStep], [x0 + sx * minStep, z0], [x0, z0 - sz * minStep], [x0 - sx * minStep, z0]];
+    for (const [tx, tz] of tries) if (!insideBox(tx, tz)) { e.x = tx; e.z = tz; return; }
+  }
+  // fix1（見直し Important 2）: 主人公から角度 a の向きに、ビルの足元（riderPad 広げた四角）に当たるまでの距離（r を上限）
+  let wallBoxes = [], wallAt = null;
+  function wallLimit(a, r) {
+    if (!boxesAt) return r;
+    const nb = nearBuildings();
+    if (nb !== wallAt) { wallAt = nb; const p = CH.riderPad; wallBoxes = nb.map((b) => ({ x0: b.x - b.w / 2 - p, x1: b.x + b.w / 2 + p, z0: b.z - b.d / 2 - p, z1: b.z + b.d / 2 + p })); }
+    const c = Math.cos(a), s = Math.sin(a);
+    let lim = r;
+    for (const b of wallBoxes) {
+      let t0 = 0, t1 = lim;
+      for (const [o, d, lo, hi] of [[H.x, c, b.x0, b.x1], [H.z, s, b.z0, b.z1]]) {
+        if (Math.abs(d) < 1e-9) { if (o <= lo || o >= hi) { t0 = Infinity; break; } continue; }
+        let ta = (lo - o) / d, tb = (hi - o) / d;
+        if (ta > tb) [ta, tb] = [tb, ta];
+        t0 = Math.max(t0, ta); t1 = Math.min(t1, tb);
+        if (t0 > t1) break;
+      }
+      if (t0 <= t1 && t0 > 0) lim = Math.min(lim, t0 - 0.05);
+    }
+    return Math.max(0.3, lim);
+  }
   // ビルの足元（riderPad m 広げた四角）の内なら、いちばん近い縁へ押し出す（壁に沿って滑る）
   function pushOut(e) {
     if (!boxesAt) return;
@@ -203,15 +250,17 @@ export function createEnemies(rng, cfg = CONFIG, { buildings = [], patrolRng = n
   function watch(e) {
     const d = Math.hypot(H.x - e.x, H.z - e.z);
     e.sees = seesHero(e, H, nearBuildings(), cfg) || (H.dashing == null && d <= CH.hearDist && lineOfSight(e.x, e.z, nearBuildings(), E.sightMargin, H.x, H.z));
-    if (e.sees || e.seenT == null) { e.seenT = time; e.lastSeen = { x: H.x, z: H.z, vx: H.vx ?? 0, vz: H.vz ?? 0 }; e.lastSeenReached = false; }
+    if (e.sees || e.seenT == null) { e.seenT = time; e.lastSeen = { x: H.x, z: H.z, vx: H.vx ?? 0, vz: H.vz ?? 0 }; }
+    if (e.sees || !known) seeHero();
     return e.sees;
   }
   // 見失う: 最後に見た所を探す者へ（知らせは伝えない）
   function lose(e) {
     e.state = 'search'; e.alert = true; e.searchTime = 0; e.relayAt = null;
-    e.heard = { x: e.lastSeen?.x ?? H.x, z: e.lastSeen?.z ?? H.z, t: time }; e.hops = AL?.hops ?? 0;
+    const K = known ?? e.lastSeen ?? H;
+    e.heard = { x: K.x, z: K.z, t: time }; e.hops = AL?.hops ?? 0;
     e.speed = Math.max(e.speed ?? 0, E.searchSpeed * speedMulOf(e, cfg) * 0.6);
-    delete e.sees; e.seenT = null;
+    delete e.sees; e.seenT = null; e.reachedAt = null;
     resumeRoad(e);
     lostCount++;
   }
@@ -219,11 +268,13 @@ export function createEnemies(rng, cfg = CONFIG, { buildings = [], patrolRng = n
   // そのままの向きで行き過ぎる（角を曲がられれば外れる: 撒ける。ビルに当たれば押し出されて壁に沿う）。速さは blindSpeed（止まらない）
   function navStep(e, dt) {
     let tx = H.x, tz = H.z, direct = !buildings.length;
-    const ls = e.lastSeen;
-    if (ls) {
-      if (!e.lastSeenReached && Math.hypot(ls.x - e.x, ls.z - e.z) < CH.reachLastSeen) e.lastSeenReached = true;
-      if (!e.lastSeenReached) {
-        if (lineOfSight(e.x, e.z, nearBuildings(), CH.navPad, ls.x, ls.z)) { tx = ls.x; tz = ls.z; direct = true; }
+    const K = known ?? e.lastSeen;
+    if (K) {
+      // 最後に誰かが見た所（皆で一つ）。そこが新しくなったら、また向かう
+      if (e.reachedAt !== (known?.t ?? -1) && Math.hypot(K.x - e.x, K.z - e.z) < CH.reachLastSeen) e.reachedAt = known?.t ?? -1;
+      if (e.reachedAt !== (known?.t ?? -1)) {
+        tx = K.x; tz = K.z;
+        direct = lineOfSight(e.x, e.z, nearBuildings(), CH.navPad, K.x, K.z);
       } else { // 着いても見えない: そのままの向きで行き過ぎる（角を曲がられれば外れる）
         tx = e.x + Math.cos(e.heading) * CH.guessDist; tz = e.z + Math.sin(e.heading) * CH.guessDist; direct = true;
       }
@@ -233,12 +284,10 @@ export function createEnemies(rng, cfg = CONFIG, { buildings = [], patrolRng = n
       if (p) { tx = p.x; tz = p.z; }
     }
     steer(e, Math.atan2(tz - e.z, tx - e.x), CH.navTurnRate, dt);
-    // 見えない間は blindSpeed m/s へ落とす（探しながら走る。主人公より少し遅い: 角を曲がって見えなくなれば、速さで振り切れる）
-    const vmax = Math.min(approachSpeed(e.dist, cfg), CH.blindSpeed) * speedMulOf(e, cfg);
+    // 見えない間は blindSpeed m/s へ落とす（探しながら走る。主人公より遅い: 角を曲がって見えなくなれば、速さで振り切れる）
+    const vmax = Math.max(6.5, Math.min(approachSpeed(e.dist, cfg), CH.blindSpeed) * speedMulOf(e, cfg));
     e.speed = e.speed > vmax ? Math.max(vmax, e.speed - E.brake * dt) : Math.min(vmax, Math.max(e.speed, 0) + E.chaseAccel * dt);
-    e.x += Math.cos(e.heading) * e.speed * dt;
-    e.z += Math.sin(e.heading) * e.speed * dt;
-    pushOut(e);
+    slideTo(e, e.x + Math.cos(e.heading) * e.speed * dt, e.z + Math.sin(e.heading) * e.speed * dt, e.speed * dt * 0.9);
     place(e);
   }
 
@@ -412,7 +461,7 @@ export function createEnemies(rng, cfg = CONFIG, { buildings = [], patrolRng = n
     e.spotClock += E.spotEvery;
     if (e.dist <= E.spotDist && seesHero(e, H, nearBuildings(), cfg)) {
       e.state = 'chase'; e.spotT = 0;
-      e.sees = true; e.seenT = time; e.lastSeen = { x: H.x, z: H.z, vx: H.vx ?? 0, vz: H.vz ?? 0 }; e.lastSeenReached = false;
+      e.sees = true; e.seenT = time; e.lastSeen = { x: H.x, z: H.z, vx: H.vx ?? 0, vz: H.vz ?? 0 }; if (CH) seeHero();
       if (e.patrol) { e.hunting = true; e.alert = true; }
       delete e.heard; e.relayAt = null;
       e.recall = AL?.callEvery ?? Infinity;
@@ -499,13 +548,18 @@ export function createEnemies(rng, cfg = CONFIG, { buildings = [], patrolRng = n
   // 掴んだ者（grab）・群がる者（cling）: 主人公のまわりを左回り（角度が増える向き）に回り続ける。輪の半径 R より外にいれば
   // swarm.inSpeed で内へ寄る（外へは出ない）。回る速さは掴む者 orbitSpeed、群がる者 swarm.speed（m/s）。
   // M1: 距離と向き（e.dist / e.angle）は前のフレームの主人公から見たもの。今の主人公のまわりに置くので、主人公が動いた分だけついてくる
+  // fix1（見直し Important 2）: 主人公が壁のそばにいると、輪はその角度で壁まで縮める（wallLimit）。輪の大きさそのもの（e.orbitR）は覚えておき、
+  // 壁を過ぎれば元の輪へ戻る。回る速さは縮めた輪で v のまま（主人公に対して 6 m/s 以上: R0）
   function orbitStep(e, dt, R, v) {
-    const r0 = e.dist;
+    const r0 = e.orbitR ?? e.dist, rr0 = e.dist;
     const r = r0 > R ? Math.max(R, r0 - E.swarm.inSpeed * dt) : r0;
-    const w = v / Math.max(r, 0.5);
+    e.orbitR = r;
+    const w = v / Math.max(Math.min(r, wallLimit(e.angle, r)), 0.5);
     const a = e.angle + w * dt;
-    e.x = H.x + Math.cos(a) * r; e.z = H.z + Math.sin(a) * r;
-    const radial = dt > 0 ? (r0 - r) / dt : 0;
+    // 壁を過ぎて輪が戻るときは、外へ swarm.inSpeed m/s まで（ぽんと跳ねない）
+    const rr = Math.min(r, wallLimit(a, r), rr0 + E.swarm.inSpeed * dt);
+    e.x = H.x + Math.cos(a) * rr; e.z = H.z + Math.sin(a) * rr;
+    const radial = dt > 0 ? (rr0 - rr) / dt : 0;
     e.speed = Math.hypot(v, radial);
     e.heading = wrap(a + Math.PI / 2 + Math.atan2(radial, v));
     e.turn = w;
@@ -523,11 +577,12 @@ export function createEnemies(rng, cfg = CONFIG, { buildings = [], patrolRng = n
     const rx = e.x - H.x, rz = e.z - H.z;
     const r0 = Math.max(Math.hypot(rx, rz), 0.5), r = r0 + out * dt;
     const a = Math.atan2(rz, rx) + (S.spin / r) * dt;
-    e.x = H.x + Math.cos(a) * r; e.z = H.z + Math.sin(a) * r;
-    e.speed = Math.hypot(out, S.spin);
+    // fix1（見直し Important 1）: 押し戻しが壁に当たっても、壁に沿って spin m/s 以上で動く（R0）
+    const px = e.x, pz = e.z;
+    slideTo(e, H.x + Math.cos(a) * r, H.z + Math.sin(a) * r, S.spin * dt);
+    e.speed = Math.max(Math.hypot(out, S.spin), dt > 0 ? Math.hypot(e.x - px, e.z - pz) / dt : 0);
     e.heading = wrap(a + Math.atan2(S.spin, out));
     e.turn = S.spin / r;
-    pushOut(e);
     place(e);
     if (CH) watch(e);
     // M2（R1d の持ち越し「よろめきからすぐ突っ込み直す」）: 突っ込み直す速さは探す速さから（よろめきの遅い速さから上げ直さない）。
@@ -581,11 +636,12 @@ export function createEnemies(rng, cfg = CONFIG, { buildings = [], patrolRng = n
       }
       for (const e of list) {
         if (e.state === 'dead') continue;
+        if (e.state !== 'grab' && e.state !== 'cling') e.orbitR = null;
         if (e.state === 'stagger') { staggerStep(e, dt); e.lean = (e.lean ?? e.turn) + (e.turn - (e.lean ?? e.turn)) * (1 - Math.exp(-dt / LEAN_SEC)); continue; }
         const mul = speedMulOf(e, cfg);
         if (e.state === 'grab' || e.state === 'cling') { // 掴んでからの秒（見た目が主人公の横へ寄るのに使う）
           e.grabTime = (e.grabTime ?? 0) + dt;
-          e.seenT = time; e.lastSeen = { x: H.x, z: H.z, vx: H.vx ?? 0, vz: H.vz ?? 0 }; // R1f: 掴む者・群がる者は主人公の上にいる（見失わない）
+          e.seenT = time; e.lastSeen = { x: H.x, z: H.z, vx: H.vx ?? 0, vz: H.vz ?? 0 }; seeHero(); // R1f: 掴む者・群がる者は主人公の上にいる（見失わない）
           if (e.unpile != null) e.unpile += dt;
           if (e.state === 'grab') orbitStep(e, dt, E.grabRange, E.orbitSpeed * mul);
           else orbitStep(e, dt, swarmRing(e.layer, cfg), E.swarm.speed * mul);
@@ -607,7 +663,7 @@ export function createEnemies(rng, cfg = CONFIG, { buildings = [], patrolRng = n
         if (e.state === 'chase' && CH) {
           place(e);
           sees = watch(e);
-          if (!sees && time - e.seenT > CH.loseSec) { lose(e); e.lean = (e.lean ?? e.turn) + (e.turn - (e.lean ?? e.turn)) * (1 - Math.exp(-dt / LEAN_SEC)); continue; }
+          if (!sees && time - e.seenT > CH.loseSec) { lose(e); searchStep(e, dt); e.lean = (e.lean ?? e.turn) + (e.turn - (e.lean ?? e.turn)) * (1 - Math.exp(-dt / LEAN_SEC)); continue; }
         }
         if (e.state === 'chase' && !sees) navStep(e, dt);
         else if (e.state === 'chase' && e.dist <= ring) { // もう輪の内側（大きな群れの外の輪・試しの置き方）: その場から回り始める
@@ -655,7 +711,7 @@ export function createEnemies(rng, cfg = CONFIG, { buildings = [], patrolRng = n
         e.state = 'search'; e.alert = true; e.searchTime = 0; e.relayAt = null;
         e.heard = { x: at.x, z: at.z, t: time }; e.hops = AL?.hops ?? 0;
         e.speed = Math.max(e.speed ?? 0, E.searchSpeed * speedMulOf(e, cfg) * 0.6);
-        delete e.sees; e.seenT = null;
+        delete e.sees; e.seenT = null; e.reachedAt = null;
         resumeRoad(e);
         n++;
       }
@@ -663,6 +719,8 @@ export function createEnemies(rng, cfg = CONFIG, { buildings = [], patrolRng = n
     },
     // R1f: 見通しがなくなって見失った（撒かれた）者の数の合計（増えるだけ。隠れるで見失った者は数えない）
     get lostCount() { return lostCount; },
+    // fix1: 最後に誰かが主人公を見た所 { x, z, t }（まだ誰も見ていなければ null）
+    get known() { return known; },
     // R1f: 道しるべ（作り直した回数を試しで見る。まだ作っていなければ null）
     get flow() { return flow; },
     // 掴んでいる者の吸う力の合計（ふつうの者 1 人を 1。吸う者 2.5、大物 4）。update のあとの値
