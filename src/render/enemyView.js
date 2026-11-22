@@ -6,6 +6,7 @@ import { buildHeroBody, HERO_WIND } from './heroBody.js';
 import { buildRiderBikeGeometry, RIDER } from './hoverBike.js';
 import { bikePose, BIKE } from './bikePose.js';
 import { createSearchlight } from './searchlight.js';
+import { createHeadlights } from './headlights.js';
 
 const STAGGER_SEC = CONFIG.enemy.stagger?.sec ?? 0.5;
 const ORIGIN = Object.freeze({ x: 0, z: 0 });
@@ -281,6 +282,10 @@ void main() {
   // R1: 縁の色で種類（重い者・大物は琥珀、吸う者は赤紫）
   vec3 rimC = vMk > 2.5 ? uTrim * 1.6 : vMk > 1.5 ? uDrain : vMk > 0.5 ? uTrim : vec3(0.75, 0.8, 0.95);
   vec3 col = mix(vec3(0.03, 0.035, 0.05), rimC, rim);
+  // M2（R1 の見直しの持ち越し: 種類を色だけでなく形でも）: 重い者は縁が二重、吸う者は目の下に小さな丸、大物は目の上に菱形
+  if (vMk > 0.5 && vMk < 1.5) col = mix(col, rimC, smoothstep(0.46, 0.53, r) * (1.0 - smoothstep(0.58, 0.65, r)));
+  if (vMk > 1.5 && vMk < 2.5) col = mix(col, uDrain * 1.4, 1.0 - smoothstep(0.14, 0.22, length(q - vec2(0.0, 0.38))));
+  if (vMk > 2.5) col = mix(col, uTrim * 1.8, 1.0 - smoothstep(0.2, 0.27, abs(q.x) + abs(q.y + 0.42)));
   float eye = (1.0 - smoothstep(0.1, 0.22, abs(q.y + 0.05))) * (1.0 - smoothstep(0.45, 0.6, abs(q.x))) * step(0.08, abs(q.x));
   col = mix(col, uEye * (2.0 + 2.0 * uGlow), eye);
   gl_FragColor = vec4(col, uAlpha * vFar * (1.0 - smoothstep(0.92, 1.0, r)));
@@ -292,7 +297,7 @@ void main() {
 // 種類 0 / 1: 尾の輪から後ろへ伸びる光の尾（0 は水平の帯で上空から、1 は縦の帯で横から見える）。長さは速さに比例（大きく描いても
 // 長さは本当の m のまま、幅だけ大きく描く）。曲がるときは、通ってきた道すじ（横へ 曲がり · 距離² / 2）に沿って曲がる。
 // 種類 2: 乗り手の肩の脇を後ろへ流れる風の細い線（速いときだけ）
-export const TRAIL = { len: 7.5, width: 0.3, wind: 0.55 };
+export const TRAIL = { len: 7.5, width: 0.3, wind: 0.55, heavyWidth: 2.0 };
 const TRAIL_VERT = /* glsl */`
 attribute vec3 aTr;
 attribute vec4 aAnim;
@@ -314,7 +319,7 @@ void main() {
     // 尾: 尾の輪（0, 0.3, -1.32）から後ろへ
     float len = ${TRAIL.len.toFixed(3)} * sp;
     float s = t * len;
-    float w = ${TRAIL.width.toFixed(3)} * mix(1.0, 0.25, t) * k;
+    float w = ${TRAIL.width.toFixed(3)} * mix(1.0, 0.25, t) * k * (aKind.x > 0.5 && aKind.x < 1.5 ? ${TRAIL.heavyWidth.toFixed(3)} : 1.0); // M2: 重い者の尾は太い
     vec3 base = vec3(0.0, 0.3, -1.32) * k;
     // 曲がる道すじ（曲がり aMove.y 1/m）の円弧に沿って後ろへ（主人公のまわりを回る者の尾が輪に沿う。曲がりが小さければ放物線と同じ）
     float a = aMove.y * s;
@@ -499,6 +504,8 @@ export function createEnemyView(scene, tier, { sunDir = new THREE.Vector3(0.8, 0
 
   // R1: 大物の探照灯
   const searchlight = createSearchlight(group);
+  // M2: 前方ライトの光の扇・知らせの輪・吸う者の脈打つ輪（headlights.js。全部で 2 つの InstancedMesh）
+  const headlights = createHeadlights(group, { capacity: CAPACITY, drainColor: DRAIN_COLOR.high });
 
   // 遠くの者の目印（見えている者と、隠れた者）
   const markerPos = new THREE.BufferAttribute(new Float32Array(CAPACITY * 3), 3);
@@ -534,14 +541,14 @@ export function createEnemyView(scene, tier, { sunDir = new THREE.Vector3(0.8, 0
   group.add(hero, heroXray);
 
   const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _p = new THREE.Vector3(), _s = new THREE.Vector3(1, 1, 1), _e = new THREE.Euler();
-  let time = 0, heroYaw = 0, heroLift = 0, heroLean = 0;
+  let time = 0, heroYaw = 0, heroLift = 0, heroLean = 0, heroCrouch = 0;
   // 演出の一人（最後の一発の軍勢の後ろのカットのいちばん手前の乗り手）: { id, pose, group }。その一人（と group の乗り手）は本当の場所ではなく pose で描く（cinematic.js が決める）
   let focus = null, focusIds = null;
   // その一人の専用の体（riderBody.js、距離の場の網。setRiderBody で渡す）。同じ材質で、インスタンス 1 つ
   let focusMesh = null, focusAnim = null, focusPose = null;
 
   return {
-    group, hero, mesh, shadows, trails, tier, searchlight, // 形は画質の段では変えない（透かしの重ねだけ high のみ。low は光の溜まりを大きく明るく）
+    group, hero, mesh, shadows, trails, tier, searchlight, headlights, // 形は画質の段では変えない（透かしの重ねだけ high のみ。low は光の溜まりを大きく明るく）
     heroBuildMs: body.buildMs, // 主人公の体を組み立てた時間（ms。同じ段の 2 回目からは組み立てずに使い回す）
     // 画質の段が途中で下がったとき（主人公の体は起動したときの段の細かさのまま。組み直さない）
     setTier(t) { curTier = t; xray.visible = aidsOn && xrayFor(t); applyTier(t); },
@@ -609,6 +616,8 @@ export function createEnemyView(scene, tier, { sunDir = new THREE.Vector3(0.8, 0
       // 主人公を探す者を先に、街を見回る者（S8、e.patrol）をあとに並べる。目印と透かし（上空カメラの補助）は探す者だけ
       // （見回る者は主人公を狙わないので、目印で脅威に見せない）
       let nHunt = 0, bossPose = null;
+      headlights.begin(time, pointScale, pixelRatio);
+      headlights.setVisible(aids);
       for (const pass of [false, true]) {
         for (const e of enemies) {
           if (n >= CAPACITY) break;
@@ -618,6 +627,7 @@ export function createEnemyView(scene, tier, { sunDir = new THREE.Vector3(0.8, 0
           if (!b) continue; // 吹き飛んで消えた
           place(b, e.id, e.state === 'dead' ? 1 - (e.deadTime ?? 0) / BIKE.deadFling : 1, e.kind ?? null, e.state === 'stagger' ? 1 - Math.min(1, (e.staggerT ?? 0) / STAGGER_SEC) : 0);
           if (e.kind === 'boss') bossPose = { e, b };
+          if (aids) headlights.add(e, b, groundHeight(Math.hypot(b.x - heroPos.x, b.z - heroPos.z), fronts), heroPos);
         }
         if (!pass) nHunt = n;
       }
@@ -639,6 +649,7 @@ export function createEnemyView(scene, tier, { sunDir = new THREE.Vector3(0.8, 0
           focusAnim.needsUpdate = focusPose.needsUpdate = true;
         } else if (n < CAPACITY) place({ anchor: 0, ...fp }, focus.id ?? 0.5, 1);
       }
+      headlights.end();
       mesh.count = shadows.count = trails.count = n;
       xray.count = nHunt;
       markerGeo.setDrawRange(0, nHunt);
@@ -649,7 +660,10 @@ export function createEnemyView(scene, tier, { sunDir = new THREE.Vector3(0.8, 0
       anim.needsUpdate = pose.needsUpdate = shadowAttr.needsUpdate = move.needsUpdate = true;
       _p.set(heroPos.x, heroLift, heroPos.z); // 主人公は浮いている（足元の地面が下がっても y=0。導入の TAP START のあとだけ下から浮き上がる）
       // M1: 進む向きを向き、速さに応じて前へ傾く（heroLean）
-      hero.setMatrixAt(0, _m.compose(_p, _q.setFromEuler(_e.set(heroLean, heroYaw, 0, 'YXZ')), _s));
+      // M2: 物陰でしゃがむ（体を縦に縮め、少し前へかがむ）
+      _s.set(1, 1 - 0.32 * heroCrouch, 1);
+      hero.setMatrixAt(0, _m.compose(_p, _q.setFromEuler(_e.set(heroLean + 0.35 * heroCrouch, heroYaw, 0, 'YXZ')), _s));
+      _s.set(1, 1, 1);
       hero.instanceMatrix.needsUpdate = true;
     },
     // 演出の一人: { id, pose: { x, y, z, yaw, pitch, roll, reach, thrust, keep, head } }（pose は毎フレーム読む）。null でやめる。
@@ -679,6 +693,8 @@ export function createEnemyView(scene, tier, { sunDir = new THREE.Vector3(0.8, 0
     setHeroYaw(yaw) { heroYaw = yaw; },
     // 主人公の高さのずれ（m。S6 の TAP START で浮き上がる間だけ。ふだん 0）
     setHeroLift(y) { heroLift = Number.isFinite(y) ? y : 0; },
+    // M2: 物陰でしゃがむ強さ（0〜1）
+    setHeroCrouch(k) { heroCrouch = Number.isFinite(k) ? Math.min(1, Math.max(0, k)) : 0; },
     // M1: 前への傾き（rad。進む向きへ）
     setHeroLean(a) { heroLean = Number.isFinite(a) ? a : 0; },
     get heroYaw() { return heroYaw; },

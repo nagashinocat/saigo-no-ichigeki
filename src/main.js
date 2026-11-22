@@ -26,6 +26,7 @@ import { createRng } from './rng.js';
 import { createControls, keyVector, MOVE_KEYS } from './input/controls.js';
 import { createJoystickView } from './ui/joystick.js';
 import { createFlick } from './input/flick.js';
+import { createDashStreak } from './render/dashStreak.js';
 import { stickMarks } from './ui/stickMarks.js';
 import { bindPointerInput, eventMs } from './input/bindDom.js';
 import { clearThreshold } from './game/charge.js';
@@ -653,6 +654,9 @@ function syncHero() {
   if (heroMoved) enemyView.setHeroYaw(Math.atan2(Math.cos(h.heading), Math.sin(h.heading)));
   enemyView.setHeroLean(h.lean);
 }
+// M2: 隠れるの滑り込みの光の筋と、物陰でしゃがむ・足元の影（毎フレーム）
+const dashStreak = createDashStreak(cityScene);
+function syncHide(dt) { enemyView.setHeroCrouch(game.phase === 'playing' ? dashStreak.update(game.hero, dt) : dashStreak.update({ ...game.hero, hidden: false, dashing: null }, dt)); }
 views.follow(game.hero, { snap: true });
 
 // ゲームを gdt 秒進める（一度に進めるのは最大 0.1 秒ずつ。演出は時間を一気に進めることがある）
@@ -720,6 +724,7 @@ function simulate(dt) {
   game.setMove(stick.x, stick.y);
   if (cdt === null) game.update(dt); else stepGame(cdt);
   syncHero();
+  syncHide(dt);
   const wdt = cinematic.active ? cinematic.worldDt : dt;
   explosionView.setBirthScale(cinematic.active ? cinematic.blastBirthScale : 1);
   explosionView.setCoreScale(cinematic.active ? cinematic.blastCoreScale : 1);

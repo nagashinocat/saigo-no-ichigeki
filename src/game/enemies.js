@@ -342,9 +342,10 @@ export function createEnemies(rng, cfg = CONFIG, { buildings = [], patrolRng = n
   // from が alert.radius m の内の探す者（見回る者も）へ、主人公の今の位置（最後に見えた所）を知らせる。hops は from の段（見つけた者は 0）。
   // 知らされた者は heard を覚え（もっと新しい知らせなら書き換える）、hops + 1 < alert.hops なら relayDelay 秒あとに次へ伝える。
   // chase・掴む・群がる・よろめく者は変わらない（自分で見つけた者は今の主人公を追い続ける。持ち主 13:36）
-  function call(from, hops) {
+  // flash: 光って知らせの輪を出す（見つけた瞬間だけ。見えている間の知らせ直しは光らない）
+  function call(from, hops, flash = true) {
     if (!AL || H.hidden) return;
-    from.callT = 0;
+    if (flash) from.callT = 0;
     const known = { x: H.x, z: H.z, t: time };
     const R2 = AL.radius * AL.radius;
     for (const o of list) {
@@ -490,7 +491,7 @@ export function createEnemies(rng, cfg = CONFIG, { buildings = [], patrolRng = n
           if (e.recall > 0) continue;
           e.recall += AL.callEvery;
           const sees = !H.hidden && (e.state !== 'chase' || (e.dist <= E.spotDist && e.x != null && lineOfSight(e.x, e.z, nearBuildings(), E.sightMargin, H.x, H.z)));
-          if (sees) call(e, 0);
+          if (sees) call(e, 0, false);
         }
       }
       for (const e of list) {
