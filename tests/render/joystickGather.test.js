@@ -59,7 +59,7 @@ test('R1d: スティックを画面の遠くへ滑らせて主人公を動かし
   dom.advance(0.25);
   // スティックの向き（画面の px のずれ）: 曲がり角を何度も曲がる道すじ
   const legs = [[0, -50], [50, 0], [0, -50], [-50, 0], [0, -50], [50, 0], [0, 50], [50, 0]];
-  let worstLogic = 0, worstDrawn = 0, worstAnchor = 0, frames = 0, seenFar = 0, nearStick = 0;
+  let worstOne = -Infinity, worstLogic = 0, worstDrawn = 0, worstAnchor = 0, frames = 0, seenFar = 0, nearStick = 0;
   const ringMax = swarmRing(CONFIG.enemy.swarm.perRing * (CONFIG.enemy.swarm.maxRing + 1)) + 0.5;
   for (let i = 0; i < 40 / DT; i++) {
     const [dx, dy] = legs[Math.floor(i / 60) % legs.length];
@@ -105,6 +105,9 @@ test('R1d: スティックを画面の遠くへ滑らせて主人公を動かし
       if (a > 0.5) worstAnchor = Math.max(worstAnchor, Math.hypot(C.x - hp.x, C.z - hp.z));
       const d = o.clone().add(o.clone().sub(anchor).multiplyScalar(boost - 1)); // 描かれる中心
       drawn.push(d);
+      // 一人ずつ: 描かれる所は、主人公を中心に判定の位置を boost 倍までに広げた所（主人公から離れた所へずれない）
+      const lim = boost * Math.hypot(o.x - hp.x, o.z - hp.z) + 1e-3;
+      worstOne = Math.max(worstOne, Math.hypot(d.x - hp.x, d.z - hp.z) - lim);
     }
     if (drawn.length < 2) continue;
     frames++;
@@ -114,11 +117,12 @@ test('R1d: スティックを画面の遠くへ滑らせて主人公を動かし
     if (Math.hypot(stickW.x - hp.x, stickW.z - hp.z) > 20) seenFar++;
     if (toStick < toHero) nearStick++;
   }
-  if (process.env.R1D_LOG) console.log({ frames, seenFar, worstLogic, worstAnchor, worstDrawn, nearStick });
+  if (process.env.R1D_LOG) console.log({ worstOne, frames, seenFar, worstLogic, worstAnchor, worstDrawn, nearStick });
   expect(frames).toBeGreaterThan(60); // 掴む者が何人もいて、主人公が中心から離れた所を十分に見た
   expect(seenFar).toBeGreaterThan(60); // スティックの映る点は主人公から 20 m より遠い
   expect(worstLogic).toBeLessThanOrEqual(0); // 判定: 今の主人公の群がる輪の内
   expect(worstAnchor).toBeLessThan(1); // 大きく描く中心は主人公
-  expect(worstDrawn).toBeLessThan(4); // 描かれた群れの真ん中は主人公の描かれる位置のまわり（輪 × boost の内）
+  expect(worstOne).toBeLessThanOrEqual(0);
+  expect(worstDrawn).toBeLessThan(8); // 描かれた群れの真ん中は主人公の描かれる位置のまわり（輪 × boost の内。直す前は 87 m 先）
   expect(nearStick).toBe(0); // スティックの所へは寄らない
 });
