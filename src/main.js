@@ -624,7 +624,8 @@ let heroMoved = false;
 function syncHero() {
   const h = game.hero;
   heroAura.group.position.x = h.x; heroAura.group.position.z = h.z;
-  if (game.phase !== 'playing') return;
+  // 放ったあと（演出・リプレイ・結末）は傾けずに浮かぶ
+  if (game.phase !== 'playing') { enemyView.setHeroLean(0); return; }
   // 動き出すまでは今までどおりカメラの方を向く。動いたら進む向き（heading は x 軸から z 軸へ → 体の向き yaw は z 軸から x 軸へ）
   if (Math.hypot(h.vx, h.vz) > 0.5) heroMoved = true;
   if (heroMoved) enemyView.setHeroYaw(Math.atan2(Math.cos(h.heading), Math.sin(h.heading)));

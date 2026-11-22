@@ -61,7 +61,7 @@ export function createHeroMotion(city, cfg = CONFIG) {
       move.z = Number.isFinite(z) ? z * k : 0;
     },
     // 止める（放った瞬間から、主人公は爆心にとどまる）
-    stop() { hero.vx = 0; hero.vz = 0; move.x = 0; move.z = 0; },
+    stop() { hero.vx = 0; hero.vz = 0; hero.lean = 0; move.x = 0; move.z = 0; },
     update(dt, { active = true, grabbing = 0 } = {}) {
       if (!(dt > 0)) return;
       const v = H.speed * heroSpeedFactor(grabbing, cfg);
