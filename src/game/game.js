@@ -18,7 +18,9 @@ const MAX_DT = 0.1;
 export function createGame({ seed, cfg = CONFIG }) {
   const city = generateCity(seed, cfg);
   // 見回る者（S8）は別の乱数（探して掴みに来る者の湧き方・動きは前のまま）
-  // R1: 種類（重い者・吸う者）と大物の乱数も別（typeRng）
+  // R1: 種類（重い者・吸う者）と大物の乱数も別（typeRng）。
+  // TODO(動く主人公の仕事): ここで createEnemies に { heroPos }（主人公の位置 { x, z } の同じ物）を渡し、主人公が動くたびに書き換える。
+  // 種類の仕組み（よろめき・大物の知らせ）と探照灯（main.js が enemies.heroPos を enemyView.sync へ渡す）はもうそれを使う
   const enemies = createEnemies(createRng(seed + 1), cfg, { buildings: city.buildings, patrolRng: createRng((seed ^ 0x9a7b1) >>> 0), typeRng: createRng((seed * 0x2c1b3c6d + 0x51ed27) >>> 0) });
   const power = createPower(cfg.power);
   const charge = createCharge(power, cfg);

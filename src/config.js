@@ -68,7 +68,8 @@ export const CONFIG = {
     //  heavy（重い者）: after 秒からの探す者の share。払う 2 回ではがれる（1 回目は後ろへよろめく）。速さ ×speedMul
     //  drainer（吸う者）: after 秒からの探す者の share。掴んでいる間、drainPerSec の drainMul 倍を吸う
     //  boss（大物）: at 秒に 1 体だけ（気配を感じた者として主人公へ）。払う 3 回、吸う ×4、大きく描き、探照灯を持つ
-    // 種類の乱数は探す者の乱数とは別（game.js の typeRng）。湧く場所・動きの乱数の並びは前のまま
+    // 種類の乱数は探す者の乱数とは別（game.js の typeRng）。探す者の乱数の並びが前と同じなのは種類のある者が初めて湧くまで
+    // （重い者は 20 秒から。速さが違い、道を選ぶ時刻がずれる。大物は 49 秒）
     kinds: {
       heavy: { share: 0.15, after: 20, hp: 2, speedMul: 0.8, drainMul: 1 },
       drainer: { share: 0.15, after: 30, hp: 1, speedMul: 1, drainMul: 2.5 },

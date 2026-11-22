@@ -495,7 +495,7 @@ test('R0: 残り 20 秒（patrol.joinAt）になると、広場の近く（patro
 // （見つける・突っ込む・掴む・群がる・掴み直すのどれでも止まって見えない。掴む者は主人公のまわりを回る）。
 // 速さは e.speed と、実際に動いた距離 / dt の両方で確かめる
 test('R0: 主人公から 25 m 以内の軍勢は、どのフレームでも 6 m/s 以上で動く（掴んでいる者・群がる者も）', () => {
-  let frames = 0, grabFrames = 0, clingFrames = 0;
+  let frames = 0, grabFrames = 0, clingFrames = 0, heavyOrbit = 0, heavyStagger = 0, bossFrames = 0;
   for (const seed of [1, 2, 3]) for (const puff of [false, true]) {
     const g = createGame({ seed });
     g.pressStart();
@@ -513,6 +513,9 @@ test('R0: 主人公から 25 m 以内の軍勢は、どのフレームでも 6 m
         frames++;
         if (e.state === 'grab') grabFrames++;
         if (e.state === 'cling') clingFrames++;
+        if (e.kind === 'heavy' && (e.state === 'grab' || e.state === 'cling')) heavyOrbit++;
+        if (e.kind === 'heavy' && e.state === 'stagger') heavyStagger++;
+        if (e.kind === 'boss') bossFrames++;
         const moved = Math.hypot(e.x - p[0], e.z - p[1]) / DT;
         if (e.speed < 6 || moved < 6) throw new Error(`seed ${seed} puff ${puff} t=${t.toFixed(2)} id ${e.id} ${e.state} dist ${e.dist.toFixed(2)} speed ${e.speed.toFixed(2)} moved ${moved.toFixed(2)}`);
       }
@@ -521,6 +524,10 @@ test('R0: 主人公から 25 m 以内の軍勢は、どのフレームでも 6 m
   expect(frames).toBeGreaterThan(10000);
   expect(grabFrames).toBeGreaterThan(1000);
   expect(clingFrames).toBeGreaterThan(1000);
+  // R1 fix1: 遅い重い者（×0.8）が回る・群がる・よろめくフレームと、大物のフレームも数えに入っている
+  expect(heavyOrbit).toBeGreaterThan(0);
+  expect(heavyStagger).toBeGreaterThan(0);
+  expect(bossFrames).toBeGreaterThan(0);
 });
 
 test('R0 fix1: 群がる段と掴む順は、群がった順（あとから狩りに加わった見回る者が、先に群がった者の前に割り込まない）', () => {

@@ -15,13 +15,17 @@ test('建物は広場の外、街の半径の内', () => {
   }
 });
 
+// R1 fix1: 約 2000 棟の組（約 200 万組）ごとに expect を呼ぶと、それだけで 5 秒を超えて時間切れになっていた（判定は同じ）。
+// 重なった組を集めて、一度に「ない」ことを確かめる（全部の組を調べるのは前と同じ）
 test('建物どうしが重ならない', () => {
   const bs = generateCity(2).buildings;
+  const overlaps = [];
   for (let i = 0; i < bs.length; i++) for (let j = i + 1; j < bs.length; j++) {
     const a = bs[i], b = bs[j];
-    const overlap = Math.abs(a.x - b.x) < (a.w + b.w) / 2 && Math.abs(a.z - b.z) < (a.d + b.d) / 2;
-    expect(overlap).toBe(false);
+    if (Math.abs(a.x - b.x) < (a.w + b.w) / 2 && Math.abs(a.z - b.z) < (a.d + b.d) / 2) overlaps.push([a.id, b.id]);
   }
+  expect(bs.length).toBeGreaterThan(1000);
+  expect(overlaps).toEqual([]);
 });
 
 // S8: 街を 420 → 680 m に広げた（面積 約 2.6 倍）ので、建物数の範囲も広げた（前は 400〜900）
@@ -62,10 +66,9 @@ test('props は半径内・広場の外で、建物と重ならない', () => {
     expect(['car', 'lamp', 'sign']).toContain(p.kind);
     expect(p.dist).toBeGreaterThan(CONFIG.plazaRadius);
     expect(p.dist).toBeLessThanOrEqual(CONFIG.cityRadius);
-    for (const b of buildings) {
-      const inside = Math.abs(p.x - b.x) < b.w / 2 && Math.abs(p.z - b.z) < b.d / 2;
-      expect(inside).toBe(false);
-    }
+    // R1 fix1: 組ごとの expect をやめ、重なった組を集めて一度に確かめる（調べる組は前と同じ。時間切れの直し）
+    const inside = buildings.filter((b) => Math.abs(p.x - b.x) < b.w / 2 && Math.abs(p.z - b.z) < b.d / 2).map((b) => b.id);
+    expect(inside, `prop ${p.id}`).toEqual([]);
   }
 });
 

@@ -55,6 +55,7 @@ test('払わずに長押しし続けるだけでは満タンに届かず、60 �
 
 // R1: 吸う者（×2.5）・大物（×4）・2 回払う重い者が来るので、「掴まれてから払う」だけでは 12 回の半分も満タンに届かず、中央の時刻は
 // どちらも Infinity になる（前の比べ方では比べられない）。満タンに届いた回の数、同じなら届いた回の中央の時刻で比べる
+// TODO(M2): restore the median comparison or add a continuous metric after the retune
 test('「何人かに掴ませておく」より、早く払うほうが早く満タンになる', () => {
   const rank = (o) => {
     const got = Array.from({ length: 12 }, (_, i) => play(i + 1, o).full).filter(Number.isFinite).sort((a, b) => a - b);

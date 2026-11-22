@@ -8,6 +8,7 @@ import { bikePose, BIKE } from './bikePose.js';
 import { createSearchlight } from './searchlight.js';
 
 const STAGGER_SEC = CONFIG.enemy.stagger?.sec ?? 0.5;
+const ORIGIN = Object.freeze({ x: 0, z: 0 });
 
 // 街の中の人の姿: 浮遊バイクに乗った謎の軍勢（InstancedMesh、かがむ・手を伸ばす動きは頂点シェーダー）と、広場に浮く主人公。
 // 軍勢は揃いの暗い装備で、顔はヘルメットと覆面でほぼ隠れ、目の部分だけ開いている。目は光を受けて光る。
@@ -124,8 +125,7 @@ void main() {
     col = uEye * (1.4 + 1.6 * vFar + 3.5 * uGlow + 0.8 * max(ndl, 0.0));
   }
   // 推進の光（R1: 吸う者は赤紫で、吸うように脈打つ）
-  vec3 thrust = kindThrust(vKind);
-  if (vPart > 7.5 && vPart < 8.5) col = mix(vCol * light * 0.3, thrust * (1.6 + 1.2 * vFar), vThrust);
+  if (vPart > 7.5 && vPart < 8.5) col = mix(vCol * light * 0.3, kindThrust(vKind) * (1.6 + 1.2 * vFar), vThrust); // 推進の光の部品だけで色を求める
   if (vPart > 8.5 && vPart < 9.5) col = uTrim * (1.7 + 1.5 * vFar); // R1: 装甲の縁の琥珀の光
   if (vPart > 12.5 && vPart < 13.5) col = vec3(1.0, 0.95, 0.84) * 7.0; // R1: 大物の探照灯のレンズ
   // R1: 払いが当たってよろめく間、体が白熱して光る（倒れなかった手ごたえ）
@@ -185,7 +185,7 @@ void main() {
   // 速いときは、後ろへ伸びた半分に細い光の筋（尾が地面に落とす光）
   pool += vTrail * vBack * (1.0 - smoothstep(0.08, 0.35, abs(vUv.x))) * (1.0 - smoothstep(0.6, 1.0, vBack)) * 0.8;
   float glow = pool * vS.z * (0.5 + 0.5 * fade) * uPool;
-  vec3 tc = kindThrust(vKind);
+  vec3 tc = glow > 0.0 ? kindThrust(vKind) : vec3(0.0); // 光の溜まりのあるところだけ色を求める
   gl_FragColor = vec4(tc * glow * 0.9, shade + glow * 0.35);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
@@ -556,7 +556,8 @@ export function createEnemyView(scene, tier, { sunDir = new THREE.Vector3(0.8, 0
     // silhouette は主人公を光を背にした影絵にする強さ（0〜1。リプレイの最後のカット）、
     // aids は上空カメラ用の補助表示（目印・隠れた者の目印・建物の陰の透かし・主人公の透かし）を出すか（最後の一発の演出・リプレイの間は false）
     // extra: 決まった姿勢で描くバイク（S6 の導入。bikePose の戻り値と同じ形に id を足したもの）。軍勢の一覧のあとに並べる
-    sync(enemies, { fronts = [], pointScale = 500, glow = 0, dt = 0, pixelRatio = 1, silhouette = 0, aids = true, extra = null } = {}) {
+    // heroPos（R1 fix1）: 主人公の位置 { x, z }（既定は原点）。大物の探照灯が来た直後に掃く中心・近づいて照らす先
+    sync(enemies, { fronts = [], pointScale = 500, glow = 0, dt = 0, pixelRatio = 1, silhouette = 0, aids = true, extra = null, heroPos = ORIGIN } = {}) {
       time += dt;
       aidsOn = aids;
       markers.visible = markersHidden.visible = heroXray.visible = aids;
@@ -634,7 +635,7 @@ export function createEnemyView(scene, tier, { sunDir = new THREE.Vector3(0.8, 0
       xray.count = nHunt;
       markerGeo.setDrawRange(0, nHunt);
       markerPos.needsUpdate = markerKind.needsUpdate = kindAttr.needsUpdate = true;
-      searchlight.update(bossPose && { ...bossPose, scale: KIND_SCALE.boss }, time);
+      searchlight.update(bossPose && { ...bossPose, scale: KIND_SCALE.boss }, time, heroPos);
       mesh.instanceMatrix.needsUpdate = true;
       shadows.instanceMatrix.needsUpdate = true;
       anim.needsUpdate = pose.needsUpdate = shadowAttr.needsUpdate = move.needsUpdate = true;

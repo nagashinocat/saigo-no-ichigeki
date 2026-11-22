@@ -244,7 +244,7 @@ test('見つけた瞬間（R0）: 止まらず、推進の光が一瞬強まっ�
 // （grabRange 2.5 m）より内（clingRadius 1.35 m）に描くので、回る角速度が同じでも描かれる速さは遅い。そこも 6 m/s 以上
 test('R0 fix1: 描かれる位置でも、主人公から 25 m 以内の軍勢はどのフレームでも 6 m/s 以上で動く（掴む者・群がる者も）', async () => {
   const { createGame } = await import('../../src/game/game.js');
-  let frames = 0, grabFrames = 0, minV = Infinity;
+  let frames = 0, grabFrames = 0, minV = Infinity, heavyOrbit = 0, heavyStagger = 0, bossFrames = 0, heavyMin = Infinity;
   for (const seed of [1, 2]) for (const puff of [false, true]) {
     const g = createGame({ seed });
     g.pressStart();
@@ -263,6 +263,10 @@ test('R0 fix1: 描かれる位置でも、主人公から 25 m 以内の軍勢�
         const v = Math.hypot(p.x - q.x, p.z - q.z) / DT;
         frames++;
         if (e.state === 'grab') grabFrames++;
+        // R1 fix1: 遅い重い者（×0.8）の回る輪は描く速さが約 6.4 m/s で下限 6 に近いので、数えに入っていることを確かめる
+        if (e.kind === 'heavy' && (e.state === 'grab' || e.state === 'cling')) { heavyOrbit++; heavyMin = Math.min(heavyMin, v); }
+        if (e.kind === 'heavy' && e.state === 'stagger') heavyStagger++;
+        if (e.kind === 'boss') bossFrames++;
         minV = Math.min(minV, v);
         if (v < 6) throw new Error(`seed ${seed} puff ${puff} t=${t.toFixed(2)} id ${e.id} ${e.state} dist ${e.dist.toFixed(2)} drawn ${v.toFixed(2)} m/s`);
       }
@@ -271,4 +275,8 @@ test('R0 fix1: 描かれる位置でも、主人公から 25 m 以内の軍勢�
   expect(frames).toBeGreaterThan(5000);
   expect(grabFrames).toBeGreaterThan(1000);
   expect(minV).toBeGreaterThanOrEqual(6);
+  expect(heavyOrbit).toBeGreaterThan(0);
+  expect(heavyMin).toBeGreaterThanOrEqual(6);
+  expect(heavyStagger).toBeGreaterThan(0);
+  expect(bossFrames).toBeGreaterThan(0);
 });

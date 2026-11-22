@@ -55,3 +55,13 @@ test('よろめく者（stagger）は鼻先が上がり、手を伸ばさない�
   const r = (p) => Math.hypot(p.x, p.z);
   expect(r(bikePose({ ...g, kind: 'boss' }, [], 0)) - r(bikePose(g, [], 0))).toBeCloseTo(BIKE.kindCling.boss, 1);
 });
+
+test('fix1: sync の heroPos が探照灯へ届く（近づいた大物は、渡した主人公の位置を照らす）', () => {
+  const view = createEnemyView(new THREE.Scene(), 'mid');
+  const hero = { x: 50, z: 30 };
+  const boss = { id: 4, kind: 'boss', x: 50, z: 22, dist: Math.hypot(50, 22), angle: Math.atan2(22, 50), state: 'chase', speed: 20, heading: Math.PI / 2, turn: 0 };
+  for (let i = 0; i < 300; i++) view.sync([boss], { dt: 1 / 60, heroPos: hero }); // 来た直後の掃き（3.2 秒）を過ぎる
+  const beam = view.searchlight.beam, dir = new THREE.Vector3(0, 0, 1).applyQuaternion(beam.quaternion);
+  const to = new THREE.Vector3(hero.x, 1.1, hero.z).sub(beam.position).normalize();
+  expect(dir.dot(to)).toBeGreaterThan(0.999);
+});

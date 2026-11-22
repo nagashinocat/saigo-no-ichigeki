@@ -620,7 +620,7 @@ function stepWorld(wdt, live, enemies, cam, focus, glowScale = 1) {
   _shown.length = 0;
   for (const e of enemies) if (!e.patrol || _frustum.intersectsSphere(_sph.set(_sphC.set(e.x, 3, e.z), 12))) _shown.push(e);
   patrolGlow.update(enemies, { pixelRatio: renderer.getPixelRatio(), dt: wdt, time: performance.now() / 1000, visible: patrolGlowVisible({ overhead: aids, over: game.phase === 'over' }) });
-  enemyView.sync(_shown, { fronts: list, pointScale: ps, glow: explosionView.ground.heat * glowScale, dt: wdt, pixelRatio: renderer.getPixelRatio(), silhouette: 1 - glowScale, aids });
+  enemyView.sync(_shown, { fronts: list, pointScale: ps, glow: explosionView.ground.heat * glowScale, dt: wdt, pixelRatio: renderer.getPixelRatio(), silhouette: 1 - glowScale, aids, heroPos: game.enemies.heroPos });
   heroAura.update(wdt, ps, 1 - glowScale);
 }
 

@@ -169,19 +169,29 @@ test('大物: どの回も 1 体だけ、48〜50 秒に湧き、来たことを�
 });
 
 test('大物は撃退の数に入り、最大溜めで放てば大物ごと必ず撃退成功。大物を残せば撃退失敗。大物も maxEnemyReach の内', () => {
+  // fix1: 大物が湧いた直後（まだ払いの届かない 50 m ほど先）に放つ。どの回も大物が生きていて、放った瞬間の数に入る
+  let checked = 0;
   for (const seed of [1, 2, 3, 4]) {
     const g = createGame({ seed });
     g.pressStart();
-    for (let t = 0; t < 52; t += DT) { if (g.grabbing > 0) g.puff(); g.update(DT); }
+    let t = 0;
+    for (; t < K.boss.at + 0.3; t += DT) { if (g.grabbing > 0) g.puff(); g.update(DT); }
     const boss = g.enemies.list.find((e) => e.kind === 'boss');
     expect(boss).toBeTruthy();
+    expect(boss.state, `seed ${seed}`).not.toBe('dead');
     expect(boss.dist).toBeLessThanOrEqual(maxEnemyReach(CONFIG));
-    if (boss.state === 'dead') continue; // 払いで倒れた回（数には入らない）
+    const log = record(g, ['over']);
+    const alive = g.enemies.list.filter((e) => e.state !== 'dead');
+    expect(alive).toContain(boss);
     g.power.take(); g.power.add(CONFIG.power.max);
     g.pressEnd(); g.settle();
+    expect(boss.state).toBe('dead');
     expect(g.outcome.clear).toBe(true);
-    expect(g.outcome.total).toBeGreaterThan(0);
+    expect(g.outcome.total).toBe(alive.length); // 大物も放った瞬間の数に入っている
+    expect(log[0][1].outcome.survivors).toEqual([]);
+    checked++;
   }
+  expect(checked).toBe(4);
   // 小さな一発で、大物だけが届かない所にいれば撃退失敗（生き残りに大物）
   const g = createGame({ seed: 1, cfg: { ...quiet, enemy: { ...quiet.enemy, patrol: { ...E.patrol, count: 0 } } } });
   g.pressStart(); g.power.add(30);
