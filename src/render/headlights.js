@@ -93,8 +93,9 @@ export function createHeadlights(group, { capacity, drainColor = [1.0, 0.1, 0.4]
   cones.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
   cones.frustumCulled = false; cones.count = 0; cones.renderOrder = 1; cones.name = 'headlight-cones';
 
-  // 輪: 平らな円板（中心から半径 1。帯は frag で切る）
-  const ringGeo = new THREE.CircleGeometry(1, 48).rotateX(-Math.PI / 2);
+  // 輪: 平らな輪の帯（内 0.6〜外 1。帯は frag で切る）。知らせの輪は 120 m まで広がるので、円板にせず帯だけを描いて塗る画素を減らす
+  // （知らせの輪の帯は 0.9〜1 の所。内 0.6 より内は描かない）
+  const ringGeo = new THREE.RingGeometry(0.6, 1, 64, 1).rotateX(-Math.PI / 2);
   const ringCap = capacity * 2;
   const ringAttr = new THREE.InstancedBufferAttribute(new Float32Array(ringCap * 3), 3);
   ringAttr.setUsage(THREE.DynamicDrawUsage);
