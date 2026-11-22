@@ -251,3 +251,43 @@ test('M6: 録った動画を覚えておくのは ?debug のときだけ（数 M
     expect(s.last ? true : false).toBe(debug);
   }
 });
+
+// ---- fix2（再見直し N-1・M1 の残り）----
+test('N-1: 録画の途中で MediaRecorder がエラーを出したら、そのあと 10 秒フレームを進めても、描く・合図・進みの知らせは一つも増えない', async () => {
+  const env = fakeEnv(), progress = [];
+  const host = fakeHost({ shouldStop: () => false });
+  const r = rec(env, host);
+  let out = null;
+  const p = r.record({ kind: 'blast', size: { w: 360, h: 640 }, overlay: OV, onProgress: (x) => progress.push(x) }).then((x) => { out = x; });
+  // 長い動画にして、エラーのあとも時刻が残るように
+  host.begin = () => { host.log.push('begin'); host.clipping = true; return { ...PLAN, total: 8, cues: [{ t: 0, name: 'erupt' }, { t: 3, name: 'burst' }] }; };
+  await env.pump(4);
+  expect(env.recs[0].state).toBe('recording');
+  env.recs[0].onerror({ error: new Error('encoder died') });
+  await p;
+  expect(out.error?.message).toBe('encoder died');
+  expect(host.clipping).toBe(false);
+  const frames = host.log.filter((x) => x === 'frame').length, cues = host.log.filter((x) => x.startsWith('cue')).length, n = progress.length;
+  await env.pump(300); // 10 秒
+  expect(host.log.filter((x) => x === 'frame').length).toBe(frames);
+  expect(host.log.filter((x) => x.startsWith('cue')).length).toBe(cues);
+  expect(host.log).not.toContain('cue:burst');
+  expect(progress.length).toBe(n);
+  expect(host.log.filter((x) => x === 'end')).toHaveLength(1);
+});
+
+test('M1 の残り: 録画のあとリプレイを戻すときに投げたら、瓦礫の音の道は黙らせたままにせず戻す', async () => {
+  const { restoreReplayAfterClip } = await import('../../src/share/clip.js');
+  const modes = [], log = [];
+  const audio = { debrisMode: (m) => modes.push(m) };
+  // ふつう: 早送りの間は黙らせる（戻すのは 'aftermath' / 'replayEnd'）
+  const replay = { play: () => log.push('play'), skip: () => log.push('skip') };
+  expect(restoreReplayAfterClip({ audio, replay, args: {}, onSurvivors: () => log.push('glow') })).toBe(true);
+  expect(modes).toEqual(['off']);
+  expect(log).toEqual(['play', 'glow', 'skip']);
+  // 投げた: 戻してから投げ直す
+  modes.length = 0;
+  const bad = { play() { throw new Error('restore'); }, skip() {} };
+  expect(() => restoreReplayAfterClip({ audio, replay: bad, args: {} })).toThrow('restore');
+  expect(modes).toEqual(['off', 'replay']);
+});

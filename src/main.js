@@ -43,7 +43,7 @@ import { createReachRing } from './render/reachRing.js';
 import { createHud, OUT_TEXT } from './ui/hud.js';
 import { createTimeTicks } from './ui/timeLeft.js';
 import { createResult, allowsNativeMenu, resultContent, shareText } from './ui/result.js';
-import { createClipRecorder, createClipSession, createClipPanel, clipSize, planClip, planBlackholeClip, clipOverlay, deliverClip, clipFileName } from './share/clip.js';
+import { createClipRecorder, createClipSession, createClipPanel, restoreReplayAfterClip, clipSize, planClip, planBlackholeClip, clipOverlay, deliverClip, clipFileName } from './share/clip.js';
 import { INTRO_FONT } from './ui/introOverlay.js';
 import { createAudio, finaleBoomOpts } from './audio/audio.js';
 import { createHitFeed } from './audio/hitFeed.js';
@@ -246,7 +246,8 @@ const menu = createMenu({ button: document.getElementById('menuBtn'), panel: doc
     if (kind && t - previewAt > 150) { previewAt = t; audio.preview(kind); }
   },
 });
-function leavePage() { if (clipSession.busy) clipSession.cancel(); if (menuAvailable()) { menu.setAvailable(true); menu.open(); } pause.set('tab', true); }
+function leavePage() { clipRestored(); if (clipSession.busy) clipSession.cancel(); // fix2: 戻す早送りの途中で隠れても、瓦礫の音の道は黙らせたままにしない
+ if (menuAvailable()) { menu.setAvailable(true); menu.open(); } pause.set('tab', true); }
 window.addEventListener('pagehide', leavePage);
 // fix1（見直し Minor 7）: iOS の一部（コントロールセンターなど）は visibilitychange が来ない。タッチの端末だけ、blur でも一時停止する（PC で誤って止めない）
 const touchDevice = (() => { try { return matchMedia('(pointer: coarse)').matches || (navigator.maxTouchPoints ?? 0) > 0; } catch { return false; } })();
@@ -777,12 +778,9 @@ const clipHost = {
       else if (kind === 'blast' && replaySnap) {
         // 結果の後ろの最後の絵へ（暗くして早送り）。fix1（M1）: 早送りの間の瓦礫の音は鳴らさない（画面に出ていない。'aftermath' か 'replayEnd' で戻す）。
         // 撃退失敗の生き残りの光はすぐ戻す（早送りが終わるのを待たない）
-        audio.debrisMode('off');
-        clipRestoring = true;
-        replay.play(replayArgs());
+        // fix2: 失敗したら瓦礫の音の道を戻してから投げ直す（restoreReplayAfterClip）
         const o = game.outcome;
-        if (o && !o.clear) patrolGlow.setSurvivors(survivorIds(o));
-        replay.skip();
+        clipRestoring = restoreReplayAfterClip({ audio, replay, args: replayArgs(), onSurvivors: o && !o.clear ? () => patrolGlow.setSurvivors(survivorIds(o)) : null });
       }
       bgm.quiet();
     } finally {
@@ -827,7 +825,7 @@ const clipSession = createClipSession({
   },
   deliver: (file, text) => deliverClip(file, { nav: navigator, text, download: downloadFile, framed: framedPage }),
 });
-const startClip = (info) => clipSession.start(info);
+const startClip = (info) => { clipRestored(); return clipSession.start(info); }; // fix2: 遅くとも次の録画の前に瓦礫の音の道を戻す
 
 // 画質の自動調整。ここでは画素比だけを下げる（破片数などの他の値は後の Task が TIERS[tier] から読む）
 const governor = createFpsGovernor({ target: isMobile ? 30 : 55 });

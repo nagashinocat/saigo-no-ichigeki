@@ -286,9 +286,10 @@ export function createClipRecorder(host, { doc = document, MR = globalThis.Media
       // 段取りの途中の待ち（フレーム・録画の止まり）は、やめる・失敗でいつでも打ち切れる（stop）
       let stopWith = null;
       const halted = new Promise((r) => { stopWith = r; });
-      let cancelled = false;
-      cancelFn = () => { cancelled = true; stopWith({ cancelled: true }); };
-      const fail = (error) => stopWith({ error });
+      // done: もう描かない（やめた・失敗した・後始末に入った）。fix2（再見直し N-1）: 失敗でも立てる（rAF の連鎖を止める）
+      let cancelled = false, done = false;
+      cancelFn = () => { cancelled = true; done = true; stopWith({ cancelled: true }); };
+      const fail = (error) => { done = true; stopWith({ error }); };
       const race = (p) => Promise.race([p, halted.then((x) => { throw x; })]);
       let began = false, canvas = null, stream = null, audio = null, rec = null;
       try {
@@ -323,7 +324,7 @@ export function createClipRecorder(host, { doc = document, MR = globalThis.Media
           const tick = () => {
             // fix1（I-1）: rAF の中で投げたら、外の約束を失敗で終わらせる（後始末へ）
             try {
-              if (cancelled) return;
+              if (done) return;
               if (host.shouldStop()) { cancelFn(); return; }
               const tau = Math.min(plan.total, (now() - start) / 1000);
               for (const c of cuesBetween(plan, prev, tau)) host.cue(c.name, plan);
@@ -348,6 +349,7 @@ export function createClipRecorder(host, { doc = document, MR = globalThis.Media
         if (x && typeof x === 'object' && ('cancelled' in x || ('error' in x && Object.keys(x).length === 1))) return x;
         return { error: x };
       } finally {
+        done = true;
         try { if (rec && rec.state !== 'inactive') rec.stop(); } catch { /* 済み */ }
         for (const tr of stream?.getTracks?.() ?? []) { try { tr.stop(); } catch { /* 済み */ } }
         for (const tr of audio?.getTracks?.() ?? []) { try { tr.stop(); } catch { /* 済み */ } }
@@ -361,6 +363,22 @@ export function createClipRecorder(host, { doc = document, MR = globalThis.Media
       }
     },
   };
+}
+
+// 録画のあと、結果の後ろのリプレイを最後の絵へ戻す（暗くして早送り）。早送りの間の瓦礫の音は黙らせる（画面に出ていない。戻すのは呼ぶ側が
+// 'aftermath' / 'replayEnd' で）。fix2（再見直し M1 の残り）: 戻すのに失敗したら、黙らせたままにせず戻してから投げ直す。戻り値 true: 早送りに入った
+export function restoreReplayAfterClip({ audio, replay, args, onSurvivors = null }) {
+  audio.debrisMode('off');
+  let ok = false;
+  try {
+    replay.play(args);
+    onSurvivors?.();
+    replay.skip();
+    ok = true;
+  } finally {
+    if (!ok) audio.debrisMode('replay');
+  }
+  return ok;
 }
 
 // ---- 結果画面の「動画で共有」の段取り ----
