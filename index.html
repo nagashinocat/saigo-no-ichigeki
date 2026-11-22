@@ -29,6 +29,8 @@
     .hud-track i { position: absolute; inset: 0; transform-origin: left; transform: scaleX(0); border-radius: inherit; }
     .hud-ghost { background: rgba(255, 70, 190, 0.85); }
     .hud-fill { background: linear-gradient(90deg, #c96a12, #ffb347 60%, #ffd98a); box-shadow: 0 0 10px rgba(255, 170, 60, 0.7); }
+    /* R1b fix1: 吸われている間、ゲージの埋まった所が赤紫に脈打つ（不透明度 --drain は hud.js が drainFx の脈打ちから決める） */
+    .hud-pulse { background: linear-gradient(90deg, #b01a86, #ff4fc8 70%, #ff9ae0); box-shadow: 0 0 12px rgba(255, 60, 180, 0.9); opacity: var(--drain); }
     .hud-gauge.ready .hud-fill, .hud-gauge.full .hud-fill { background: linear-gradient(90deg, #ffd27a, #fff6e2 45%, #ffffff); box-shadow: 0 0 14px rgba(255, 244, 220, 0.95); }
     .hud-gauge.full .hud-track { animation: hud-full 1.3s ease-in-out infinite; }
     .hud-tick { position: absolute; top: -5px; bottom: -5px; width: 3px; margin-left: -1.5px; border-radius: 2px; background: #fff; box-shadow: 0 0 0 1px rgba(20, 10, 30, 0.75), 0 0 6px rgba(255, 255, 255, 0.8); }
@@ -45,8 +47,8 @@
     @keyframes hud-full-num { 0%, 100% { text-shadow: 0 2px 4px rgba(20, 10, 30, 0.9), 0 0 12px rgba(255, 240, 200, 0.6); } 50% { text-shadow: 0 2px 4px rgba(20, 10, 30, 0.9), 0 0 30px rgba(255, 250, 230, 1), 0 0 8px #fff; } }
     .hud-pct.draining { text-shadow: 0 2px 4px rgba(20, 10, 30, 0.9), 0 0 18px rgba(255, 60, 180, 0.8); }
     .hud-lost { position: absolute; left: 0.2em; top: calc(100% + 5px); font-size: clamp(13px, 3.6vw, 17px); font-weight: 900; font-variant-numeric: tabular-nums; color: #ff6fd0; text-shadow: 0 1px 3px rgba(20, 10, 30, 0.95), 0 0 10px rgba(255, 60, 180, 0.7); opacity: 0; }
-    /* 吸われている間の画面の縁（赤紫の脈打ち。真ん中は暗くしない。濃さと速さは drainFx.js が決める） */
-    .hud-drain { position: fixed; inset: 0; opacity: 0; pointer-events: none; background: radial-gradient(ellipse 78% 70% at 50% 45%, rgba(170, 20, 120, 0) 48%, rgba(215, 35, 150, 0.6) 78%, rgba(240, 50, 165, 0.95) 100%); }
+    /* 吸われている間の画面の縁（赤紫の脈打ち。真ん中は暗くしない。濃さと速さは drainFx.js が決める。R1b fix1: 帯を広く、色を濃く） */
+    .hud-drain { position: fixed; inset: 0; opacity: 0; pointer-events: none; background: radial-gradient(ellipse 74% 66% at 50% 45%, rgba(200, 20, 140, 0) 34%, rgba(235, 30, 160, 0.55) 62%, rgba(255, 45, 175, 0.92) 84%, rgb(255, 70, 190) 100%); }
     /* 払える量に足りない: 押した所に小さく */
     .hud-short { position: absolute; transform: translate(-50%, -50%); opacity: 0; pointer-events: none; white-space: nowrap; font-size: clamp(13px, 3.6vw, 17px); font-weight: 800; color: #ffd0e8; text-shadow: 0 1px 3px rgba(20, 10, 30, 0.95), 0 0 8px rgba(255, 60, 160, 0.6); }
     .hud-short.show { animation: hud-short 0.9s ease-out forwards; }

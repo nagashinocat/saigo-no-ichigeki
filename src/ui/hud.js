@@ -1,6 +1,7 @@
 // 街の画面の上端に重ねる HUD（残り時間・街の軍勢）と、手の帯の上端の力の表示（太いゲージと大きな数字）、
 // 手の帯の右下の小爆発のボタン（長押しの指とは別の指で押す。PC では Space キーでも押せる）、吸われている間の画面の縁の脈打ち
 import { clearThreshold } from '../game/charge.js';
+import { DRAIN_FX } from './drainFx.js';
 
 export function puffButtonRect(layout, height) {
   const { hand } = layout;
@@ -72,7 +73,7 @@ export function createHud(root, { onPuff, threshold = clearThreshold() } = {}) {
   // 上の帯: 左は空けておく（R2 の「届かない軍勢 あと N 体」の場所）、右に残り時間と街の軍勢
   root.innerHTML = '<div class="hud-drain"></div>'
     + '<div class="hud-strip"><div class="hud-left"></div><div class="hud-right"><div class="hud-time"></div><div class="hud-army"></div></div></div>'
-    + '<div class="hud-gauge low" role="meter" aria-label="力" aria-valuemin="0" aria-valuemax="100"><div class="hud-track"><i class="hud-ghost"></i><i class="hud-fill"></i></div>'
+    + '<div class="hud-gauge low" role="meter" aria-label="力" aria-valuemin="0" aria-valuemax="100"><div class="hud-track"><i class="hud-ghost"></i><i class="hud-fill"></i><i class="hud-pulse"></i></div>'
     + '<div class="hud-tick"></div><div class="hud-tick-label">撃退ライン</div><div class="hud-lost"></div></div>'
     + '<div class="hud-pct low"><small>力</small><b>0</b><em>%</em></div>'
     + '<button type="button" class="hud-puff off" aria-disabled="true"><b>払う</b><small>Space</small></button>'
@@ -84,7 +85,7 @@ export function createHud(root, { onPuff, threshold = clearThreshold() } = {}) {
   const time = root.querySelector('.hud-time');
   const army = root.querySelector('.hud-army');
   const gauge = root.querySelector('.hud-gauge');
-  const fill = gauge.querySelector('.hud-fill'), ghost = gauge.querySelector('.hud-ghost');
+  const fill = gauge.querySelector('.hud-fill'), ghost = gauge.querySelector('.hud-ghost'), pulseEl = gauge.querySelector('.hud-pulse');
   const tick = gauge.querySelector('.hud-tick'), tickLabel = gauge.querySelector('.hud-tick-label');
   const pct = root.querySelector('.hud-pct'), pctNum = pct.querySelector('b'), lostEl = gauge.querySelector('.hud-lost');
   const vignette = root.querySelector('.hud-drain');
@@ -103,7 +104,7 @@ export function createHud(root, { onPuff, threshold = clearThreshold() } = {}) {
   button.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); onPuff?.({ x: e.clientX, y: e.clientY }); });
   button.addEventListener('contextmenu', (e) => e.preventDefault());
   tick.style.left = tickLabel.style.left = `${threshold}%`;
-  let shownPct, shownTime, shownFill, shownOn, shownArmy, shownStage, shownGhost, shownLost, shownColor, shownVig;
+  let shownPct, shownTime, shownFill, shownOn, shownArmy, shownStage, shownGhost, shownLost, shownColor, shownVig, shownGk;
   let ghostF = 0;
   return {
     threshold,
@@ -172,17 +173,20 @@ export function createHud(root, { onPuff, threshold = clearThreshold() } = {}) {
       }
       const fv = Math.max(0, Math.min(1, power / max));
       const f = fv.toFixed(3);
-      if (f !== shownFill) { fill.style.transform = `scaleX(${f})`; shownFill = f; }
+      if (f !== shownFill) { fill.style.transform = pulseEl.style.transform = `scaleX(${f})`; shownFill = f; }
       // 減った分は赤紫の影として少し残り、遅れて縮む（吸われて減っていくのが見える）
       ghostF = fv >= ghostF ? fv : ghostF + (fv - ghostF) * (1 - Math.exp(-Math.max(0, dt) / 0.45));
       const gs = ghostF.toFixed(3);
       if (gs !== shownGhost) { ghost.style.transform = `scaleX(${gs})`; shownGhost = gs; }
-      // 吸われている間: 画面の縁の赤紫の脈打ち、数字の色が脈打ちに合わせて赤紫へ、吸われた量の「−N」
+      // 吸われている間: 画面の縁の赤紫の脈打ち、数字とゲージ（赤紫の層 .hud-pulse の不透明度 --drain）が脈打ちに合わせて赤紫へ、
+      // 吸われた量の「−N」。脈打ちは drainFx の pulse（なめらかな cos、3 回/秒より少ない）。光の点滅を控える設定では一定の濃さ
       const dk = drain ? drain.level * (reduce ? 0.7 : 0.25 + 0.75 * drain.pulse) : 0;
       const color = dk > 0.01 ? mixRgb(STAGE_RGB[stage], DRAIN_RGB, Math.min(1, dk * 1.4)) : '';
-      if (color !== shownColor) { pct.style.color = color; gauge.style.setProperty('--drain', color ? String(Math.min(1, dk * 1.4).toFixed(2)) : '0'); shownColor = color; }
+      if (color !== shownColor) { pct.style.color = color; shownColor = color; }
+      const gk = dk > 0.01 ? Math.min(0.9, dk * 1.2).toFixed(2) : '0';
+      if (gk !== shownGk) { gauge.style.setProperty('--drain', gk); shownGk = gk; }
       pct.classList.toggle('draining', !!drain?.active);
-      const vig = drain ? (reduce ? 0.6 * drain.level * 0.5 : drain.vignette).toFixed(3) : '0.000';
+      const vig = drain ? (reduce ? 0.6 * drain.level * DRAIN_FX.vignetteMax : drain.vignette).toFixed(3) : '0.000';
       if (vig !== shownVig) { vignette.style.opacity = vig; shownVig = vig; }
       const lost = drain && drain.lostShow > 0 && drain.lost >= 0.05 ? lostText(drain.lost) : '';
       if (lost !== shownLost) { lostEl.textContent = lost; shownLost = lost; }

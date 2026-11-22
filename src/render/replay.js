@@ -134,14 +134,15 @@ export function createReplay(views, { scene, lights = null, fog = null, blastLig
   }
 
   // R1b（持ち主 08:24「もう少し離れた状態で全体見れた方がかっこいい」）: 前は前線のすぐ外を壁と並んで走っていた。
-  // いまは、ずっと引いた斜め上から光の球・穴の縁・街の端を画面に収めたまま、爆心のまわりを横へ流れる大きな引きの移動撮影
+  // いまは、その約 1.5〜2 倍の距離の斜め上から、このカットで前線が届く半径（tl.sideFront）までの光の球・穴の縁・その外の街を
+  // 画面に収めたまま、爆心のまわりを横へ流れる引きの移動撮影
   // （距離は画面の縦横比と黒い帯ごとに解く。replayPlan.js の sideWideView）
   let sideView = null, sideKey = '';
   function shotSide(u) {
     if (dust) dust.visible = true;
     const s = plan.side, a = aspect();
     const key = `${tl.radius}|${a.toFixed(4)}`;
-    if (key !== sideKey) { sideView = sideWideView({ radius: tl.radius, aspect: a, bars: replayBars(a) }); sideKey = key; }
+    if (key !== sideKey) { sideView = sideWideView({ radius: tl.radius, aspect: a, bars: replayBars(a), reach: tl.sideFront }); sideKey = key; }
     const p = sideWidePose(sideView, { u, az: s.az, look: s.look });
     _pos.fromArray(p.pos); _look.fromArray(p.look);
     aim(_pos, _look, sideView.fov);

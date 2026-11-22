@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { GRID } from '../world/cityGen.js';
 import { segHitsBox } from './finalePlan.js';
 import { phaseTimes, frontAt } from '../game/blast.js';
+import { REPLAY } from './replayTimeline.js';
 
 // リプレイの「どこから撮るか」を決める純粋な関数（描画は知らない）。放つ直前の街（壊れていないビル）から決める。
 //   street: 爆心へまっすぐ向かう通りの真ん中、両側のビルが高いところ（見上げると、谷底から光の壁が来る）
@@ -142,23 +143,26 @@ export function aftermathView({ survivors, aspect, az = 0, radius = 0 }, A = AFT
 }
 
 // R1b（持ち主 08:24「リプレイの爆発の横からカメラで追うところだけど、もう少し離れた状態で全体見れた方がかっこいいかな」）:
-// side のカットの大きな引きの移動撮影。ずっと引いた斜め上（仰角 elev）から、光の球（一発の半径まで）・穴の縁・その外の街の縁
-// （半径の ring 倍）を、カットの始めから終わりまで画面の内（横 fitX・縦は黒い帯の内の fitY）に収めたまま、爆心のまわりを
-// sweep ラジアン横へ流れ、dolly の割合だけゆっくり寄る。縦長でも横長でも、距離はその画面で解く
-export const SIDE_WIDE = { elev: 0.4, fov: { portrait: 58, landscape: 36 }, fitX: 0.9, fitY: 0.9, ring: 1.12, sweep: 0.5, dolly: 0.06, aimY: 0.16, n: 48 };
-// radius: 一発の半径、aspect: 画面の縦横比、bars: 黒い帯の厚さ（replayBars、上下それぞれ画面の高さの割合）。
+// side のカットの引きの移動撮影。斜め上（仰角 elev）から、このカットの終わりに前線が届く半径（reach = 半径 × sideEnd）までの光の球・
+// 穴の縁・その外の街の縁（reach の ring 倍）を、カットの始めから終わりまで画面の内（横 fitX・縦は黒い帯の内の fitY）に収めたまま、
+// 爆心のまわりを sweep ラジアン横へ流れ、dolly の割合だけゆっくり寄る。縦長でも横長でも、距離はその画面で解く。
+// R1b fix1（司令の判断「もう少し」）: 前の横のカット（前線のすぐ外、約 reach + 32 m）の約 1.5〜2 倍の距離。最終の半径ではなく reach で
+// 枠を解き、レンズを広めにして近づける（街がビルの並ぶ街として読める）
+export const SIDE_WIDE = { elev: 0.32, fov: { portrait: 92, landscape: 56 }, fitX: 0.96, fitY: 0.96, ring: 1.04, sweep: 0.5, dolly: 0.06, aimY: 0.16, n: 48 };
+// radius: 一発の半径、aspect: 画面の縦横比、bars: 黒い帯の厚さ（replayBars、上下それぞれ画面の高さの割合）、
+// reach: このカットで前線が届く半径（省けば radius × REPLAY.sideEnd）。
 // 戻り値 { dist（寄りきったときの爆心からの距離）, aimY, fov, elev }
-export function sideWideView({ radius, aspect, bars = 0 }, S = SIDE_WIDE) {
+export function sideWideView({ radius, aspect, bars = 0, reach = radius * REPLAY.sideEnd }, S = SIDE_WIDE) {
   const fov = aspect < 1 ? S.fov.portrait : S.fov.landscape;
-  const frame = radius * S.ring;
-  const aimY = S.aimY * radius;
+  const frame = reach * S.ring;
+  const aimY = S.aimY * reach;
   const pts = [];
   for (let k = 0; k < S.n; k++) {
     const a = k / S.n * Math.PI * 2, c = Math.cos(a), s = Math.sin(a);
-    pts.push([c * frame, 0, s * frame], [c * radius, 0, s * radius]);
-    for (const el of [0.25, 0.6, 1.0, 1.35]) pts.push([c * Math.cos(el) * radius, Math.sin(el) * radius, s * Math.cos(el) * radius]);
+    pts.push([c * frame, 0, s * frame], [c * reach, 0, s * reach]);
+    for (const el of [0.25, 0.6, 1.0, 1.35]) pts.push([c * Math.cos(el) * reach, Math.sin(el) * reach, s * Math.cos(el) * reach]);
   }
-  pts.push([0, radius, 0]);
+  pts.push([0, reach, 0]);
   _cam.fov = fov; _cam.aspect = aspect; _cam.near = 1; _cam.far = 1e5; _cam.updateProjectionMatrix();
   // 横へ流れる間の向きのずれで端の点がはみ出さないよう、少し内で合わせる
   const fx = S.fitX - 0.015, fy = (1 - 2 * bars) * S.fitY - 0.015;
@@ -173,7 +177,7 @@ export function sideWideView({ radius, aspect, bars = 0 }, S = SIDE_WIDE) {
     }
     return true;
   };
-  let lo = radius, hi = radius * 60 + 200;
+  let lo = reach * 0.5, hi = reach * 60 + 200;
   for (let i = 0; i < 40; i++) { const mid = (lo + hi) / 2; if (fits(mid)) hi = mid; else lo = mid; }
   return { dist: hi, aimY, fov, elev: S.elev };
 }

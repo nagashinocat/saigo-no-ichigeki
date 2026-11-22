@@ -101,3 +101,56 @@ test('R1b: 吸われた量の「−N」と、足りないときの「足りな�
   expect(p.x).toBeLessThanOrEqual(390 - 30);
   expect(p.y).toBeGreaterThan(0);
 });
+
+// R1b fix1（レビュー Important 1）: 吸われている間はゲージも赤紫に脈打つ（数字だけでなく）。ゲージの上の赤紫の層の不透明度は
+// --drain（index.html の .hud-pulse が var(--drain) で読む）。DOM は無いので、hud が使う分だけの小さな偽物で確かめる
+function fakeRoot() {
+  const els = new Map();
+  const make = () => {
+    const style = { setProperty(k, v) { style[k] = v; }, getPropertyValue(k) { return style[k] ?? ''; } };
+    const cls = new Set();
+    return {
+      style, textContent: '', offsetWidth: 0,
+      classList: { add: (...c) => c.forEach((x) => cls.add(x)), remove: (...c) => c.forEach((x) => cls.delete(x)), toggle: (c, on) => (on ? cls.add(c) : cls.delete(c)), contains: (c) => cls.has(c) },
+      setAttribute() {}, addEventListener() {},
+      querySelector: (sel) => get(sel),
+    };
+  };
+  const get = (sel) => { if (!els.has(sel)) els.set(sel, make()); return els.get(sel); };
+  const root = make();
+  let html = '';
+  Object.defineProperty(root, 'innerHTML', { get: () => html, set: (v) => { html = v; } });
+  return { root, get };
+}
+
+test('R1b fix1: 吸われている間はゲージの赤紫の層（--drain）が 0 より大きく脈打ち、吸われていなければ 0。CSS がそれを読む', async () => {
+  const { createHud } = await import('../../src/ui/hud.js');
+  const { createDrainFx } = await import('../../src/ui/drainFx.js');
+  const { readFileSync } = await import('node:fs');
+  const { root, get } = fakeRoot();
+  const hud = createHud(root, { threshold: 98.6 });
+  expect(root.innerHTML).toContain('hud-pulse');
+  const css = readFileSync(new URL('../../index.html', import.meta.url), 'utf8');
+  expect(css).toMatch(/\.hud-pulse\s*\{[^}]*opacity:\s*var\(--drain\)/);
+  const gauge = get('.hud-gauge');
+  const base = { remaining: 30, power: 60, max: 100, canPuff: true, alive: 50, dt: 1 / 60 };
+  hud.update({ ...base, drain: null });
+  expect(Number(gauge.style.getPropertyValue('--drain'))).toBe(0);
+  // 6 人に掴まれた: 脈打ちの 1 周（2.6 Hz 以下）の間、ゲージの層はいつも 0 より大きく、山と谷がある
+  const fx = createDrainFx();
+  const seen = [];
+  for (let i = 0; i < 60; i++) {
+    const d = fx.update(1 / 60, { load: 6, drained: 0.1 });
+    hud.update({ ...base, drain: d });
+    seen.push(Number(gauge.style.getPropertyValue('--drain')));
+  }
+  const tail = seen.slice(20);
+  expect(Math.min(...tail)).toBeGreaterThan(0);
+  expect(Math.max(...tail)).toBeGreaterThan(0.6);
+  expect(Math.max(...tail) - Math.min(...tail)).toBeGreaterThan(0.3);
+  // はがれたら 0 へ
+  for (let i = 0; i < 30; i++) hud.update({ ...base, drain: fx.update(1 / 60, { load: 0, drained: 0 }) });
+  expect(Number(gauge.style.getPropertyValue('--drain'))).toBe(0);
+  hud.update({ ...base, drain: null });
+  expect(Number(gauge.style.getPropertyValue('--drain'))).toBe(0);
+});

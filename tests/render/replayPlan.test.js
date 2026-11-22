@@ -119,8 +119,9 @@ test('持ち主 23:01: 引きの絵は、爆発の穴の縁（半径の ring 倍
 
 // R1b（持ち主 08:24「リプレイの爆発の横からカメラで追うところだけど、もう少し離れた状態で全体見れた方がかっこいいかな」）:
 // side のカットは、ずっと引いた所から全体（光の球・穴の縁・街の端）を見せたまま横へ流れる、大きな引きの移動撮影
-test('R1b side: 縦長でも横長でも、カットの始めから終わりまで光の球・穴の縁・その外の街の縁が画面（黒い帯の内）に収まる', async () => {
+test('R1b side: 縦長でも横長でも、カットの始めから終わりまで光の球・穴の縁・その外の街の縁（このカットで前線が届く半径 sideEnd まで）が画面（黒い帯の内）に収まる', async () => {
   const { sideWideView, sideWidePose, SIDE_WIDE } = await import('../../src/render/replayPlan.js');
+  const { REPLAY } = await import('../../src/render/replayTimeline.js');
   const { replayBars } = await import('../../src/render/replay.js');
   const cam = new THREE.PerspectiveCamera();
   for (const aspect of [390 / 844, 360 / 640, 16 / 9, 844 / 390]) {
@@ -128,8 +129,9 @@ test('R1b side: 縦長でも横長でも、カットの始めから終わりま�
     for (const radius of RADII) {
       const view = sideWideView({ radius, aspect, bars });
       const fx = SIDE_WIDE.fitX + 0.02, fy = (1 - 2 * bars) * SIDE_WIDE.fitY + 0.02;
-      const frame = radius * SIDE_WIDE.ring;
-      expect(SIDE_WIDE.ring).toBeGreaterThan(1.05); // 穴の外の街も少し見える
+      const reach = radius * REPLAY.sideEnd; // カットの終わりの前線（それより大きい球はこのカットに映らない）
+      const frame = reach * SIDE_WIDE.ring;
+      expect(SIDE_WIDE.ring).toBeGreaterThan(1.02); // 穴の外の街も少し見える
       for (const u of [0, 0.25, 0.5, 0.75, 1]) {
         const p = sidePose(sideWidePose, view, u);
         cam.fov = view.fov; cam.aspect = aspect; cam.near = 1; cam.far = 20000; cam.updateProjectionMatrix();
@@ -138,10 +140,10 @@ test('R1b side: 縦長でも横長でも、カットの始めから終わりま�
         for (let k = 0; k < 24; k++) {
           const a = k / 24 * Math.PI * 2;
           pts.push([Math.cos(a) * frame, 0, Math.sin(a) * frame]); // 穴の外の街の縁
-          pts.push([Math.cos(a) * radius, 0, Math.sin(a) * radius]); // 穴の縁
-          for (const el of [0.3, 0.8, 1.3]) pts.push([Math.cos(a) * Math.cos(el) * radius, Math.sin(el) * radius, Math.sin(a) * Math.cos(el) * radius]); // 光の球
+          pts.push([Math.cos(a) * reach, 0, Math.sin(a) * reach]); // 穴の縁
+          for (const el of [0.3, 0.8, 1.3]) pts.push([Math.cos(a) * Math.cos(el) * reach, Math.sin(el) * reach, Math.sin(a) * Math.cos(el) * reach]); // 光の球
         }
-        pts.push([0, radius, 0]);
+        pts.push([0, reach, 0]);
         for (const q of pts) {
           const v = new THREE.Vector3(...q).project(cam);
           expect(Math.abs(v.x), `${aspect.toFixed(2)} r${radius.toFixed(0)} u${u}`).toBeLessThanOrEqual(fx);
@@ -154,15 +156,19 @@ test('R1b side: 縦長でも横長でも、カットの始めから終わりま�
 
 function sidePose(fn, view, u) { return fn(view, { u, az: 0.4, look: 1 }); }
 
-test('R1b side: 前（前線のすぐ外 F + 32 m）よりずっと遠く、カットの間に横へ大きく流れる（引きの移動撮影）', async () => {
+test('R1b fix1 side: 前（前線のすぐ外 F + 32 + 0.1F m）の約 1.5〜2 倍（「もう少し離れた」）で、カットの間に横へ大きく流れる', async () => {
   const { sideWideView, sideWidePose } = await import('../../src/render/replayPlan.js');
-  for (const aspect of [390 / 844, 16 / 9]) {
+  const { REPLAY } = await import('../../src/render/replayTimeline.js');
+  const { replayBars } = await import('../../src/render/replay.js');
+  for (const aspect of [390 / 844, 360 / 640, 16 / 9, 844 / 390]) {
     for (const radius of RADII) {
-      const view = sideWideView({ radius, aspect, bars: 0 });
+      const view = sideWideView({ radius, aspect, bars: replayBars(aspect) });
       const a = sideWidePose(view, { u: 0, az: 0.4, look: 1 }), b = sideWidePose(view, { u: 1, az: 0.4, look: 1 });
       const d = Math.hypot(a.pos[0], a.pos[2]);
-      const old = radius + 32 + 0.1 * radius;
-      expect(d).toBeGreaterThan(2 * old);
+      const F = radius * REPLAY.sideEnd, old = F + 32 + 0.1 * F; // 前の横のカットの、カットの終わりの距離
+      const end = Math.hypot(b.pos[0], b.pos[2]);
+      expect(end, `${aspect.toFixed(2)} r${radius.toFixed(0)}`).toBeGreaterThan(1.3 * old);
+      expect(end, `${aspect.toFixed(2)} r${radius.toFixed(0)}`).toBeLessThan(2.3 * old);
       const az0 = Math.atan2(a.pos[2], a.pos[0]), az1 = Math.atan2(b.pos[2], b.pos[0]);
       expect(Math.abs(az1 - az0)).toBeGreaterThan(0.3);
       // look の向きへ回る
@@ -170,6 +176,7 @@ test('R1b side: 前（前線のすぐ外 F + 32 m）よりずっと遠く、カ�
       expect(sideWidePose(view, { u: 1, az: 0.4, look: -1 }).pos[2]).toBeLessThan(a.pos[2]);
       // 斜め上から（穴が見える）
       expect(a.pos[1] / d).toBeGreaterThan(0.25);
+      expect(d).toBeGreaterThan(end); // ゆっくり寄る
     }
   }
 });

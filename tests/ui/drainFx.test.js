@@ -33,7 +33,9 @@ test('点滅は光に敏感な人にもやさしく: どの強さでも 1 秒に
     expect(peaks, `load ${load}`).toBeLessThanOrEqual(30);
     expect(peaks).toBeGreaterThanOrEqual(10); // ちゃんと脈打つ（1 秒に 1 回以上）
     expect(maxA).toBeLessThanOrEqual(DRAIN_FX.vignetteMax + 1e-9);
-    expect(DRAIN_FX.vignetteMax).toBeLessThanOrEqual(0.55);
+    expect(DRAIN_FX.vignetteMax).toBeLessThanOrEqual(0.85);
+    // 脈打ちの濃さの振れ幅（谷から山）は中くらいまで（R1b fix1 で縁を濃くしても 0.45 以下）
+    expect(DRAIN_FX.vignetteMax * (1 - DRAIN_FX.base)).toBeLessThanOrEqual(0.45);
   }
 });
 
@@ -42,7 +44,7 @@ test('脈打ちは急に変わらない（なめらかな山。ストロボで�
   let prev = null;
   for (let t = 0; t < 4; t += DT) {
     const s = fx.update(DT, { load: 6, drained: 0 });
-    if (prev !== null) expect(Math.abs(s.vignette - prev)).toBeLessThan(0.06);
+    if (prev !== null) expect(Math.abs(s.vignette - prev)).toBeLessThan(0.08);
     prev = s.vignette;
   }
 });
