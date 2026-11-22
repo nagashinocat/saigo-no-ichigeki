@@ -1,17 +1,19 @@
 import { CONFIG } from '../config.js';
 import { createBlast } from './blast.js';
+import { distFrom } from './centre.js';
 
 // リプレイの爆発（描画は知らない）。放つ直前の街（targets）と軍勢の写しから、同じ一発をもう一度起こす。
 // ゲームの採点や状態には触れない。命中は前線の距離だけで決まるので、刻み方によらず本物と同じ順に起きる。
 
 const REPLAY_BLAST_ID = 1e6; // 描く側が球を一発ごとに見分ける id（ゲームの一発とは重ならない）
 
-// 街の全部の対象（ビルと props）。最後の一発の前に壊れるものはない（小爆発は軍勢だけを払う）ので、これが直前の街
-export function replayTargets(city) {
+// 街の全部の対象（ビルと props）。最後の一発の前に壊れるものはない（小爆発は軍勢だけを払う）ので、これが直前の街。
+// centre（M1）: 爆心 { x, z }（放った瞬間の主人公の位置。shot.centre）。dist はそこからの距離
+export function replayTargets(city, centre = null) {
   const out = [];
-  for (const b of city.buildings) out.push({ id: 'b' + b.id, dist: b.dist, target: b });
-  for (const p of city.props) out.push({ id: 'p' + p.id, dist: p.dist, target: p });
-  for (const s of city.transit?.segments ?? []) out.push({ id: s.id, dist: s.dist, target: s });
+  for (const b of city.buildings) out.push({ id: 'b' + b.id, dist: distFrom(b, centre), target: b });
+  for (const p of city.props) out.push({ id: 'p' + p.id, dist: distFrom(p, centre), target: p });
+  for (const s of city.transit?.segments ?? []) out.push({ id: s.id, dist: distFrom(s, centre), target: s });
   return out;
 }
 
@@ -23,6 +25,9 @@ export function createReplaySim({ shot, targets, enemies = [], cfg = CONFIG }) {
   const list = enemies.map((e) => ({ ...e, speed: 0, turn: 0, lean: 0 }));
   let time = 0;
   const live = [{ id: REPLAY_BLAST_ID, shot, front: 0 }];
+  // M1: 軍勢の距離は爆心（shot.centre）から（省けば写しの dist）
+  const c = shot.centre;
+  const distOf = (e) => (c && e.x != null ? Math.hypot(e.x - c.x, e.z - c.z) : e.dist);
 
   return {
     get time() { return time; },
@@ -40,7 +45,7 @@ export function createReplaySim({ shot, targets, enemies = [], cfg = CONFIG }) {
       // 倒れた者は吹き飛ぶ時間が進む（本物の最後の一発の間は止まっていたが、リプレイでは飛んでいくのを見せる）
       for (const e of list) if (e.state === 'dead') e.deadTime = (e.deadTime ?? 0) + dt;
       for (const e of list) {
-        if (e.state === 'dead' || e.dist > blast.front) continue;
+        if (e.state === 'dead' || distOf(e) > blast.front) continue;
         e.state = 'dead';
         e.deadTime = 0;
       }

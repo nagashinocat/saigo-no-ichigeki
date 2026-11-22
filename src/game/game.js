@@ -7,6 +7,10 @@ import { createTimer } from './timer.js';
 import { createScore } from './score.js';
 import { createBlast } from './blast.js';
 import { createEnemies } from './enemies.js';
+import { createHeroMotion } from './hero.js';
+import { distFrom } from './centre.js';
+
+export { heroSpeedFactor } from './hero.js';
 
 const MAX_DT = 0.1;
 
@@ -15,13 +19,16 @@ const MAX_DT = 0.1;
 //        → 'finale'（最後の一発が街を壊していく） → 'over'（'released': その一発の破壊額 / 'blackhole': 時間切れまで放たなかった）
 // 勝ち負け（S9、持ち主 13:16）: 放った瞬間に生きている軍勢（見回る者を含む）を写し、一発が終わったとき全員倒れていれば
 // 撃退成功（clear）、一人でも残れば撃退失敗。放ったあとは湧かず、あとから現れた者は数えない。破壊額は結果画面で「被害額」として小さく出す
+// M1（持ち主 09:11 / 09:15、spec §16）: 主人公は溜めている間だけ setMove の向きへ動く（hero.js）。爆心は放った瞬間の主人公の位置
+// （shot.centre）。払うの爆心も払った瞬間の主人公の位置。勝ち負けの「倒れたか」は、その爆心からの距離で決まる
 export function createGame({ seed, cfg = CONFIG }) {
   const city = generateCity(seed, cfg);
+  // 主人公（hero.js）。hero は { x, z, vx, vz, heading, lean } の同じ物で、軍勢の heroPos にも渡す（動くたびに書き換わる）
+  const motion = createHeroMotion(city, cfg);
+  const hero = motion.hero;
   // 見回る者（S8）は別の乱数（探して掴みに来る者の湧き方・動きは前のまま）
-  // R1: 種類（重い者・吸う者）と大物の乱数も別（typeRng）。
-  // TODO(動く主人公の仕事): ここで createEnemies に { heroPos }（主人公の位置 { x, z } の同じ物）を渡し、主人公が動くたびに書き換える。
-  // 種類の仕組み（よろめき・大物の知らせ）と探照灯（main.js が enemies.heroPos を enemyView.sync へ渡す）はもうそれを使う
-  const enemies = createEnemies(createRng(seed + 1), cfg, { buildings: city.buildings, patrolRng: createRng((seed ^ 0x9a7b1) >>> 0), typeRng: createRng((seed * 0x2c1b3c6d + 0x51ed27) >>> 0) });
+  // R1: 種類（重い者・吸う者）と大物の乱数も別（typeRng）
+  const enemies = createEnemies(createRng(seed + 1), cfg, { buildings: city.buildings, patrolRng: createRng((seed ^ 0x9a7b1) >>> 0), typeRng: createRng((seed * 0x2c1b3c6d + 0x51ed27) >>> 0), heroPos: hero });
   const power = createPower(cfg.power);
   const charge = createCharge(power, cfg);
   const timer = createTimer(cfg.roundSeconds);
@@ -50,10 +57,10 @@ export function createGame({ seed, cfg = CONFIG }) {
   let outcome = null; // { clear, total, survivors: [{ id, x, z, patrol }] }（最後の一発のときだけ）
   let nextBlastId = 1;
 
-  // 小爆発は軍勢だけを払う（対象のビル・props はなし）。最後の一発はまだ壊れていないものすべて
+  // 小爆発は軍勢だけを払う（対象のビル・props はなし）。最後の一発はまだ壊れていないものすべて。距離は爆心（shot.centre）から
   function startBlast(shot) {
     const targets = [];
-    if (!shot.small) for (const [id, t] of byKey) if (!destroyed.has(id)) targets.push({ id, dist: t.dist });
+    if (!shot.small) for (const [id, t] of byKey) if (!destroyed.has(id)) targets.push({ id, dist: distFrom(t, shot.centre) });
     // hits: 払う（小爆発）がこれまでに当てた軍勢の数（R1 の「×k」）
     const b = { id: nextBlastId++, shot, blast: createBlast(shot, targets, cfg), values: [], hits: 0 };
     blasts.push(b);
@@ -87,7 +94,7 @@ export function createGame({ seed, cfg = CONFIG }) {
         b.values.push(target.value);
         emit('hit', settled ? { hit, target, settled } : { hit, target });
       }
-      const n = enemies.applyBlastFront(b.blast.front, b.shot.small ? { id: b.id, small: true } : null);
+      const n = enemies.applyBlastFront(b.blast.front, b.shot.small ? { id: b.id, small: true } : null, b.shot.centre);
       // R1: 一度の払うで k ≥ combo.from 体を払ったら「×k」を知らせる（数が増えるたびに。見せるだけで力は戻さない）
       if (b.shot.small && n > 0) {
         b.hits += n;
@@ -115,7 +122,11 @@ export function createGame({ seed, cfg = CONFIG }) {
 
   return {
     city, enemies, power, charge, timer, score,
+    // M1: 主人公の位置と速さ { x, z, vx, vz, heading, lean }（読むだけ。試しは x, z を直に置いてよい）
+    hero,
     get phase() { return phase; },
+    // M1: 動く向き（世界の x, z。長さ 1 で全速、0 で止まる）。動くのは遊んでいる最中に溜めている間だけ
+    setMove(x, z) { motion.setMove(x, z); },
     // 今、主人公を掴んでいる軍勢の数
     get grabbing() { return grabbing; },
     // R1b: 掴まれて実際に吸われた力の合計（増えるだけ。HUD の「−N」と吸われる音が、フレームごとの差を使う）
@@ -152,6 +163,9 @@ export function createGame({ seed, cfg = CONFIG }) {
       // 足りない: 放たない。手の画面とヒントで「まだ足りない」を知らせる
       if (!shot) { emit('fizzle', { power: power.value, need: cfg.power.minRelease }); return; }
       releaseIds = new Set(enemies.list.filter((e) => e.state !== 'dead').map((e) => e.id));
+      // M1: 爆心は放った瞬間の主人公の位置。ここから主人公は止まる
+      shot.centre = { x: hero.x, z: hero.z };
+      motion.stop();
       emit('shot', shot);
       phase = 'cinematic';
       timer.pause();
@@ -176,7 +190,7 @@ export function createGame({ seed, cfg = CONFIG }) {
     puff() {
       if (!canPuff()) return false;
       power.spend(cfg.puff.cost);
-      const shot = { amount: cfg.puff.cost, radius: cfg.puff.radius, isBig: false, small: true };
+      const shot = { amount: cfg.puff.cost, radius: cfg.puff.radius, isBig: false, small: true, centre: { x: hero.x, z: hero.z } };
       startBlast(shot);
       emit('puff', shot);
       return true;
@@ -203,6 +217,8 @@ export function createGame({ seed, cfg = CONFIG }) {
       }
 
       charge.update(dt);
+      // 主人公が先に動き、軍勢は今の主人公を追う（掴んでいる者はついてくる）。動くのは溜めている間だけ
+      motion.update(dt, { active: charge.active, grabbing });
       grabbing = enemies.update(dt);
       // 掴んでいる者の吸う力（R1: 吸う者 ×2.5、大物 ×4）
       const v0 = power.value;

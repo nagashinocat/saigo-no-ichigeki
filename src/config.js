@@ -80,4 +80,12 @@ export const CONFIG = {
     stagger: { sec: 0.55, push: 20, spin: 9 },
   },
   score:   { comboStep: 0.1, comboMax: 3 },
+  // M1（持ち主 09:11 / 09:15、spec §16）: 主人公が動く。通りと広場の上を浮いたまま speed m/s（軍勢より遅い）で、なめらかに（accelRate 1/秒の
+  // ばねで目標の速さへ）動く。ビルの足元（radius m 広げた四角）は通り抜けず、壁に沿って滑る。街の中心から cityRadius − edgePad m より外へは出ない。
+  // 掴んでいる者 1 人ごとに grabSlow（20%）遅くなり、minSpeedFrac（40%）より遅くはならない。動くのは溜めている間だけ（1 本目の指がないと動かない）。
+  // 体は進む向きへ turnRate rad/s で向き直り、速さに応じて leanMax rad まで前へ傾く
+  hero: { speed: 11, accelRate: 7, radius: 1.2, edgePad: 30, grabSlow: 0.2, minSpeedFrac: 0.4, turnRate: 9, leanMax: 0.3 },
+  // M1 の操作（持ち主 09:15、制作側の判断）: 溜めているあいだの 2 本目の指は、longPressSec 秒以上で浮かぶジョイスティック（押した所に出て、
+  // 指を離すと消える。stickRadiusPx の輪いっぱいで全速、deadPx より内は止まる）、それより短く tapMovePx px 未満の動きで離せば払う
+  controls: { longPressSec: 0.18, tapMovePx: 10, stickRadiusPx: 56, deadPx: 6 },
 };
