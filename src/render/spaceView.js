@@ -355,11 +355,12 @@ export function createSpaceView(tier = 'high') {
       camera.updateProjectionMatrix();
       camera.updateMatrixWorld();
     },
-    // 光の半球の大きさ r（単位）、押しつぶし flat 0〜1（R1b: 1 で幅 0。両側から押されて縦へ伸び、光の柱になる）、明るさ I
-    setDome(r, flat, I, time) {
+    // 光の半球の大きさ r（単位）、押しつぶし flat 0〜1（R1b: 1 で幅 0。両側から押されて縦へ伸び、光の柱になる）、明るさ I。
+    // stretch（R1d）: 押しつぶしきったときの高さの伸び（高さ r·(1 + stretch·flat)。縦長の画面で上の端を越えないよう演出が決める）
+    setDome(r, flat, I, time, stretch = 2.5) {
       const f = Math.min(1, Math.max(0, flat));
       const wide = Math.max(0.002, 1 - f);
-      const h = 1 + f * 2.5;
+      const h = 1 + f * Math.max(0, stretch);
       dome.scale.set(r * wide, r * h, r * wide);
       dome.visible = I > 0.001 && r > 0.01;
       domeU.uI.value = I;

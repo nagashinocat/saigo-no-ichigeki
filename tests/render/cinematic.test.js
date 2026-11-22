@@ -726,3 +726,44 @@ test('fix4 スローの間ずっと（と弾けた直後）、光の玉の幅の
     expect(d, `dome seed ${seed} ${w} power ${amount}`).toBeGreaterThanOrEqual(0.9);
   }
 });
+
+// R1d（持ち主 14:13「ドーム型の光が消える時に縦 1 本の線になって消える感じ」）: 宇宙の光の半球そのものが、両側から押しつぶされるように
+// 幅が 0 へ細り（高さは半球の高さより低くならず、縦へ伸び）、そのまま縦一本の線になって消える。半球の幅が始めの 30% より広いうちは、
+// 別の柱（光の線）は見えない。線が見え始めるときは、半球の描かれる高さと同じくらいの長さで、同じ所に立つ（一続きの動き）。時刻表は R1b のまま
+for (const size of [{ w: 390, h: 844 }, { w: 1280, h: 720 }]) {
+  test(`R1d: 宇宙の半球は横から押しつぶされて縦一本の線になって消える（${size.w}×${size.h}）`, () => {
+    const { cin, plan, shot } = makeCinematic(size);
+    cin.play(plan, shot);
+    const tl = cin.timeline;
+    advance(cin, tl.flatten - 0.02 - cin.time);
+    const scene = cin.renderScene;
+    const dome = scene.children.find((o) => o.isMesh && o.material.uniforms?.uFlat);
+    const line = scene.children.find((o) => o.isMesh && o.material.uniforms?.uThin);
+    const W0 = dome.scale.x, H0 = dome.scale.y;
+    expect(dome.visible).toBe(true);
+    expect(line.visible).toBe(false); // ふくらみきった半球だけ
+    let prevW = W0, handoff = null, gap = 0, n = 0;
+    const lit = (o, k) => o.visible && o.material.uniforms[k].value > 0.02;
+    while (cin.time < tl.lineEnd + 0.05) {
+      cin.update(1 / 60);
+      n++;
+      const w = dome.scale.x;
+      expect(w, `t=${cin.time.toFixed(3)}`).toBeLessThanOrEqual(prevW + 1e-9); // 幅は細るだけ
+      expect(dome.scale.y).toBeGreaterThanOrEqual(H0 - 1e-9); // 高さは半球より低くならない
+      if (w > 0.3 * W0) expect(lit(line, 'uI') ? line.material.uniforms.uI.value : 0, `線が早すぎる t=${cin.time.toFixed(3)} w=${(w / W0).toFixed(2)}`).toBeLessThanOrEqual(0.001);
+      if (!handoff && line.visible && line.material.uniforms.uI.value > 0.001) handoff = { len: line.scale.y, domeH: dome.scale.y, thick: line.scale.x, domeW: 2 * w };
+      // 線へ変わる間（押しつぶしの間と、細って消える前半）は、半球か線のどちらかが光っている（途切れない）
+      if (cin.time < tl.flatten + FINALE.flattenSec + FINALE.thinSec * 0.3 && !lit(dome, 'uI') && !lit(line, 'uI')) gap++;
+      prevW = w;
+    }
+    expect(n).toBeGreaterThan(60);
+    expect(gap).toBe(0);
+    expect(prevW).toBeLessThan(0.02 * W0); // 幅はほぼ 0
+    // 線は押しつぶされた半球の続き: 長さ（光る部分）は半球の描かれる高さと同じくらい、太さは半球の幅より細い
+    expect(handoff).not.toBeNull();
+    expect(handoff.len * 0.6).toBeGreaterThan(handoff.domeH * 0.7);
+    expect(handoff.len * 0.6).toBeLessThan(handoff.domeH * 1.5);
+    // 線は最後に消える（時刻表は R1b のまま: lineEnd までに）
+    expect(line.visible && line.material.uniforms.uI.value > 0.001).toBe(false);
+  });
+}
