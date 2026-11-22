@@ -1,22 +1,31 @@
 import { test, expect } from 'vitest';
-import { puffButtonRect, powerText, armyText, comboText, comboPos, BOSS_TEXT, powerPct, powerStage, gaugeRect, pctRect, lostText, SHORT_TEXT, shortPos } from '../../src/ui/hud.js';
+import { centreText, centreArrowDeg, centreRect, powerText, armyText, comboText, comboPos, BOSS_TEXT, powerPct, powerStage, gaugeRect, pctRect, lostText, SHORT_TEXT, shortPos } from '../../src/ui/hud.js';
 import { clearThreshold } from '../../src/game/charge.js';
 import { layoutViews } from '../../src/render/views.js';
 
-const inHandStrip = (r, layout, H) => {
-  const top = H - layout.hand.y - layout.hand.h; // 手の帯の上端（上からの px）
-  return r.left >= layout.hand.x && r.left + r.size <= layout.hand.x + layout.hand.w && r.top >= top && r.top + r.size <= H;
-};
+// M1（持ち主 09:15）: 払うのボタンはなくなった（溜めている間の 2 本目の指の短いタップ・Space・右クリックで払う）。
+// その代わりに上の帯の真ん中に「中心まで ◯ m」と、街の中心への小さな矢印（spec §16）
+test('M1: 「中心まで ◯ m」（切り捨てでなく四捨五入の m）。中心のそばでは「街の中心」', () => {
+  expect(centreText(123.4)).toBe('中心まで 123 m');
+  expect(centreText(9.6)).toBe('中心まで 10 m');
+  expect(centreText(3)).toBe('街の中心');
+});
 
-test('小爆発のボタンは手の帯の右下にあり、指で押せる大きさ（44px 以上）', () => {
-  for (const [w, h] of [[390, 844], [360, 640], [320, 480], [1280, 720], [844, 390]]) {
+test('M1: 中心への矢印は、上空カメラの画面で主人公から街の中心へ向く（右が 0°、時計回り。上空カメラは -z が画面の上）', () => {
+  expect(centreArrowDeg({ x: -50, z: 0 })).toBeCloseTo(0, 6); // 中心は右
+  expect(centreArrowDeg({ x: 0, z: -50 })).toBeCloseTo(90, 6); // 主人公は画面の上の方 → 中心は下
+  expect(centreArrowDeg({ x: 0, z: 50 })).toBeCloseTo(-90, 6); // 中心は上
+  expect(Math.abs(centreArrowDeg({ x: 50, z: 0 }))).toBeCloseTo(180, 6);
+});
+
+test('M1: 「中心まで」は上の帯の真ん中（残り時間・街の軍勢の右の列と、左の空けておく場所に重ならない）', () => {
+  for (const [w, h] of [[390, 844], [360, 640], [844, 390], [1280, 720]]) {
     const l = layoutViews(w, h);
-    const r = puffButtonRect(l, h);
-    expect(r.size, `${w}x${h}`).toBeGreaterThanOrEqual(44);
-    expect(inHandStrip(r, l, h), `${w}x${h}`).toBe(true);
-    // 右下の四分の一（両手と球のある真ん中をふさがない）
-    expect(r.left + r.size / 2).toBeGreaterThan(w * 0.75);
-    expect(r.top + r.size / 2).toBeGreaterThan(h - l.hand.h / 2);
+    const r = centreRect(l, h);
+    expect(r.left).toBeGreaterThan(l.hud.x + l.hud.w * 0.25);
+    expect(r.left + r.width).toBeLessThan(l.hud.x + l.hud.w * 0.75);
+    expect(r.top).toBeGreaterThanOrEqual(h - l.hud.y - l.hud.h);
+    expect(r.top).toBeLessThan(h - l.hud.y);
   }
 });
 
@@ -69,7 +78,7 @@ test('R1b: 大きな数字は切り捨ての整数。段は 撃退ライン未�
   expect(powerStage(100, 100, L)).toBe('full');
 });
 
-test('R1b: 手の帯の上端の一列に、左に大きな数字、その右に太いゲージ（10px 以上、帯の幅の半分以上）。上の HUD の帯とも、払うのボタンとも重ならない', () => {
+test('R1b: 手の帯の上端の一列に、左に大きな数字、その右に太いゲージ（10px 以上、帯の幅の半分以上）。上の HUD の帯とも、両手の真ん中とも重ならない', () => {
   for (const [w, h] of [[390, 844], [360, 640], [320, 480], [1280, 720], [844, 390]]) {
     const l = layoutViews(w, h);
     const handTop = h - l.hand.y - l.hand.h;
@@ -84,8 +93,8 @@ test('R1b: 手の帯の上端の一列に、左に大きな数字、その右に
     expect(g.left + g.width).toBeLessThanOrEqual(l.hand.x + l.hand.w);
     expect(g.width, `${w}x${h}`).toBeGreaterThan(l.hand.w * 0.5);
     expect(Math.abs(g.top + g.height / 2 - (n.top + n.fontSize / 2))).toBeLessThanOrEqual(n.fontSize * 0.25); // 数字と同じ高さ
-    const r = puffButtonRect(l, h);
-    expect(g.top + g.height + 30).toBeLessThan(r.top); // 目盛りの文字の下も、ボタンより上
+    // 目盛りの文字の下も、手の帯の上の方（両手と球の真ん中をふさがない）
+    expect(g.top + g.height + 30).toBeLessThan(h - l.hand.y - l.hand.h * 0.5);
   }
 });
 

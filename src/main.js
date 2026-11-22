@@ -23,7 +23,10 @@ import { createReplay } from './render/replay.js';
 import { createBlackhole } from './render/blackhole.js';
 import { createReplaySim, replayTargets } from './game/replaySim.js';
 import { createRng } from './rng.js';
-import { createPressTracker } from './input/press.js';
+import { createControls, keyVector, MOVE_KEYS } from './input/controls.js';
+import { createJoystickView } from './ui/joystick.js';
+import { clearThreshold } from './game/charge.js';
+import { maxEnemyReachFrom } from './game/enemies.js';
 import { createHud } from './ui/hud.js';
 import { createResult } from './ui/result.js';
 import { createAudio, finaleBoomOpts } from './audio/audio.js';
@@ -95,10 +98,13 @@ const audio = createAudio();
 // BGM（打楽器とマリンバの民族音楽風）: 遊びが始まると鳴り、時間と貯めた力で層が増え、放った瞬間に止まる。
 // リプレイと結果画面では同じ旋律をゆっくり静かに。時間切れ（ブラックホール）では引き伸ばされて消える
 const bgm = createBgm(() => audio.bgmOutput);
-// 小爆発のボタン（長押しの指とは別の指で押す）。ボタンの上の押下はボタンだけが受け、キャンバスの長押しにはならない
-const hud = createHud(document.getElementById('hud'), { onPuff({ x, y } = {}) { tryPuff(x, y); } });
-// 払う。力が払える量に足りなければ、押した所（キーなら払うのボタンの上）に小さく「足りない」（持ち主 08:24 の制作側の判断）
+// M1（持ち主 09:15）: 払うのボタンはなくした。溜めている間の 2 本目の指の短いタップ、PC は Space か右クリックで払う
+const hud = createHud(document.getElementById('hud'));
+// 払う。力が払える量に足りなければ、押した所（キーなら主人公の画面の位置）に小さく「足りない」（持ち主 08:24 の制作側の判断）。
+// 溜めていない（1 本目の指がない）ときは払えない（spec §16 09:15）
 function tryPuff(x, y) {
+  if (!controls.charging) return false;
+  if (!(Number.isFinite(x) && Number.isFinite(y))) { const c = screenCue(game.hero.x, 2.5, game.hero.z); x = c.sx; y = c.sy; }
   if (game.puff()) return true;
   if (game.phase === 'playing' && !game.power.canSpend(CONFIG.puff.cost)) hud.short(x, y);
   return false;
@@ -119,13 +125,19 @@ const result = createResult(document.getElementById('result'), {
   onReplay() { startReplay(); },
 });
 const replayTag = document.getElementById('replay');
-const press = createPressTracker({
-  onStart() { startHint.hidden = true; game.pressStart(); },
-  onEnd() { game.pressEnd(); },
-  // 離していないのに押下が途切れた（pointercancel・キャプチャが外れた・タブを隠した・blur）: 放たずに打ち切る
-  onCancel() { game.pressCancel(); },
+// M1（持ち主 09:15、spec §16）: 1 本目の指はどこでも溜め（離すと最後の一発）、溜めている間の 2 本目の指は長押しで浮かぶジョイスティック・
+// 短いタップで払う（input/controls.js）。pointercancel・キャプチャが外れた・タブを隠した・blur は放たずに打ち切る
+const controls = createControls({
+  onChargeStart() { startHint.hidden = true; game.pressStart(); },
+  onChargeEnd() { game.pressEnd(); },
+  onChargeCancel() { game.pressCancel(); },
+  onPuff(x, y) { tryPuff(x, y); },
 });
+const joystick = createJoystickView(document.getElementById('stick'));
+const nowSec = () => performance.now() / 1000;
 canvas.addEventListener('pointerdown', (e) => {
+  // PC の右クリック: 溜めている間は払う（左ボタンを押したままの右ボタンは pointerdown にならないので、mousedown でも受ける）
+  if (e.pointerType === 'mouse' && e.button === 2) { tryPuff(e.clientX, e.clientY); return; }
   if (e.pointerType === 'mouse' && e.button !== 0) return;
   // 導入（S6）: ゲームが始まるまで、画面のタップは導入のもの（飛ばす。TAP の画面は受け取るだけで、始めるのは離したとき）。長押しにはならない
   if (introFlow.consumePointer(e.timeStamp)) return;
@@ -133,13 +145,18 @@ canvas.addEventListener('pointerdown', (e) => {
   if (replay.active && !replay.finished) { skipReplay(); return; }
   // キャプチャに失敗しても（もう離した指・一部のブラウザ）押下は始める
   try { canvas.setPointerCapture?.(e.pointerId); } catch { /* キャプチャなしで続ける */ }
-  press.down(e.pointerId);
+  controls.down(e.pointerId, e.clientX, e.clientY, e.timeStamp / 1000);
 });
-canvas.addEventListener('pointerup', (e) => press.up(e.pointerId));
-canvas.addEventListener('pointercancel', (e) => press.cancel(e.pointerId));
+canvas.addEventListener('mousedown', (e) => { if (e.button === 2 && e.buttons & 1) tryPuff(e.clientX, e.clientY); });
+canvas.addEventListener('pointermove', (e) => controls.move(e.pointerId, e.clientX, e.clientY, e.timeStamp / 1000));
+canvas.addEventListener('pointerup', (e) => { if (e.pointerType === 'mouse' && e.button === 2) return; controls.up(e.pointerId, e.clientX, e.clientY, e.timeStamp / 1000); });
+canvas.addEventListener('pointercancel', (e) => controls.cancel(e.pointerId));
 // キャプチャが外れたら押下を打ち切る（離した後に来る分は何もしない。放つのは pointerup だけ）
-canvas.addEventListener('lostpointercapture', (e) => press.cancel(e.pointerId));
-window.addEventListener('blur', () => press.reset());
+canvas.addEventListener('lostpointercapture', (e) => controls.cancel(e.pointerId));
+// PC: 矢印キーか WASD で動く（溜めている間だけ。押しているキーの集まり）
+const keysDown = new Set();
+window.addEventListener('blur', () => { controls.reset(); keysDown.clear(); });
+window.addEventListener('keyup', (e) => keysDown.delete(e.code));
 // PC はマウスで長押ししながら、もう片方の手の Space キーで小爆発
 window.addEventListener('keydown', (e) => {
   // 導入の間: Space / Enter は画面のタップと同じ（TAP START が出ていれば始める）
@@ -154,14 +171,16 @@ window.addEventListener('keydown', (e) => {
   // リプレイの間は Space / Enter / Esc で飛ばす
   if (replay.active && !replay.finished && ['Space', 'Enter', 'Escape'].includes(e.code)) { e.preventDefault(); skipReplay(); return; }
   // 結果画面では奪わない（ボタンを Space で押せる）
-  if (e.code !== 'Space' || game.phase === 'over') return;
+  if (game.phase === 'over') return;
+  if (MOVE_KEYS.includes(e.code)) { e.preventDefault(); keysDown.add(e.code); return; }
+  if (e.code !== 'Space') return;
   e.preventDefault();
   if (!e.repeat) tryPuff();
 });
 window.addEventListener('contextmenu', (e) => e.preventDefault());
 document.addEventListener('visibilitychange', () => {
   // 隠れる前に押下を打ち切る（放たず、貯めた力は残る。戻ってきたとき指が引っかかったままにならない）
-  if (document.hidden) press.reset();
+  if (document.hidden) { controls.reset(); keysDown.clear(); }
   game.setHidden(document.hidden);
   if (document.hidden) { bgm.pause(); audio.suspend(); } else { audio.resume(); bgm.resume(); }
 });
@@ -249,7 +268,7 @@ function screenCue(x, y, z) {
   return { sx: city.x + (_cueV.x + 1) / 2 * city.w, sy: H - city.y - (_cueV.y + 1) / 2 * city.h, pan, dist };
 }
 game.on('combo', ({ k }) => {
-  const c = screenCue(0, 2.5, 0);
+  const c = screenCue(game.hero.x, 2.5, game.hero.z); // M1: 主人公の今の画面の位置
   hud.combo(k, c.sx, c.sy);
   audio.combo(k, c.pan);
 });
@@ -594,6 +613,19 @@ const cityCam = () => (replay.active ? replay.camera : blackhole.fullscreen ? bl
 const fullscreen = () => replay.active || cinematic.fullscreen || blackhole.fullscreen;
 const pointScaleFor = (cam) => (fullscreen() ? views.size.h : views.layout.city.h) * renderer.getPixelRatio() / (2 * Math.tan(THREE.MathUtils.degToRad(cam.fov) / 2));
 
+// M1: 主人公の体（向き・傾き）と、まわりの力のゆらぎを主人公の位置へ。上空カメラは主人公についていく
+let heroMoved = false;
+function syncHero() {
+  const h = game.hero;
+  heroAura.group.position.x = h.x; heroAura.group.position.z = h.z;
+  if (game.phase !== 'playing') return;
+  // 動き出すまでは今までどおりカメラの方を向く。動いたら進む向き（heading は x 軸から z 軸へ → 体の向き yaw は z 軸から x 軸へ）
+  if (Math.hypot(h.vx, h.vz) > 0.5) heroMoved = true;
+  if (heroMoved) enemyView.setHeroYaw(Math.atan2(Math.cos(h.heading), Math.sin(h.heading)));
+  enemyView.setHeroLean(h.lean);
+}
+views.follow(game.hero, { snap: true });
+
 // ゲームを gdt 秒進める（一度に進めるのは最大 0.1 秒ずつ。演出は時間を一気に進めることがある）
 function stepGame(gdt) {
   let left = gdt;
@@ -652,7 +684,13 @@ function simulate(dt) {
   blackhole.update(dt);
   if (replay.active) { finishFrame(dt, []); return; } // 演出が終わってリプレイが始まった（そのフレームは描くだけ）
   const cdt = cinematic.gameDt;
+  // M1: 動く向き（スティックか矢印キー・WASD。画面の右 = 世界の +x、画面の下 = 世界の +z。上空カメラは格子にまっすぐ沿って見下ろす）。
+  // ゲームは溜めている間だけ動かす
+  controls.update(nowSec());
+  const stick = controls.stick ? controls.dir : keyVector(keysDown);
+  game.setMove(stick.x, stick.y);
   if (cdt === null) game.update(dt); else stepGame(cdt);
+  syncHero();
   const wdt = cinematic.active ? cinematic.worldDt : dt;
   explosionView.setBirthScale(cinematic.active ? cinematic.blastBirthScale : 1);
   explosionView.setCoreScale(cinematic.active ? cinematic.blastCoreScale : 1);
@@ -676,13 +714,22 @@ function finishFrame(dt, live) {
   const drain = updateDrain(dt);
   hand.setDrain(drain);
   hand.update(dt, h.level, h.active, h.steady);
-  hud.update({ remaining: game.timer.remaining, power: game.power.value, max: CONFIG.power.max, canPuff: game.canPuff, alive: game.aliveCount, drain, dt });
+  hud.update({ remaining: game.timer.remaining, power: game.power.value, max: CONFIG.power.max, alive: game.aliveCount, drain, dt, hero: game.hero, line: clearLine() });
+  // M1: 浮かぶジョイスティック（遊んでいる間だけ）
+  joystick.update(game.phase === 'playing' && !cinematic.active ? controls.stick : null);
   // 最後の一発を放ってから結果までずっと HUD は出さない（両手が玉を握り込む間も、リプレイの間も）
   hud.setVisible(!debugCam && !cinematic.active && !replay.active && !blackhole.active);
   updateAudio(live, dt);
   updateResult(dt);
 }
 
+// M1: 撃退ライン（力の %）は、今の主人公の所で放ったときに街じゅうの軍勢へ届く力（中心から離れるほど上がる。1 m ごとに求め直す）
+let lineKey = NaN, lineVal = hud.threshold;
+function clearLine() {
+  const d = Math.round(Math.hypot(game.hero.x, game.hero.z));
+  if (d !== lineKey) { lineKey = d; lineVal = clearThreshold(CONFIG, maxEnemyReachFrom(CONFIG, d)); }
+  return lineVal;
+}
 // 吸われている間の知らせ（遊んでいる間だけ）。左右は掴んでいる者の今の画面の位置から、吸う力の重みで（音は画面に従う）
 const _grabPans = [];
 function updateDrain(dt) {
@@ -888,6 +935,7 @@ if (debugMode) {
   window.__hand = hand;
   window.__enemyView = enemyView;
   window.__patrolGlow = patrolGlow;
+  window.__controls = controls; // M1: 撮影で指の操作を起こす（down / move / up / update）
   Object.defineProperty(window, '__firstFrameMs', { get: () => firstFrameMs });
   window.__cinematic = cinematic;
   window.__replay = replay;

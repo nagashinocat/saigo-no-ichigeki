@@ -94,6 +94,10 @@ export function fitCityCamera(cam, aspect) {
   cam.userData.baseQuat = cam.quaternion.clone();
 }
 
+// M1（spec §16）: 上空カメラは主人公（follow の { x, z }）を真ん中に保ったまま、臨界減衰のばね（rate 1/秒）でなめらかについていく。
+// 姿勢と距離感（fitCityCamera が原点のまわりで解いた basePos・baseQuat）はそのまま、ついていく点の分だけ平行に動く
+export const CITY_FOLLOW = { rate: 6 };
+
 const WHITE = new THREE.Color(1, 1, 1);
 const _clear = new THREE.Color();
 
@@ -104,6 +108,18 @@ export function createViews(renderer, getTier = () => ({ bloom: false, heatHaze:
   const _dir = new THREE.Vector3(), _q = new THREE.Quaternion(), _e = new THREE.Euler();
   let shakeClock = 0;
   const _blasts = [];
+  // ついていく点（主人公の位置の同じ物）と、なめらかにした今の点・速さ
+  let followTarget = null;
+  const F = { x: 0, z: 0, vx: 0, vz: 0 };
+  function stepFollow(dt) {
+    if (!followTarget || !(dt > 0)) return;
+    const w = CITY_FOLLOW.rate;
+    for (const [p, v, k] of [['x', 'vx', 'x'], ['z', 'vz', 'z']]) {
+      // 臨界減衰のばね（陰的に解く: 大きな dt でも振動しない）
+      F[v] = (F[v] + w * w * (followTarget[k] - F[p]) * dt) / (1 + 2 * w * dt + w * w * dt * dt);
+      F[p] += F[v] * dt;
+    }
+  }
   // 近い上空カメラの位置・視線と、縦横比 aspect のときの半画角の tan
   function viewInfo(aspect) {
     const { basePos, baseQuat } = cityCamera.userData;
@@ -132,6 +148,13 @@ export function createViews(renderer, getTier = () => ({ bloom: false, heatHaze:
     // 画面全体の大きさ（大きな一発の演出は画面全体を使う）
     get size() { return size; },
     get pullback() { return follow.t; },
+    // M1: 上空カメラがついていく点（主人公の位置 { x, z } の同じ物。null で原点に戻す）。snap: なめらかにせず、すぐその点へ
+    follow(target, { snap = false } = {}) {
+      followTarget = target;
+      if (snap || !target) { F.x = target?.x ?? 0; F.z = target?.z ?? 0; F.vx = F.vz = 0; }
+    },
+    // 今ついていっている点（なめらかにした後）
+    get followAt() { return { x: F.x, z: F.z }; },
     resize(w, h) {
       renderer.setSize(w, h, false);
       layout = layoutViews(w, h);
@@ -148,8 +171,11 @@ export function createViews(renderer, getTier = () => ({ bloom: false, heatHaze:
       _dir.set(0, 0, -1).applyQuaternion(baseQuat);
       _blasts.length = 0;
       for (const b of blasts) _blasts.push({ id: b.id, radius: b.shot.radius, front: b.front, small: !!b.shot.small });
+      // 爆発で下がる量は、ついていく点（主人公＝一発の爆心）のまわりで解く
       const t = follow.update(dt, { ...viewInfo(cityCamera.aspect), blasts: _blasts, front: cam.front ?? 0, hold });
+      stepFollow(dt);
       cityCamera.position.copy(basePos).addScaledVector(_dir, -t);
+      cityCamera.position.x += F.x; cityCamera.position.z += F.z;
       shakeClock += dt;
       const a = cam.shake ?? 0;
       const k = shakeClock * 31;
@@ -162,7 +188,9 @@ export function createViews(renderer, getTier = () => ({ bloom: false, heatHaze:
     widePosition(radius, aspect, out) {
       const v = viewInfo(aspect);
       const t = wholeFitPullback(radius, v.pos, v.dir, v.tanV, v.tanH);
-      return out.copy(cityCamera.userData.basePos).addScaledVector(_dir.fromArray(v.dir), -t);
+      out.copy(cityCamera.userData.basePos).addScaledVector(_dir.fromArray(v.dir), -t);
+      out.x += F.x; out.z += F.z;
+      return out;
     },
     // 画面全体を一つのカメラで描く（大きな一発の演出）。手の画面と HUD は描かない
     renderFull(scene, camera, fx) {

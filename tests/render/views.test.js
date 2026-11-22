@@ -80,3 +80,43 @@ test('真っ白の間に、画面全体の描画（画面効果の大きさ・lo
   expect(log.some(([k]) => k === 'render')).toBe(false);
   expect(log.some(([k]) => k === 'clear')).toBe(true);
 });
+
+// M1（spec §16「上空のカメラは、主人公を真ん中に保ったまま、なめらかについていく。上空の距離感は今のまま」）
+test('M1: 上空カメラは主人公についていく: なめらかに（一歩で跳ばない）、追いつけば同じ距離感で主人公が前と同じ画面の位置に来る', async () => {
+  const THREE = await import('three');
+  const { createViews } = await import('../../src/render/views.js');
+  const renderer = { setSize() {}, setViewport() {}, setScissor() {}, setScissorTest() {}, getPixelRatio: () => 1, getRenderTarget: () => null, setRenderTarget() {}, render() {}, getClearColor(c) { return c; }, getClearAlpha: () => 1, setClearColor() {}, clear() {} };
+  const views = createViews(renderer, () => ({ bloom: false, heatHaze: false }));
+  views.resize(390, 844);
+  const cam = views.cityCamera;
+  views.updateCamera(1 / 60);
+  const at0 = new THREE.Vector3(0, 1, 0).project(cam);
+  const d0 = cam.position.length();
+  const target = { x: 60, z: -40 };
+  views.follow(target);
+  views.updateCamera(1 / 60);
+  // 一歩では跳ばない（主人公 11 m/s より少しだけ遅れて動き出す）
+  expect(cam.position.x).toBeGreaterThan(0);
+  expect(cam.position.x).toBeLessThan(5);
+  for (let i = 0; i < 240; i++) views.updateCamera(1 / 60);
+  const at = new THREE.Vector3(target.x, 1, target.z).project(cam);
+  expect(at.x).toBeCloseTo(at0.x, 3);
+  expect(at.y).toBeCloseTo(at0.y, 3);
+  // 距離感（主人公からの距離）は同じ
+  expect(cam.position.distanceTo(new THREE.Vector3(target.x, 0, target.z))).toBeCloseTo(d0, 3);
+  // 全体の見える構図（widePosition）も主人公のまわり
+  const w = views.widePosition(300, 390 / 844, new THREE.Vector3());
+  expect(w.x).toBeCloseTo(cam.position.x, 3);
+  // 速く走っても主人公は画面の真ん中の近くから外れない（11 m/s、遅れは数 m）
+  const moving = { x: 60, z: -40 };
+  views.follow(moving);
+  let worst = 0;
+  for (let i = 0; i < 180; i++) {
+    moving.x += 11 / 60;
+    views.updateCamera(1 / 60);
+    const p = new THREE.Vector3(moving.x, 1, moving.z).project(cam);
+    worst = Math.max(worst, Math.abs(p.x - at0.x));
+  }
+  expect(worst).toBeGreaterThan(0.001);
+  expect(worst).toBeLessThan(0.12);
+});

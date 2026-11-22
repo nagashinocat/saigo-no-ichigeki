@@ -129,7 +129,19 @@ function grabPose(e, fronts, time, cfg) {
   };
 }
 
-export function bikePose(e, fronts = [], time = 0, cfg = CONFIG) {
+// M1: origin は主人公の位置 { x, z }（省けば原点）。置き方はどれも主人公から見た位置で決める（掴む輪・近くの高さ・倒れて外へ飛ぶ向き）。
+// 地面のえぐれ（fronts）も主人公のまわり（えぐれができるのは放ったあとで、そのとき主人公は爆心にいて動かない）
+export function bikePose(e, fronts = [], time = 0, cfg = CONFIG, origin = null) {
+  if (origin && (origin.x !== 0 || origin.z !== 0)) {
+    const local = e.x != null ? { ...e, x: e.x - origin.x, z: e.z - origin.z } : e;
+    const p = poseAtOrigin(local, fronts, time, cfg);
+    if (p) { p.x += origin.x; p.z += origin.z; }
+    return p;
+  }
+  return poseAtOrigin(e, fronts, time, cfg);
+}
+
+function poseAtOrigin(e, fronts, time, cfg) {
   if (e.state === 'grab' || e.state === 'cling') return grabPose(e, fronts, time, cfg);
   if (e.state === 'dead') {
     const k = (e.deadTime ?? 0) / BIKE.deadFling;

@@ -1,13 +1,19 @@
-// 街の画面の上端に重ねる HUD（残り時間・街の軍勢）と、手の帯の上端の力の表示（太いゲージと大きな数字）、
-// 手の帯の右下の小爆発のボタン（長押しの指とは別の指で押す。PC では Space キーでも押せる）、吸われている間の画面の縁の脈打ち
+// 街の画面の上端に重ねる HUD（残り時間・街の軍勢・M1 の「中心まで ◯ m」と街の中心への矢印）と、手の帯の上端の力の表示（太いゲージと大きな数字）、
+// 吸われている間の画面の縁の脈打ち。M1（持ち主 09:15）: 払うのボタンはなくした（溜めている間の 2 本目の指の短いタップ、PC は Space か右クリック）
 import { clearThreshold } from '../game/charge.js';
 import { DRAIN_FX } from './drainFx.js';
 
-export function puffButtonRect(layout, height) {
-  const { hand } = layout;
-  const size = Math.round(Math.min(80, Math.max(56, Math.min(hand.w, hand.h) * 0.24)));
-  const margin = Math.round(Math.max(10, size * 0.22));
-  return { left: hand.x + hand.w - margin - size, top: height - hand.y - margin - size, size };
+// M1（spec §16）: 街の中心までの距離（m）。中心のそば（CENTRE_NEAR m 未満）では「街の中心」
+export const CENTRE_NEAR = 5;
+export const centreText = (d) => (d < CENTRE_NEAR ? '街の中心' : `中心まで ${Math.round(d)} m`);
+// 主人公（hero: { x, z }）から街の中心（原点）への向きを、上空カメラの画面の角度（度。右が 0、時計回り）へ。
+// 上空カメラは道路の格子にまっすぐ沿って見下ろす（-z が画面の上、+x が右。views.js の CITY_CAMERA.azimuthDeg = 0）
+export const centreArrowDeg = (hero) => Math.atan2(-hero.z, -hero.x) * 180 / Math.PI;
+// 「中心まで」の場所（画面の左上原点の px）: 上の帯の真ん中（左は R2 の場所に空け、右は残り時間と街の軍勢）
+export function centreRect(layout, height) {
+  const { hud } = layout;
+  const width = Math.round(Math.min(220, hud.w * 0.4));
+  return { left: Math.round(hud.x + (hud.w - width) / 2), top: height - hud.y - hud.h + Math.round(Math.max(6, hud.h * 0.12)), width };
 }
 
 export function powerText(power, max) {
@@ -69,14 +75,14 @@ const STAGE_RGB = { low: [255, 190, 92], ready: [255, 250, 236], full: [255, 255
 const DRAIN_RGB = [255, 70, 190];
 const mixRgb = (a, b, k) => `rgb(${a.map((v, i) => Math.round(v + (b[i] - v) * k)).join(',')})`;
 
-export function createHud(root, { onPuff, threshold = clearThreshold() } = {}) {
+export function createHud(root, { threshold = clearThreshold() } = {}) {
   // 上の帯: 左は空けておく（R2 の「届かない軍勢 あと N 体」の場所）、右に残り時間と街の軍勢
   root.innerHTML = '<div class="hud-drain"></div>'
     + '<div class="hud-strip"><div class="hud-left"></div><div class="hud-right"><div class="hud-time"></div><div class="hud-army"></div></div></div>'
+    + '<div class="hud-centre"><i class="hud-arrow"></i><span></span></div>'
     + '<div class="hud-gauge low" role="meter" aria-label="力" aria-valuemin="0" aria-valuemax="100"><div class="hud-track"><i class="hud-ghost"></i><i class="hud-fill"></i><i class="hud-pulse"></i></div>'
     + '<div class="hud-tick"></div><div class="hud-tick-label">撃退ライン</div><div class="hud-lost"></div></div>'
     + '<div class="hud-pct low"><small>力</small><b>0</b><em>%</em></div>'
-    + '<button type="button" class="hud-puff off" aria-disabled="true"><b>払う</b><small>Space</small></button>'
     + '<div class="hud-hint"></div>'
     + '<div class="hud-short"></div>'
     + '<div class="hud-combo"><b></b></div>'
@@ -89,7 +95,7 @@ export function createHud(root, { onPuff, threshold = clearThreshold() } = {}) {
   const tick = gauge.querySelector('.hud-tick'), tickLabel = gauge.querySelector('.hud-tick-label');
   const pct = root.querySelector('.hud-pct'), pctNum = pct.querySelector('b'), lostEl = gauge.querySelector('.hud-lost');
   const vignette = root.querySelector('.hud-drain');
-  const button = root.querySelector('.hud-puff');
+  const centreEl = root.querySelector('.hud-centre'), centreArrow = centreEl.querySelector('.hud-arrow'), centreSpan = centreEl.querySelector('span');
   const hintEl = root.querySelector('.hud-hint');
   const shortEl = root.querySelector('.hud-short');
   const comboEl = root.querySelector('.hud-combo'), comboK = comboEl.querySelector('b');
@@ -100,14 +106,13 @@ export function createHud(root, { onPuff, threshold = clearThreshold() } = {}) {
   // CSS の animation を頭から（同じ class を付け直す）
   const restart = (el, cls) => { el.classList.remove(cls); void el.offsetWidth; el.classList.add(cls); };
   let hintTimer = 0;
-  // 押した瞬間に払う（click は指を離すまで来ない）。押せないときの押下も、ここで受け止めて長押しにはしない
-  button.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); onPuff?.({ x: e.clientX, y: e.clientY }); });
-  button.addEventListener('contextmenu', (e) => e.preventDefault());
+  let lineAt = threshold;
   tick.style.left = tickLabel.style.left = `${threshold}%`;
-  let shownPct, shownTime, shownFill, shownOn, shownArmy, shownStage, shownGhost, shownLost, shownColor, shownVig, shownGk;
+  let shownPct, shownTime, shownFill, shownArmy, shownStage, shownGhost, shownLost, shownColor, shownVig, shownGk, shownCentre, shownDeg, shownLine;
   let ghostF = 0;
   return {
-    threshold,
+    // 今の撃退ライン（M1: 主人公が中心から離れるほど上がる。main.js が update に渡す）
+    get threshold() { return lineAt; },
     // layout: layoutViews の戻り値、height: 画面の高さ（Rect は左下原点なので上端からの位置へ直す）
     place(layout, height) {
       const { hud, hand, city } = layout;
@@ -118,10 +123,10 @@ export function createHud(root, { onPuff, threshold = clearThreshold() } = {}) {
       Object.assign(gauge.style, { left: g.left + 'px', top: g.top + 'px', width: g.width + 'px', height: g.height + 'px' });
       const n = pctRect(layout, height);
       Object.assign(pct.style, { left: n.left + 'px', top: n.top + 'px', fontSize: n.fontSize + 'px' });
-      const r = puffButtonRect(layout, height);
+      const c = centreRect(layout, height);
+      Object.assign(centreEl.style, { left: c.left + 'px', top: c.top + 'px', width: c.width + 'px' });
       // ひとことの知らせは、手の帯のすぐ上（街の画面の下端）
       Object.assign(hintEl.style, { left: hand.x + 'px', width: hand.w + 'px', top: height - hand.y - hand.h - 44 + 'px' });
-      Object.assign(button.style, { left: r.left + 'px', top: r.top + 'px', width: r.size + 'px', height: r.size + 'px', fontSize: Math.round(r.size * 0.3) + 'px' });
     },
     // 短い知らせ（例: 足りずに離したとき）を sec 秒だけ出す
     hint(text, sec = 1.4) {
@@ -130,10 +135,10 @@ export function createHud(root, { onPuff, threshold = clearThreshold() } = {}) {
       clearTimeout(hintTimer);
       hintTimer = setTimeout(() => hintEl.classList.remove('show'), sec * 1000);
     },
-    // R1b: 払える量に足りない: 押した所（x, y px。省けば払うのボタンの上）に小さく「足りない」
+    // R1b: 払える量に足りない: 押した所（x, y px。省けば街の画面の真ん中。PC のキーは main.js が主人公の画面の位置を渡す）に小さく「足りない」
     short(x, y) {
       if (!layoutNow) return;
-      if (!(Number.isFinite(x) && Number.isFinite(y))) { const r = puffButtonRect(layoutNow, heightNow); x = r.left + r.size / 2; y = r.top; }
+      if (!(Number.isFinite(x) && Number.isFinite(y))) { const { city } = layoutNow; x = city.x + city.w / 2; y = heightNow - city.y - city.h / 2; }
       const p = shortPos(layoutNow, heightNow, x, y);
       shortEl.textContent = SHORT_TEXT;
       Object.assign(shortEl.style, { left: p.x + 'px', top: p.y + 'px' });
@@ -160,13 +165,21 @@ export function createHud(root, { onPuff, threshold = clearThreshold() } = {}) {
       annTimer = setTimeout(() => annEl.classList.remove('show'), sec * 1000);
     },
     // alive: 街に生きている軍勢の数（省けば出さない）。drain: 吸われている間の知らせ（drainFx の状態。省けば無し）、dt: 秒
-    update({ remaining, power, max, canPuff, alive = null, drain = null, dt = 0 }) {
+    // hero（M1）: 主人公の位置 { x, z }（「中心まで ◯ m」と矢印。省けば出さない）。line（M1）: 今の撃退ライン（力の %。省けば作ったときの値）
+    update({ remaining, power, max, alive = null, drain = null, dt = 0, hero = null, line = null }) {
+      if (line != null && Math.abs(line - lineAt) > 1e-6) lineAt = line;
+      const ls = lineAt.toFixed(2);
+      if (ls !== shownLine) { tick.style.left = tickLabel.style.left = `${ls}%`; shownLine = ls; }
+      const ct = hero ? centreText(Math.hypot(hero.x, hero.z)) : '';
+      if (ct !== shownCentre) { centreSpan.textContent = ct; centreEl.classList.toggle('near', !!hero && Math.hypot(hero.x, hero.z) < CENTRE_NEAR); centreEl.style.visibility = hero ? 'visible' : 'hidden'; shownCentre = ct; }
+      const deg = hero ? Math.round(centreArrowDeg(hero)) : 0;
+      if (deg !== shownDeg) { centreArrow.style.transform = `rotate(${deg}deg)`; shownDeg = deg; }
       if (alive !== shownArmy) { army.textContent = alive == null ? '' : armyText(alive); shownArmy = alive; }
       const n = powerPct(power, max);
       if (n !== shownPct) { pctNum.textContent = String(n); gauge.setAttribute('aria-valuenow', String(n)); shownPct = n; }
       const t = String(Math.ceil(remaining));
       if (t !== shownTime) { time.textContent = `残り ${t} 秒`; shownTime = t; }
-      const stage = powerStage(power, max, threshold);
+      const stage = powerStage(power, max, lineAt);
       if (stage !== shownStage) {
         for (const el of [gauge, pct]) { el.classList.remove('low', 'ready', 'full'); el.classList.add(stage); }
         shownStage = stage;
@@ -191,11 +204,6 @@ export function createHud(root, { onPuff, threshold = clearThreshold() } = {}) {
       const lost = drain && drain.lostShow > 0 && drain.lost >= 0.05 ? lostText(drain.lost) : '';
       if (lost !== shownLost) { lostEl.textContent = lost; shownLost = lost; }
       lostEl.style.opacity = drain && drain.lostShow > 0 ? String(Math.min(1, drain.lostShow / 0.4)) : '0';
-      if (canPuff !== shownOn) {
-        button.classList.toggle('off', !canPuff);
-        button.setAttribute('aria-disabled', String(!canPuff));
-        shownOn = canPuff;
-      }
     },
   };
 }

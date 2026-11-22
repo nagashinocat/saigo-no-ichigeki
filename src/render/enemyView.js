@@ -528,7 +528,7 @@ export function createEnemyView(scene, tier, { sunDir = new THREE.Vector3(0.8, 0
   group.add(hero, heroXray);
 
   const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _p = new THREE.Vector3(), _s = new THREE.Vector3(1, 1, 1), _e = new THREE.Euler();
-  let time = 0, heroYaw = 0, heroLift = 0;
+  let time = 0, heroYaw = 0, heroLift = 0, heroLean = 0;
   // 演出の一人（最後の一発の軍勢の後ろのカットのいちばん手前の乗り手）: { id, pose, group }。その一人（と group の乗り手）は本当の場所ではなく pose で描く（cinematic.js が決める）
   let focus = null, focusIds = null;
   // その一人の専用の体（riderBody.js、距離の場の網。setRiderBody で渡す）。同じ材質で、インスタンス 1 つ
@@ -556,7 +556,8 @@ export function createEnemyView(scene, tier, { sunDir = new THREE.Vector3(0.8, 0
     // silhouette は主人公を光を背にした影絵にする強さ（0〜1。リプレイの最後のカット）、
     // aids は上空カメラ用の補助表示（目印・隠れた者の目印・建物の陰の透かし・主人公の透かし）を出すか（最後の一発の演出・リプレイの間は false）
     // extra: 決まった姿勢で描くバイク（S6 の導入。bikePose の戻り値と同じ形に id を足したもの）。軍勢の一覧のあとに並べる
-    // heroPos（R1 fix1）: 主人公の位置 { x, z }（既定は原点）。大物の探照灯が来た直後に掃く中心・近づいて照らす先
+    // heroPos（R1 fix1）: 主人公の位置 { x, z }（既定は原点）。大物の探照灯が来た直後に掃く中心・近づいて照らす先。
+    // M1: 主人公の体もここに描き、軍勢の置き方（掴む輪・近くの高さ）もここから。地面のえぐれの中心（爆心）も同じ所（放ったあと主人公は動かない）
     sync(enemies, { fronts = [], pointScale = 500, glow = 0, dt = 0, pixelRatio = 1, silhouette = 0, aids = true, extra = null, heroPos = ORIGIN } = {}) {
       time += dt;
       aidsOn = aids;
@@ -577,7 +578,7 @@ export function createEnemyView(scene, tier, { sunDir = new THREE.Vector3(0.8, 0
         _q.setFromEuler(_e.set(b.pitch, b.yaw, b.roll, 'YXZ'));
         mesh.setMatrixAt(n, _m.compose(_p, _q, _s));
         markerPos.setXYZ(n, b.x, b.y + ENEMY_LOOK.height * 1.9, b.z);
-        const ground = groundHeight(Math.hypot(b.x, b.z), fronts);
+        const ground = groundHeight(Math.hypot(b.x - heroPos.x, b.z - heroPos.z), fronts);
         _p.set(b.x, ground + 0.06, b.z);
         shadows.setMatrixAt(n, _m.compose(_p, _q.setFromEuler(_e.set(0, b.yaw, 0)), _s));
         const h = hash(id);
@@ -606,7 +607,7 @@ export function createEnemyView(scene, tier, { sunDir = new THREE.Vector3(0.8, 0
           if (n >= CAPACITY) break;
           if (!!e.patrol !== pass) continue;
           if (focus && (e.id === focus.id || focusIds?.has(e.id))) continue; // 演出の乗り手は下で、演出の姿勢で描く
-          const b = bikePose(e, fronts, time);
+          const b = bikePose(e, fronts, time, undefined, heroPos);
           if (!b) continue; // 吹き飛んで消えた
           place(b, e.id, e.state === 'dead' ? 1 - (e.deadTime ?? 0) / BIKE.deadFling : 1, e.kind ?? null, e.state === 'stagger' ? 1 - Math.min(1, (e.staggerT ?? 0) / STAGGER_SEC) : 0);
           if (e.kind === 'boss') bossPose = { e, b };
@@ -639,8 +640,9 @@ export function createEnemyView(scene, tier, { sunDir = new THREE.Vector3(0.8, 0
       mesh.instanceMatrix.needsUpdate = true;
       shadows.instanceMatrix.needsUpdate = true;
       anim.needsUpdate = pose.needsUpdate = shadowAttr.needsUpdate = move.needsUpdate = true;
-      _p.set(0, heroLift, 0); // 主人公は浮いている（足元の地面が下がっても y=0。導入の TAP START のあとだけ下から浮き上がる）
-      hero.setMatrixAt(0, _m.compose(_p, _q.setFromEuler(_e.set(0, heroYaw, 0)), _s));
+      _p.set(heroPos.x, heroLift, heroPos.z); // 主人公は浮いている（足元の地面が下がっても y=0。導入の TAP START のあとだけ下から浮き上がる）
+      // M1: 進む向きを向き、速さに応じて前へ傾く（heroLean）
+      hero.setMatrixAt(0, _m.compose(_p, _q.setFromEuler(_e.set(heroLean, heroYaw, 0, 'YXZ')), _s));
       hero.instanceMatrix.needsUpdate = true;
     },
     // 演出の一人: { id, pose: { x, y, z, yaw, pitch, roll, reach, thrust, keep, head } }（pose は毎フレーム読む）。null でやめる。
@@ -670,6 +672,8 @@ export function createEnemyView(scene, tier, { sunDir = new THREE.Vector3(0.8, 0
     setHeroYaw(yaw) { heroYaw = yaw; },
     // 主人公の高さのずれ（m。S6 の TAP START で浮き上がる間だけ。ふだん 0）
     setHeroLift(y) { heroLift = Number.isFinite(y) ? y : 0; },
+    // M1: 前への傾き（rad。進む向きへ）
+    setHeroLean(a) { heroLean = Number.isFinite(a) ? a : 0; },
     get heroYaw() { return heroYaw; },
   };
 }
