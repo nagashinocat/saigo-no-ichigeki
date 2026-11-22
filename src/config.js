@@ -10,14 +10,18 @@ export const CONFIG = {
   // 貯めた力: 長押しの間だけ chargePerSec で貯まる（max で止まる）。離すと最後の一発（minRelease 未満なら放たず、貯めた力は残る）
   // M2（§16 の釣り合い。数は task-M2-report.md）: 払うが 3 回になり、隠れるで見失わせられるので、貯める速さ 3 → 1.9/秒
   // （見つからずに貯めきって約 53 秒。最善の操作で満タン p50 約 53 秒・撃退成功 7〜8 割）
-  power:   { max: 100, chargePerSec: 1.9, minRelease: 10 },
+  // R1f（持ち主 19:47「一回見つかって払うとほぼ詰む」・今日の街）: 1.9 → 1.92（見つからずに貯めきって約 52.1 秒）。払う 4.5 → 3・吸う 1.5 → 1.2 と合わせて、
+  // 一度見つかって払っても満タンに届く余り（60 秒で 115 − 払う 3 × 3）を作る。今日の街 120 日で最善の撃退成功 85/120（71%）、満タン p50 52.1 秒
+  // （数は task-R1f-report.md。scripts/daily-balance.mjs）
+  power:   { max: 100, chargePerSec: 1.92, minRelease: 10 },
   // 小爆発: 貯めた力を cost 使い、主人公のまわり radius m の軍勢を払う（ビルは壊さず、破壊額にも入らない）
   // 費用は持ち主の決定（2026-11-21、払うの費用・半径の調整を許可）で 8 → 4.5（速く群れる軍勢を何度も払えるように。釣り合いは下の enemy の説明）
   // R0（持ち主 22:15「かなり簡単」）: 軍勢を速く・集まるようにしたので、払う回数が増える（最善の操作で 15 → 約 23 回）。費用 4.5 → 3 で釣り合わせる
   // R1: 一度の払うで combo.from 体以上を払うと「×k」を出す（見せるだけ。力は戻さない: 持ち主 09:11 で払うは回数制限になるため、
   // 力を戻す払うの腕前はやめた）
   // M2（持ち主 09:11「払うを 3 回くらいの回数制限」）: 1 回のゲームで uses 回まで。払うたびに力も cost 使う（2.8 → 4.5。持ち主の選択）
-  puff:    { cost: 4.5, uses: 3, radius: 22, combo: { from: 3 } },
+  // R1f: 費用 4.5 → 3（持ち主の選択は「払うたびに力も少し使う」。3 回払っても 9 で、見つかったあとも満タンに届きうる。上の power の説明）
+  puff:    { cost: 3, uses: 3, radius: 22, combo: { from: 3 } },
   // 最後の一発の半径（貯めた力 / power.max で決まる）。S8: max 440 → 720（街の端 680 m と、見回る軍勢の一番外
   // （maxEnemyReach、約 603 m）より十分先まで。最大溜めなら街のどこにいる軍勢も必ず巻き込む）
   // fix1（持ち主 15:33「軍勢は街の全体に」）: 見回る者が街の端まで行くので max 720 → 730（maxEnemyReach 約 685 m + 40 m より先）
@@ -56,7 +60,8 @@ export const CONFIG = {
   enemy:   {
     // R1（重い者・吸う者・大物を入れた仮の釣り合い。持ち主 09:11 で動く主人公と払うの回数制限に変わるので、そこで作り直す）:
     // 払う 3 → 2.8、吸う 1.4 → 1.5/秒（tests/game/balance.test.js の範囲に戻す。数は task-R1-report.md）
-    spawnPerSec: 0.5, surgeStart: 40, surgeEnd: 52, surgeMul: 11, drainPerSec: 1.5, maxGrabbing: 6,
+    // R1f: 吸う 1.5 → 1.2/秒（6 人で 7.2/秒。貯める速さの 3 倍より速いまま。上の power の説明）
+    spawnPerSec: 0.5, surgeStart: 40, surgeEnd: 52, surgeMul: 11, drainPerSec: 1.2, maxGrabbing: 6,
     spawnDist: [50, 66], roamDist: 75, laneSpread: 1.6,
     searchSpeed: 30, inwardBias: 0.8, turnRate: 16, lookAhead: 2.5, accel: 30, brake: 70,
     // M2（持ち主 09:11「敵の前方ライトを少し広くして」）: 見つけるのは前を照らすライトの中だけ。前の 28 m の丸 → 前向きの扇
