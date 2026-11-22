@@ -26,7 +26,7 @@ import { createRng } from './rng.js';
 import { createControls, keyVector, MOVE_KEYS, screenToWorld } from './input/controls.js';
 import { createJoystickView } from './ui/joystick.js';
 import { createKeyTwice } from './input/keyTwice.js';
-import { createFlickStreak } from './ui/flickStreak.js';
+import { createPuffBuffer } from './input/puffBuffer.js';
 import { createLookout } from './game/lookout.js';
 import { createLookoutView } from './ui/lookoutView.js';
 import { createDashStreak } from './render/dashStreak.js';
@@ -126,12 +126,15 @@ const hud = createHud(document.getElementById('hud'), { total: CONFIG.roundSecon
 const timeTicks = createTimeTicks();
 // 払う。力が払える量に足りなければ、押した所（キーなら主人公の画面の位置）に小さく「足りない」（持ち主 08:24 の制作側の判断）。
 // 溜めていない（1 本目の指がない）ときは払えない（spec §16 09:15）
+// R1f（持ち主 18:14「払うの反応を確実に」）: 前の払うが広がっている間（busy）のタップは覚えておき、広がり終わったら払う（input/puffBuffer.js）
+const puffBuffer = createPuffBuffer();
 function tryPuff(x, y) {
   if (!controls.charging) return false;
   if (!(Number.isFinite(x) && Number.isFinite(y))) { const c = screenCue(game.hero.x, 2.5, game.hero.z); x = c.sx; y = c.sy; }
-  if (game.puff()) return true;
-  // M2: 3 回使い切ったら「もう払えない」、力が足りなければ「足りない」
+  if (game.puff()) { puffBuffer.clear(); return true; }
+  // M2: 3 回使い切ったら「もう払えない」、力が足りなければ「足りない」（どちらも毎回出す）
   const why = game.puffBlock;
+  if (puffBuffer.push(x, y, nowSec(), why)) return false;
   if (why === 'out') hud.short(x, y, OUT_TEXT); else if (why === 'short') hud.short(x, y);
   return false;
 }
@@ -157,26 +160,37 @@ const controls = createControls({
   onChargeEnd() { game.pressEnd(); },
   onChargeCancel() { game.pressCancel(); },
   onPuff(x, y) { tryPuff(x, y); },
-  // R1e（持ち主 16:45）: 2 本目の指のシュッ。払った線に短い光の筋（隠れられなくても、シュッと受け取ったことは見せる）
-  onHide(d, s) { flickStreak.show(s); tryHide(d); },
+  // R1f（持ち主 18:14「LOOK OUT!の矢印をタップ」）: 2 本目の指のタップが LOOK OUT! の矢印の当たりに触れたら、その物陰へ隠れる（シュッはやめた）
+  onHide() { tryHideArrow(); },
+  hideHit: (x, y) => lookoutView.hit(x, y),
 });
-const flickStreak = createFlickStreak(document.getElementById('flick'));
-// R1e（持ち主 16:55）: 見つかりそうなときの「LOOK OUT!」と、シュッで入れる物陰の向きの矢印（音は出さない）
+// R1e（持ち主 16:55）: 見つかりそうなときの「LOOK OUT!」と、隠れられる物陰の向きの矢印（音は出さない）。R1f: 矢印は大きな当たり（タップで隠れる）
 const lookout = createLookout();
 const lookoutView = createLookoutView(document.getElementById('lookout'));
-// M2（持ち主 15:20）: 隠れる。R1e（持ち主 16:45）から指は 2 本目のシュッ（スティックを 2 回倒すはやめた）、PC は向きのキーの 2 回押し。
+let lookoutNow = null; // 今のフレームの LOOK OUT!（createLookout().update の戻り値の写し）
+// M2（持ち主 15:20）: 隠れる。R1f から指は LOOK OUT! の矢印のタップ（tryHideArrow）、PC は向きのキーの 2 回押し（tryHide）か H キー（矢印が出ていれば）。
 // d は画面の向き。上空カメラの向きで街の向きへ直す（screenToWorld。スティックの動く向きと同じ写し）。
 // 掴まれている間・次まで待つ間・物陰がない向きは、主人公の上に短い知らせ
 const HIDE_TEXT = { grabbed: '掴まれていて隠れられない', cooldown: 'まだ隠れられない', nocover: '隠れる物陰がない' };
+function hideFailed(why) {
+  const c = screenCue(game.hero.x, 2.5, game.hero.z);
+  const reason = why ?? 'nocover';
+  if (HIDE_TEXT[reason]) hud.short(c.sx, c.sy, HIDE_TEXT[reason]);
+  return false;
+}
 function tryHide(d) {
   if (!controls.charging || game.phase !== 'playing') return false;
   const why = game.hideBlock;
   const w = screenToWorld(d.x, d.y, CITY_CAMERA.azimuthDeg);
   if (game.hide(w.x, w.z)) return true;
-  const c = screenCue(game.hero.x, 2.5, game.hero.z);
-  const reason = why ?? 'nocover';
-  if (HIDE_TEXT[reason]) hud.short(c.sx, c.sy, HIDE_TEXT[reason]);
-  return false;
+  return hideFailed(why);
+}
+// LOOK OUT! の矢印の物陰へ（矢印が出ていなければ何もしない）
+function tryHideArrow() {
+  if (!controls.charging || game.phase !== 'playing' || !lookoutNow?.show || !lookoutNow.spot) return false;
+  const why = game.hideBlock;
+  if (game.hideToward(lookoutNow.spot)) return true;
+  return hideFailed(why);
 }
 const keyFlick = createKeyTwice();
 const joystick = createJoystickView(document.getElementById('stick'));
@@ -213,6 +227,8 @@ window.addEventListener('keydown', (e) => {
   if (replay.active && !replay.finished && ['Space', 'Enter', 'Escape'].includes(e.code)) { e.preventDefault(); skipReplay(); return; }
   // 結果画面では奪わない（ボタンを Space で押せる）
   if (game.phase === 'over') return;
+  // R1f: H キーで、LOOK OUT! の矢印の物陰へ隠れる（矢印が出ているときだけ）
+  if (e.code === 'KeyH') { e.preventDefault(); if (!e.repeat) tryHideArrow(); return; }
   if (MOVE_KEYS.includes(e.code)) {
     e.preventDefault(); keysDown.add(e.code);
     // M2: 向きのキーの 2 回押しで隠れる（押し続けの repeat は数えない）
@@ -786,10 +802,13 @@ function finishFrame(dt, live) {
   const reach = playing ? reachNow(game) : null;
   const ring = reachRing.update({ hero: game.hero, radius: reach?.radius ?? 0, left: reach?.left ?? 0, visible: !!reach && (!debugCam || debugRing), dt, camera: debugCam ?? views.cityCamera, viewPx: debugCam ? views.size.h : views.layout.city.h });
   hud.update({ remaining: game.timer.remaining, power: game.power.value, max: CONFIG.power.max, alive: game.aliveCount, drain, dt, hero: game.hero, line: clearLine(), puffs: game.puffsLeft, stick: stickNow, stickR: joystick.radius + 12, reach: reach?.left ?? null, edge: reach && !debugCam && ring.offscreen ? { on: true, pulse: ring.pulse, ready: ring.ready } : null });
+  // R1f: 覚えておいた払う（前の払うが広がり終わったら）
+  if (game.phase === 'playing' && controls.charging) { if (puffBuffer.take(nowSec(), game.canPuff)) game.puff(); } else puffBuffer.clear();
   // R1e（持ち主 16:55）: LOOK OUT!（遊んでいる間だけ。危ないかの確かめは lookout.checkEvery 秒ごと）
   const lo = game.phase === 'playing' && !cinematic.active && !debugCam
     ? lookout.update(dt, { hero: game.hero, enemies: game.enemies.list, buildings: game.city.buildings, hideBlock: game.hideBlock, azimuthDeg: CITY_CAMERA.azimuthDeg })
     : null;
+  lookoutNow = lo?.show ? { show: true, spot: lo.spot ? { ...lo.spot } : null, deg: lo.deg } : null;
   lookoutView.update(lo, lo?.show ? screenCue(game.hero.x, 1.2, game.hero.z) : null);
   // 最後の一発を放ってから結果までずっと HUD は出さない（両手が玉を握り込む間も、リプレイの間も）
   hud.setVisible(!debugCam && !cinematic.active && !replay.active && !blackhole.active);
