@@ -229,6 +229,7 @@ export function createAudio({ nav = globalThis.navigator, makeMedia = (src) => n
   // R1f: 一番上の大きさ（リミッター → top → スピーカー。切り替えのときにまとめて 0 へ落とす）と、効果音の大きさ（世界の音・演出の音・瓦礫の音の出口）。
   // vol: メニューの音量（鳴らす前に決めてもよい。build で入れる）
   let top = null, sfxBus = null;
+  let limiter = null; // R4: すべての音がまとまる所（録画の写し tap はここから）
   // fix1（見直し Minor 6）: メニューの一時停止で黙らせる門（世界の音 out・瓦礫 → worldGate → sfxBus、BGM → bgmGate → bgmBus）。
   // 音量の試し音は門の後ろ（sfxBus / bgmBus）で鳴る
   let worldGate = null, bgmGate = null, muted = false;
@@ -247,7 +248,7 @@ export function createAudio({ nav = globalThis.navigator, makeMedia = (src) => n
     const AC = window.AudioContext || window.webkitAudioContext;
     if (!AC) return;
     ctx = new AC();
-    const limiter = ctx.createDynamicsCompressor();
+    limiter = ctx.createDynamicsCompressor();
     for (const k of Object.keys(LIMITER)) limiter[k].value = LIMITER[k];
     out = ctx.createBiquadFilter();
     out.type = 'lowpass'; out.frequency.value = 20000; out.Q.value = 0.5;
@@ -515,6 +516,19 @@ export function createAudio({ nav = globalThis.navigator, makeMedia = (src) => n
       for (const [n, v] of [[bgmBus, vol.bgm], [sfxBus, vol.sfx]]) { if (!n) continue; n.gain.cancelScheduledValues(t); n.gain.setTargetAtTime(v, t, 0.03); }
     },
     get volumes() { return { ...vol }; },
+    // R4（縦動画、share/clip.js）: 録画の音の写し。すべての音（世界の音・演出の音・瓦礫・BGM）がまとまるリミッターの出口
+    // （一番上の大きさ top の手前）を MediaStreamDestination へもつなぐ。スピーカーへの道と大きさは変えない。release で外す。
+    // 鳴らせるようになる前・MediaStreamDestination の無いブラウザは null
+    tap() {
+      if (!ctx || !limiter || typeof ctx.createMediaStreamDestination !== 'function') return null;
+      const dest = ctx.createMediaStreamDestination();
+      limiter.connect(dest);
+      let on = true;
+      return {
+        stream: dest.stream,
+        release() { if (!on) return; on = false; try { limiter.disconnect(dest); } catch { /* 済み */ } },
+      };
+    },
     get sfxBus() { return sfxBus; },
     get bgmBus() { return bgmBus; },
     get worldGate() { return worldGate; },
