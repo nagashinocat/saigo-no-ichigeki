@@ -127,6 +127,31 @@ export function bikeAt(b, t) {
   };
 }
 
+// R1c（持ち主 11:03「バイクのシーン、ちょっとだけ揺らす感じの方が迫力があるね」）: バイクが頭上を抜ける拍だけ、通過の瞬間
+// （tp）に短く減っていく小さな揺れ。dur 秒で消える。ずれ amp m（カメラの右・上）と傾き roll ラジアン。f Hz で震える。
+// 低く通るほど強い（y0 m の高さで 1 倍）。ほかの拍は 0（R1b の「揺らさない」のまま）
+export const INTRO_SHAKE = { dur: 0.22, amp: 0.022, roll: 0.006, f: 17, y0: 2.25 };
+const SHAKE_BIKES = introBikes();
+const BIKES_END = INTRO.beats[0].dur;
+// 導入の時刻 t のカメラの揺れ { x, y（m、カメラの右・上）, roll（ラジアン）}。時刻だけで決まる（録画で同じ絵）
+export function introShake(t) {
+  const out = { x: 0, y: 0, roll: 0 };
+  if (!(t >= 0 && t < BIKES_END)) return out;
+  const S = INTRO_SHAKE;
+  for (const b of SHAKE_BIKES) {
+    const d = t - b.tp;
+    if (d <= 0 || d >= S.dur) continue;
+    const u = d / S.dur;
+    // 立ち上がりはすぐ（最初の 1/8 で満ちる）、そのあと 2 乗で減る
+    const env = Math.min(1, u * 8) * (1 - u) ** 2 * Math.min(1.2, S.y0 / b.y);
+    const w = 2 * Math.PI * S.f * d;
+    out.x += S.amp * env * Math.sin(w + b.id);
+    out.y += S.amp * env * 0.8 * Math.sin(w * 1.31 + 1.7 + b.id);
+    out.roll += S.roll * env * Math.sin(w * 0.77 + 0.6) * (b.x < 0 ? -1 : 1);
+  }
+  return out;
+}
+
 // 風切りの聞こえ方（13:06 音は画面に合わせる）: 左右 pan（画面の x の側）、大きさ gain（近いほど大きい。一番近い瞬間が最大）、
 // 速さの比 rate（ドップラー: 近づくと高く、遠ざかると低い）、距離 dist（m）
 const SOUND_C = 343;

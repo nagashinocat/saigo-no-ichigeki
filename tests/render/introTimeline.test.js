@@ -209,3 +209,43 @@ test('R1b: カードの叩きつけに揺れの秒は無い（大きめから縮
   expect(INTRO.card.overshoot).toBeGreaterThan(0);
   expect(INTRO.card.scale0).toBeGreaterThan(1);
 });
+
+// R1c（持ち主 11:03「バイクのシーン、ちょっとだけ揺らす感じの方が迫力があるね」）: バイクが頭上を抜ける拍だけ、
+// 通過の瞬間に短く減っていく小さな揺れ（ずれ + ごく小さな傾き）。ほかの拍（カード・スポットライト・隠れる・球・手・題字）は揺らさない
+test('R1c: 揺れはバイクの拍の通過の瞬間だけ（1/60 秒ごと）。ほかの拍はどこも 0', async () => {
+  const { introShake, INTRO_SHAKE } = await import('../../src/render/introTimeline.js');
+  const tl = createIntroTimeline();
+  const bikes = introBikes();
+  const mag = (s) => Math.hypot(s.x, s.y) + Math.abs(s.roll);
+  // 一回の揺れは 0.15〜0.3 秒、小さい（ずれは数 cm、傾きは 1 度未満）
+  expect(INTRO_SHAKE.dur).toBeGreaterThanOrEqual(0.15);
+  expect(INTRO_SHAKE.dur).toBeLessThanOrEqual(0.3);
+  let maxT = 0, maxR = 0;
+  for (let i = 0; i <= Math.ceil(tl.total * 60); i++) {
+    const t = i / 60;
+    const s = introShake(t);
+    const b = tl.beatAt(t);
+    maxT = Math.max(maxT, Math.hypot(s.x, s.y)); maxR = Math.max(maxR, Math.abs(s.roll));
+    if (b.name !== 'bikes') { expect(mag(s), `${b.name} t=${t.toFixed(3)}`).toBe(0); continue; }
+    // バイクの拍でも、どの通過からも揺れの長さより離れていれば 0
+    const inPass = bikes.some((k) => t >= k.tp && t <= k.tp + INTRO_SHAKE.dur);
+    if (!inPass) expect(mag(s), `bikes t=${t.toFixed(3)}`).toBe(0);
+  }
+  expect(maxT).toBeGreaterThan(0.005);
+  expect(maxT).toBeLessThan(0.06);
+  expect(maxR).toBeGreaterThan(0);
+  expect(maxR).toBeLessThan(0.0175);
+  // どの通過にも揺れがある（1/60 秒ごとに見て、0 でないコマがある）、その揺れは減っていく（終わりぎわは初めより小さい）
+  for (const k of bikes) {
+    const samples = [];
+    for (let t = Math.ceil(k.tp * 60) / 60; t <= k.tp + INTRO_SHAKE.dur; t += 1 / 60) samples.push(mag(introShake(t)));
+    expect(samples.some((v) => v > 0), `bike ${k.id}`).toBe(true);
+  }
+  // 一台だけの時刻で減っていく様子: 最初の一台（ほかと重ならない）
+  const k0 = bikes[0];
+  const peak = (a, b) => { let m = 0; for (let t = a; t < b; t += 1 / 600) m = Math.max(m, mag(introShake(t))); return m; };
+  const d = INTRO_SHAKE.dur;
+  expect(peak(k0.tp + 0.66 * d, k0.tp + d)).toBeLessThan(0.5 * peak(k0.tp, k0.tp + 0.33 * d));
+  // 時刻に対して決まる（録画で同じ絵）
+  expect(introShake(k0.tp + 0.05)).toEqual(introShake(k0.tp + 0.05));
+});

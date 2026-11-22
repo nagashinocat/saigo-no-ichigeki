@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { createHeroBodyBuilder, skinPose } from './heroBody.js';
-import { INTRO, BIKE_CAM, introBikes, bikeAt, introStreaks, streakAt, introHands, whooshAt, heroPath, LIGHT_SHOT, HIDE_SHOT, LIGHT_BIKES, lightBikeAt } from './introTimeline.js';
+import { INTRO, BIKE_CAM, introBikes, bikeAt, introStreaks, streakAt, introHands, whooshAt, introShake, heroPath, LIGHT_SHOT, HIDE_SHOT, LIGHT_BIKES, lightBikeAt } from './introTimeline.js';
 
 // 導入のアニメーション（S6）の 3D の拍: 1 バイク・3 ライト・5 隠れる・6 手。カード・白・題字は画面の上の 2D（introOverlay.js）。
 // 画面全体を一つのカメラで描く（views.renderFull。high/mid は光のにじみ・動きのぶれ・粒子、low はそのまま）。
@@ -451,12 +451,16 @@ void main() {
   };
 
   // R1b（持ち主 08:24「導入のムービーなんだけど画面揺れなくていいかも、逆に見にくくなってる」）: カメラは揺らさない
-  // （ゆっくり寄る・傾き・カットはそのまま）
+  // （ゆっくり寄る・傾き・カットはそのまま）。R1c（持ち主 11:03）: バイクが頭上を抜ける瞬間だけ、introShake の短い小さな揺れ
+  // （introShake はバイクの拍の外では 0。どの拍もここを通る）
+  let shakeT = -1;
   function setCam(s, pos, look, fov, roll = 0) {
     toWorld(s, pos[0], pos[1], pos[2], cam.position);
     toWorld(s, look[0], look[1], look[2], _b);
     cam.up.set(Math.sin(roll), Math.cos(roll), 0).applyAxisAngle(new THREE.Vector3(0, 1, 0), s.yaw);
     cam.lookAt(_b);
+    const j = introShake(shakeT);
+    if (j.x || j.y || j.roll) { cam.translateX(j.x); cam.translateY(j.y); cam.rotateZ(j.roll); }
     cam.fov = fov;
     cam.aspect = views.size.w / Math.max(1, views.size.h);
     cam.updateProjectionMatrix();
@@ -472,7 +476,7 @@ void main() {
   let speed = 0, vpX = 0.5, vpY = 0.5;
   function bikesBeat(t, local, dt) {
     const s = site.bikes;
-    // 一番近いバイクの近さで色ずれ・速さの線（揺れはなし）
+    // 一番近いバイクの近さで色ずれ・速さの線（揺れは通過の瞬間だけ setCam の introShake）
     let near = 0;
     for (const b of bikes) near = Math.max(near, whooshAt(b, t).gain);
     const push = 0.6 * local; // ゆっくり前へ
@@ -695,6 +699,7 @@ void main() {
       ensureShadows();
       const saved = [];
       group.traverse((o) => { saved.push(o.visible); o.visible = true; });
+      shakeT = -1;
       setCam(site.bikes, BIKE_CAM.pos, BIKE_CAM.look, BIKE_CAM.fov);
       try { fn(scene, cam, fx); } finally {
         let i = 0;
@@ -705,6 +710,7 @@ void main() {
     update(t, b) {
       const dt = Math.min(0.1, Math.max(0, t - lastT));
       lastT = t;
+      shakeT = t;
       beatName = b.name;
       fx.time = t;
       const is3d = b.name === 'bikes' || b.name === 'light' || b.name === 'hide';
