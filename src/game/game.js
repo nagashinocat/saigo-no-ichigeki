@@ -29,16 +29,21 @@ export function createGame({ seed, cfg = CONFIG }) {
   const city = generateCity(seed, cfg);
   // R3: 街の壊せるものの値打ちの合計（称号の「被害額の大きさ」に使う）
   const cityValue = totalValue(city);
+  // 一回ぶんの状態（主人公・軍勢・力・溜め・時間・点）。restart で同じ種から作り直す（読み直したページの createGame と同じ一回）
   // 主人公（hero.js）。hero は { x, z, vx, vz, heading, lean } の同じ物で、軍勢の heroPos にも渡す（動くたびに書き換わる）
-  const motion = createHeroMotion(city, cfg);
-  const hero = motion.hero;
   // 見回る者（S8）は別の乱数（探して掴みに来る者の湧き方・動きは前のまま）
   // R1: 種類（重い者・吸う者）と大物の乱数も別（typeRng）
-  const enemies = createEnemies(createRng(seed + 1), cfg, { buildings: city.buildings, patrolRng: createRng((seed ^ 0x9a7b1) >>> 0), typeRng: createRng((seed * 0x2c1b3c6d + 0x51ed27) >>> 0), heroPos: hero });
-  const power = createPower(cfg.power);
-  const charge = createCharge(power, cfg);
-  const timer = createTimer(cfg.roundSeconds);
-  const score = createScore(cfg.score);
+  let motion, hero, enemies, power, charge, timer, score;
+  function makeRound() {
+    motion = createHeroMotion(city, cfg);
+    hero = motion.hero;
+    enemies = createEnemies(createRng(seed + 1), cfg, { buildings: city.buildings, patrolRng: createRng((seed ^ 0x9a7b1) >>> 0), typeRng: createRng((seed * 0x2c1b3c6d + 0x51ed27) >>> 0), heroPos: hero });
+    power = createPower(cfg.power);
+    charge = createCharge(power, cfg);
+    timer = createTimer(cfg.roundSeconds);
+    score = createScore(cfg.score);
+  }
+  makeRound();
 
   // 建物と props は id が別の連番なので、接頭辞を付けて一つの表にする
   const byKey = new Map();
@@ -164,11 +169,31 @@ export function createGame({ seed, cfg = CONFIG }) {
   };
 
   return {
-    city, enemies, power, charge, timer, score,
+    city,
+    // 一回ぶんの部品（restart で作り直すので、いつも今のものを読む）
+    get enemies() { return enemies; },
+    get power() { return power; },
+    get charge() { return charge; },
+    get timer() { return timer; },
+    get score() { return score; },
     // R3: 街の壊せるものの値打ちの合計（称号の「被害額の大きさ」）
     cityValue,
-    // M1: 主人公の位置と速さ { x, z, vx, vz, heading, lean }（読むだけ。試しは x, z を直に置いてよい）
-    hero,
+    // M1: 主人公の位置と速さ { x, z, vx, vz, heading, lean }（読むだけ。試しは x, z を直に置いてよい）。restart で新しい物になる
+    get hero() { return hero; },
+    // 持ち主 2026-11-23 08:41: リトライはページを読み直さず、その場で遊び直す。同じ種の街で、新しい createGame({ seed }) と同じ一回を
+    // 最初（'ready'。最初の押下で始まる）から。街の作り（city）と登録した知らせ（on）はそのまま。一時停止（setHidden）は一時停止の側が持つ
+    restart() {
+      makeRound();
+      destroyed.clear();
+      phase = 'ready';
+      grabbing = 0; drainedTotal = 0; cinematicClock = 0;
+      pendingShot = null; finalBlast = null; blasts = [];
+      releaseIds = null; releaseInfo = null; outcome = null;
+      nextBlastId = 1; maxCombo = 0; draggedIds = null;
+      hides = 0; spotted = 0; pursuedPrev = false; bossGrabbed = false; bossClosest = Infinity;
+      puffsLeft = cfg.puff.uses ?? Infinity;
+      hideCool = 0;
+    },
     get phase() { return phase; },
     // M1: 動く向き（世界の x, z。長さ 1 で全速、0 で止まる）。動くのは遊んでいる最中に溜めている間だけ
     setMove(x, z) { motion.setMove(x, z); },
