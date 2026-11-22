@@ -447,9 +447,8 @@ export function createEnemies(rng, cfg = CONFIG, { buildings = [], patrolRng = n
     const off = e.di * (e.z - tz) - e.dj * (e.x - tx);
     steer(e, Math.atan2(e.dj, e.di) - Math.atan(off / E.lookAhead), E.turnRate, dt);
     accel(e, E.searchSpeed * speedMulOf(e, cfg), dt);
-    e.x += Math.cos(e.heading) * e.speed * dt;
-    e.z += Math.sin(e.heading) * e.speed * dt;
-    pushOut(e); // R1f: 見失って道へ戻る途中など（道の上では何もしない）
+    // R1f: 見失って道へ戻る途中などは壁に沿って滑る（fix2: 壁へ向かう向きで見失っても一歩が消えない。道の上では何もしない）
+    slideTo(e, e.x + Math.cos(e.heading) * e.speed * dt, e.z + Math.sin(e.heading) * e.speed * dt, e.speed * dt * 0.9);
     place(e);
     // 見つける: spotDist の内側で、建物にさえぎられずに主人公が見えたら（spotEvery 秒ごとに確かめる）
     trySpot(e, dt);
@@ -536,7 +535,10 @@ export function createEnemies(rng, cfg = CONFIG, { buildings = [], patrolRng = n
     if (nd <= ring) { // 輪に着いた: 主人公へ向かう線の上の輪の点へ。残りの一歩は輪を回る向き（左回り）に
       const left = Math.max(0, step - (e.dist - ring));
       const a = Math.atan2(rz, rx) + left / Math.max(ring, 0.5);
-      e.x = H.x + Math.cos(a) * ring; e.z = H.z + Math.sin(a) * ring;
+      // fix2: 着いたフレームも、その角度で壁まで縮めた輪の上（足元の内に一度も入らない）。輪の大きさは orbitStep が覚える
+      const rr = CH ? Math.min(ring, wallLimit(a, ring)) : ring;
+      e.x = H.x + Math.cos(a) * rr; e.z = H.z + Math.sin(a) * rr;
+      e.orbitR = ring;
       place(e);
       return true;
     }

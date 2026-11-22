@@ -73,7 +73,8 @@ function run(seed, sec = 45) {
       if (e.state === 'search') {
         // 見失ったのは、見通しが loseSec 秒より長く切れたときだけ（それより早く search に戻った者はいない）。また見つければ数え直す
         // （ゲームは動く前に見え方を確かめ、ここは動いたあとに確かめるので、数フレームのずれは許す）
-        if (blindBefore + DT >= LOSE - 0.2) lostOk++; // fix1: ライトの扇の縁で、動く前と後の向きの違いが数フレーム重なる（0.2 秒まで許す） else { lostEarly++; backToSearch++; }
+        // fix1: ライトの扇の縁で、動く前と後の向きの違いが数フレーム重なる（0.2 秒まで許す）。fix2: else が注釈の中に入っていたのを戻した
+        if (blindBefore + DT >= LOSE - 0.2) lostOk++; else { lostEarly++; backToSearch++; }
         rec.delete(e.id);
         continue;
       }

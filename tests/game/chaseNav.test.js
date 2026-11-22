@@ -35,11 +35,11 @@ test('R1f: 道しるべは足元を通らずに目標へ着き、窓の外は nu
   expect((performance.now() - t0) / 20).toBeLessThan(4);
 });
 
-test('R1f / fix1: 主人公が通りを渡り角を曲がる間、軍勢（追う・よろめく・探す・掴む・群がる）は一度もビルの足元の内に入らない（種 1〜4、毎フレーム）', () => {
+test('R1f / fix1: 主人公が通りを渡り角を曲がる間、軍勢（追う・よろめく・探す・掴む・群がる）は一度もビルの足元の内に入らない（fix2: 種 1〜10、追う者が掴むに変わったフレームも、毎フレーム）', () => {
   const cfg = { ...CONFIG, puff: { ...CONFIG.puff, uses: Infinity } };
   let chaseFrames = 0;
   const bad = [];
-  for (const seed of [1, 2, 3, 4]) {
+  for (const seed of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]) {
     const g = createGame({ seed, cfg });
     g.begin(); g.pressStart();
     const bs = g.city.buildings;
@@ -58,7 +58,7 @@ test('R1f / fix1: 主人公が通りを渡り角を曲がる間、軍勢（追�
   }
   expect(chaseFrames).toBeGreaterThan(1500);
   expect(bad).toEqual([]);
-}, 120000);
+}, 240000);
 
 test('R1f: ビルの向こうで見つけた者は、ビルを回り込んで主人公に着く（足元を抜けずに、数秒の内に）', () => {
   const quiet = { ...CONFIG, enemy: { ...CONFIG.enemy, spawnPerSec: 0, patrol: { ...CONFIG.enemy.patrol, count: 0 }, kinds: {} } };
