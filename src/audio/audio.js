@@ -182,7 +182,13 @@ export function isIOSLike(nav) {
 }
 
 // nav・makeMedia: テストで差し替える（ふだんは navigator と new Audio）
-export function createAudio({ nav = globalThis.navigator, makeMedia = (src) => new Audio(src) } = {}) {
+// R1f（持ち主 18:14「画面切り替えしたら一瞬ピープ音がなった」）: 切り替えたとき・戻ったときの大きさの動き（秒）。
+// 隠れる: 一番上（top）を fadeOut 秒で 0 へ → 少し待って（suspendAfter ms）AudioContext を止める。戻る: top を 0 のまま鳴らし直し、hold 秒おいて fadeIn 秒で上げる
+export const SWITCH_FADE = { fadeOut: 0.03, suspendAfter: 45, hold: 0.05, fadeIn: 0.15 };
+// R1f: メニューの音量（BGM・効果音）の既定と範囲（0〜1。ui/menu.js が端末に覚える）
+export const clampVol = (v, d = 1) => (Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : d);
+
+export function createAudio({ nav = globalThis.navigator, makeMedia = (src) => new Audio(src), later = (f, ms) => setTimeout(f, ms) } = {}) {
   let silenceEnd = 0;
   // iOS の消音スイッチ（ベルの切り替え）: Web Audio だけでは「周囲の音」のセッションで、消音にすると鳴らない。
   // 最初の操作で、音のセッションを「再生」にする（Safari 17 以降は audioSession、それより前は無音の <audio> を鳴らし続ける）。
@@ -220,6 +226,10 @@ export function createAudio({ nav = globalThis.navigator, makeMedia = (src) => n
   let boomBus = null; // 爆発の音のまとめ（天井の曲線を通って master へ）
   let drone = null; // 時間切れの結末の低い唸り（鳴っている間だけ）
   let hidden = false; // タブが隠れている間（suspend から resume まで）
+  // R1f: 一番上の大きさ（リミッター → top → スピーカー。切り替えのときにまとめて 0 へ落とす）と、効果音の大きさ（世界の音・演出の音・瓦礫の音の出口）。
+  // vol: メニューの音量（鳴らす前に決めてもよい。build で入れる）
+  let top = null, sfxBus = null;
+  const vol = { bgm: 1, sfx: 1 };
   // 瓦礫の崩れる音の道: 音のもと（起動時に数種類だけ書き出して使い回す）→ 一つごとの大きさ・左右 → debrisBus → debrisLp →
   // リミッター。master を通さない（地鳴りが master を 0 に保つ間に始まるリプレイでも鳴らせるように）。
   // 演出の無音の間は黙り、宇宙ではこもる（debrisMode）
@@ -236,10 +246,8 @@ export function createAudio({ nav = globalThis.navigator, makeMedia = (src) => n
     ctx = new AC();
     const limiter = ctx.createDynamicsCompressor();
     for (const k of Object.keys(LIMITER)) limiter[k].value = LIMITER[k];
-    limiter.connect(ctx.destination);
     out = ctx.createBiquadFilter();
     out.type = 'lowpass'; out.frequency.value = 20000; out.Q.value = 0.5;
-    out.connect(limiter);
     master = ctx.createGain();
     master.gain.value = 0.8;
     master.connect(out);
@@ -273,7 +281,7 @@ export function createAudio({ nav = globalThis.navigator, makeMedia = (src) => n
     src.start(); lfo.start();
     rumbleNode = { gain: rg, lfoGain };
     bgmBus = ctx.createGain();
-    bgmBus.gain.value = 1;
+    bgmBus.gain.value = vol.bgm;
     bgmBus.connect(limiter);
     introBus = ctx.createGain();
     introBus.gain.value = 1;
@@ -284,9 +292,19 @@ export function createAudio({ nav = globalThis.navigator, makeMedia = (src) => n
     boomBus.connect(clip); clip.connect(master);
     debrisLp = ctx.createBiquadFilter();
     debrisLp.type = 'lowpass'; debrisLp.frequency.value = 20000; debrisLp.Q.value = 0.5;
-    debrisLp.connect(limiter);
     debrisBus = ctx.createGain(); debrisBus.gain.value = DEBRIS_LEVEL.open;
     debrisBus.connect(debrisLp);
+    // R1f: 効果音の大きさ（世界の音・演出の音の出口 out と、瓦礫の音の出口）→ リミッター → 一番上の大きさ（切り替えで 0 へ落とす）→ スピーカー。
+    // 作るのは最後（前からの gain の並びを変えない）
+    sfxBus = ctx.createGain();
+    sfxBus.gain.value = vol.sfx;
+    sfxBus.connect(limiter);
+    out.connect(sfxBus);
+    debrisLp.connect(sfxBus);
+    top = ctx.createGain();
+    top.gain.value = hidden ? 0 : 1;
+    limiter.connect(top);
+    top.connect(ctx.destination);
     // 音のもとは最初のタップで一度に作らず、一つずつ間をあけて書き出す（中くらいの Android で、タップの瞬間に引っかからない）。
     // 鳴らす時までにできていなければ、そのとき作る
     // 24 kHz で作る（崩れる音の上の方は 12 kHz までで足りる。書き出しの手間が半分。再生のときに出口の速さへ直される）。
@@ -353,6 +371,25 @@ export function createAudio({ nav = globalThis.navigator, makeMedia = (src) => n
     const p = ctx.createStereoPanner(); p.pan.value = Math.max(-1, Math.min(1, pan || 0));
     p.connect(dest);
     return p;
+  }
+
+  // R1f: 鳴りっぱなしの声（貯めの唸り・吸われる音）を t までに 0 へ（次のフレームの chargeHum / drain が決め直す）
+  function quietVoices(t) {
+    if (hum) { hum.gain.gain.cancelScheduledValues(now()); hum.gain.gain.setValueAtTime(hum.gain.gain.value, now()); hum.gain.gain.linearRampToValueAtTime(0, t); }
+    if (drainNodes) for (const g of [drainNodes.hg.gain, drainNodes.wg.gain]) { g.cancelScheduledValues(now()); g.linearRampToValueAtTime(0, t); }
+  }
+  // R1f: 鳴らし直し、鳴り始めてから一番上を上げる（隠れたままなら何もしない）
+  function wake() {
+    const up = () => {
+      if (hidden || !top) return;
+      const t = now(), g = top.gain;
+      g.cancelScheduledValues(t);
+      g.setValueAtTime(0, t);
+      g.setValueAtTime(0, t + SWITCH_FADE.hold);
+      g.linearRampToValueAtTime(1, t + SWITCH_FADE.hold + SWITCH_FADE.fadeIn);
+    };
+    if (ctx.state !== 'running' && ctx.state !== 'closed') Promise.resolve(ctx.resume()).then(up, () => {});
+    else up();
   }
 
   return {
@@ -433,20 +470,43 @@ export function createAudio({ nav = globalThis.navigator, makeMedia = (src) => n
       if (!introAn) { introAn = ctx.createAnalyser(); introAn.fftSize = 2048; introBus.connect(introAn); }
       return introAn;
     },
-    // タブが隠れた / 戻った。止める処理（suspend）は少しあとで終わるので、終わったときにもう戻っていたら鳴らし直す
-    // （すぐ戻ると、戻した時点ではまだ running のままで、そのあと止まりっぱなしになる）。
-    // 戻ったら suspended でなくても（iOS の interrupted など）鳴らし直す
+    // タブが隠れた / 戻った（R1f: メニューの一時停止も同じ）。止める処理（suspend）は少しあとで終わるので、終わったときにもう戻っていたら鳴らし直す
+    // （すぐ戻ると、戻した時点ではまだ running のままで、そのあと止まりっぱなしになる）。戻ったら suspended でなくても（iOS の interrupted など）鳴らし直す。
+    // R1f（持ち主 18:14「画面切り替えしたら一瞬ピープ音」）: 隠れたら、一番上を SWITCH_FADE.fadeOut 秒で 0 へ落とし、鳴りっぱなしの声（貯めの唸り・吸われる音）を
+    // 0 にしてから止める（requestAnimationFrame が止まるので、唸りの大きさは最後の貯めの大きさのまま残り、戻ったときに一瞬鳴っていた）。
+    // 戻るときは一番上を 0 のまま鳴らし直し、鳴り始めてから hold 秒おいて fadeIn 秒で上げる
     suspend() {
       hidden = true;
       try { silentEl?.pause?.(); } catch { /* 済み */ }
-      if (!ctx || ctx.state !== 'running') return;
-      Promise.resolve(ctx.suspend()).then(() => { if (!hidden && ctx.state !== 'running') ctx.resume(); }, () => {});
+      if (!ctx || !top) return;
+      const t = now(), g = top.gain;
+      if (g.cancelAndHoldAtTime) g.cancelAndHoldAtTime(t); else { g.cancelScheduledValues(t); g.setValueAtTime(g.value, t); }
+      g.linearRampToValueAtTime(0, t + SWITCH_FADE.fadeOut);
+      quietVoices(t + SWITCH_FADE.fadeOut);
+      if (ctx.state !== 'running') return;
+      later(() => {
+        if (!hidden || ctx.state !== 'running') return;
+        Promise.resolve(ctx.suspend()).then(() => { if (!hidden && ctx.state !== 'running') wake(); }, () => {});
+      }, SWITCH_FADE.suspendAfter);
     },
     resume() {
       hidden = false;
       if (silentEl && session === 'done') Promise.resolve(silentEl.play?.()).catch(() => { session = 'none'; });
-      if (ctx && ctx.state !== 'running' && ctx.state !== 'closed') Promise.resolve(ctx.resume()).catch(() => {});
+      if (!ctx || !top) return;
+      const t = now();
+      top.gain.cancelScheduledValues(t);
+      top.gain.setValueAtTime(0, t);
+      wake();
     },
+    // R1f: メニューの音量（0〜1）。BGM の出口と効果音の出口の大きさ。鳴らす前に呼んでもよい（鳴らし始めるときに入れる）
+    setVolumes({ bgm = vol.bgm, sfx = vol.sfx } = {}) {
+      vol.bgm = clampVol(bgm, vol.bgm); vol.sfx = clampVol(sfx, vol.sfx);
+      if (!ctx) return;
+      const t = now();
+      for (const [n, v] of [[bgmBus, vol.bgm], [sfxBus, vol.sfx]]) { if (!n) continue; n.gain.cancelScheduledValues(t); n.gain.setTargetAtTime(v, t, 0.03); }
+    },
+    get volumes() { return { ...vol }; },
+    get sfxBus() { return sfxBus; },
     // level 0〜1。0 で止まる
     chargeHum(level) {
       if (!ready()) return;

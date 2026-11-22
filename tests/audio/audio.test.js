@@ -137,16 +137,18 @@ test('最後の天井（リミッター）: 効果音・演出の音・BGM は�
     audio.unlock();
     expect(ctx.compressors.length).toBe(1);
     const lim = ctx.compressors[0];
-    // スピーカーへつながるのはリミッターだけ
+    // スピーカーへつながるのはリミッターの後ろの一番上の大きさ（R1f: アプリの切り替えでまとめて 0 へ落とす gain）だけ。そこへ入るのはリミッターだけ
     const toDest = links.filter(([, to]) => to === ctx.destination).map(([n]) => n);
-    expect(toDest).toEqual([lim]);
+    expect(toDest.length).toBe(1);
+    expect(toDest[0].gain).toBeTruthy();
+    expect(links.filter(([, to]) => to === toDest[0]).map(([n]) => n)).toEqual([lim]);
     // リミッターの設定: 天井は 0 dBFS より少し下、強い比、速いアタック
     expect(lim.threshold.value).toBeLessThanOrEqual(-1);
     expect(lim.threshold.value).toBeGreaterThanOrEqual(-6);
     expect(lim.ratio.value).toBeGreaterThanOrEqual(12);
     expect(lim.knee.value).toBeLessThanOrEqual(3);
     expect(lim.attack.value).toBeLessThanOrEqual(0.005);
-    // 世界の音（master）・演出の音（cine）は out（こもり）を通ってリミッターへ、BGM の出口はリミッターへ直接
+    // 世界の音（master）・演出の音（cine）は out（こもり）と効果音の大きさを通ってリミッターへ、BGM の出口（BGM の大きさ）はリミッターへ直接
     const out = ctx.filters[0], master = ctx.gains[0], cine = ctx.gains[1];
     const reaches = (n, target, seen = new Set()) => {
       if (n === target) return true;
@@ -155,7 +157,9 @@ test('最後の天井（リミッター）: 効果音・演出の音・BGM は�
       return links.some(([a, to]) => a === n && reaches(to, target, seen));
     };
     for (const bus of [master, cine, out, audio.bgmOutput.dest]) expect(reaches(bus, lim)).toBe(true);
-    expect(links.some(([a, to]) => a === out && to === lim)).toBe(true);
+    // R1f: out のあとは効果音の大きさ（メニューの音量の gain）を通ってリミッターへ
+    expect(links.some(([a, to]) => a === out && to === audio.sfxBus)).toBe(true);
+    expect(links.some(([a, to]) => a === audio.sfxBus && to === lim)).toBe(true);
     expect(links.some(([a, to]) => a === audio.bgmOutput.dest && to === lim)).toBe(true);
   } finally {
     delete globalThis.window;

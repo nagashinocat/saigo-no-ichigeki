@@ -27,6 +27,8 @@ import { createControls, keyVector, MOVE_KEYS, screenToWorld } from './input/con
 import { createJoystickView } from './ui/joystick.js';
 import { createKeyTwice } from './input/keyTwice.js';
 import { createPuffBuffer } from './input/puffBuffer.js';
+import { createMenu, retryRound } from './ui/menu.js';
+import { createPause } from './ui/pause.js';
 import { createLookout } from './game/lookout.js';
 import { createLookoutView } from './ui/lookoutView.js';
 import { createDashStreak } from './render/dashStreak.js';
@@ -203,6 +205,8 @@ const pointerInput = bindPointerInput(canvas, {
   intercept(e, ms) {
     // 導入（S6）: ゲームが始まるまで、画面のタップは導入のもの（飛ばす。TAP の画面は受け取るだけで、始めるのは離したとき）。長押しにはならない
     if (introFlow.consumePointer(ms)) return true;
+    // R1f: メニューが開いている（一時停止）間の画面のタップは何もしない（溜めにならない）
+    if (menu.isOpen || pause.paused) return true;
     // リプレイの間は、画面のタップで飛ばして結果へ
     if (replay.active && !replay.finished) { skipReplay(); return true; }
     return false;
@@ -212,6 +216,23 @@ const nowSec = pointerInput.now;
 // PC: 矢印キーか WASD で動く（溜めている間だけ。押しているキーの集まり）
 const keysDown = new Set();
 window.addEventListener('blur', () => { controls.reset(); keysDown.clear(); });
+// R1f（持ち主 18:14「一時停止、リトライ、音量調節ができるメニューボタン」「画面切り替えしたら一瞬ピープ音」）: 一時停止（ui/pause.js）とメニュー（ui/menu.js）。
+// メニューを出せるのは遊んでいる間と演出・リプレイの間（導入・題字・結果では出さない）。開くと一時停止、つづけるで戻る。
+// タブ・アプリを切り替えたら一時停止して（音は約 30 ms で 0 へ落としてから止め）、戻ったらメニューを出して待つ
+const pause = createPause({ game, controls, audio, bgm, keys: keysDown });
+// 結果を出したあと（lastResult）は出さない。結果を待っている間（演出・リプレイ）は出してよい
+const menuAvailable = () => !introFlow.blocksInput && !lastResult;
+const menu = createMenu({ button: document.getElementById('menuBtn'), panel: document.getElementById('menu') }, {
+  storage: (() => { try { return window.localStorage; } catch { return null; } })(),
+  onOpen() { pause.set('menu', true); },
+  onClose() { pause.set('menu', false); },
+  // R1f（R3 の見直しの持ち越し）: 同じ街（0 時をまたいでも）で、導入を飛ばしてすぐ遊び直す
+  onRetry() { retryRound({ session, cityPick, rememberRetryCity, markRetry, reload: () => location.reload() }); },
+  onVolume(v) { audio.setVolumes(v); },
+});
+function leavePage() { if (menuAvailable()) { menu.setAvailable(true); menu.open(); } pause.set('tab', true); }
+window.addEventListener('pagehide', leavePage);
+window.addEventListener('pageshow', () => { if (!document.hidden) pause.set('tab', false); });
 window.addEventListener('keyup', (e) => { keysDown.delete(e.code); if (MOVE_KEYS.includes(e.code)) { const v = keyVector(keysDown); keyFlick.push(v.x, v.y, nowSec()); } });
 // PC はマウスで長押ししながら、もう片方の手の Space キーで小爆発
 window.addEventListener('keydown', (e) => {
@@ -224,6 +245,9 @@ window.addEventListener('keydown', (e) => {
     }
     return;
   }
+  // R1f: Esc でメニュー（遊んでいる間）。開いている間は Esc で閉じ、ほかのキーは使わない
+  if (menu.isOpen) { if (e.code === 'Escape') { e.preventDefault(); menu.close(); } return; }
+  if (e.code === 'Escape' && menuAvailable() && !(replay.active && !replay.finished)) { e.preventDefault(); menu.open(); return; }
   // リプレイの間は Space / Enter / Esc で飛ばす
   if (replay.active && !replay.finished && ['Space', 'Enter', 'Escape'].includes(e.code)) { e.preventDefault(); skipReplay(); return; }
   // 結果画面では奪わない（ボタンを Space で押せる）
@@ -243,10 +267,9 @@ window.addEventListener('keydown', (e) => {
 // fix2: 手で写す箱の中は長押しのメニューを止めない（携帯で選んでコピーできるように）
 window.addEventListener('contextmenu', (e) => { if (!allowsNativeMenu(e.target)) e.preventDefault(); });
 document.addEventListener('visibilitychange', () => {
-  // 隠れる前に押下を打ち切る（放たず、貯めた力は残る。戻ってきたとき指が引っかかったままにならない）
-  if (document.hidden) { controls.reset(); keysDown.clear(); }
-  game.setHidden(document.hidden);
-  if (document.hidden) { bgm.pause(); audio.suspend(); } else { audio.resume(); bgm.resume(); }
+  // 隠れる前に押下を打ち切る（放たず、貯めた力は残る。戻ってきたとき指が引っかかったままにならない）。R1f: 一時停止（ui/pause.js）に任せ、
+  // 遊んでいる間ならメニューを開いておく（戻ったら「つづける」で再開）
+  if (document.hidden) leavePage(); else pause.set('tab', false);
 });
 // 終わり: 最後の一発は、演出（cinematic）とリプレイが最後まで終わって（replay の 'replayEnd'）から結果。
 // ブラックホール（時間切れ）は、その演出（blackhole）が暗転しきって 'end' を知らせてから結果
@@ -932,10 +955,15 @@ function frame(now) {
   const dt = Math.min(Math.max((now - last) / 1000, 0), MAX_FRAME_DT);
   last = now;
   if (!paused) {
-    // 画質の自動調整は遊んでいる間だけ（TAP の画面・導入・題字の重いフレームで段を下げない。段は下がるだけ）
-    if (governor.sample(dt, !introFlow.blocksInput) === 'down') lowerTier();
-    if (introFlow.blocksInput) introTick(dt);
-    simulate(dt);
+    // R1f: メニューを出せるか（遊んでいる間・演出の間）
+    menu.setAvailable(menuAvailable());
+    // R1f: 一時停止（メニュー・タブの切り替え）の間は進めず、今の絵を描くだけ
+    if (!pause.paused) {
+      // 画質の自動調整は遊んでいる間だけ（TAP の画面・導入・題字の重いフレームで段を下げない。段は下がるだけ）
+      if (governor.sample(dt, !introFlow.blocksInput) === 'down') lowerTier();
+      if (introFlow.blocksInput) introTick(dt);
+      simulate(dt);
+    }
     draw();
   }
   if (firstFrameMs === null) { firstFrameMs = performance.now(); onFirstFrame(); }

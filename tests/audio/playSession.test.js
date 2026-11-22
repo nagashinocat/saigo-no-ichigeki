@@ -222,8 +222,9 @@ test('タブを隠してすぐ戻しても（止める処理がまだ終わっ�
   audio.resume();
   await flush();
   expect(ctx.state).toBe('running');
-  // 隠れたままなら止まっている
+  // 隠れたままなら止まっている（R1f: 一番上の大きさを約 30 ms で落としてから止める。SWITCH_FADE.suspendAfter ms の待ち）
   audio.suspend();
+  await new Promise((r) => setTimeout(r, 80));
   await flush();
   expect(ctx.state).toBe('suspended');
   audio.resume();
