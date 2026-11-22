@@ -66,24 +66,40 @@ test('M1: 2 本目の長押し（0.18 秒以上）は、押した所に浮かぶ
   expect(c.charging).toBe(true);
 });
 
-// R1e（持ち主 16:45）: 10 px 以上動いても 0.18 秒まではスティックにしない（40 px のシュッになりうるので）。0.18 秒で、押した所を中心に
-// スティックになり、つまみはそのときの指の所。それより前に 10〜40 px だけ動かして離すと、払うでもシュッでもない（何もしない）
-test('R1e: 2 本目が 10 px 以上・40 px 未満動いても、0.18 秒まではスティックにならない。0.18 秒でスティック（押した所が中心）。その前に離すと何もしない', () => {
+// R1e fix1（見直しの案 (a)、取りまとめ役の判断）: 10 px 以上動けば、M1 のとおりすぐスティック（仮。すぐ動き始める）。
+// シュッは離したときに決める（flickHide.test.js）。指を置いたままなら、どれだけ速く動かしてもスティックのまま
+test('R1e fix1: 2 本目が 10 px 以上動いたら、0.18 秒を待たずにすぐスティックになり、向きも出る。0.18 秒の内に 40 px 未満で離しても何もしない', () => {
   const { c, log } = rig();
   c.down(1, 300, 200, 0);
   c.down(2, 100, 600, 1);
-  c.move(2, 100 + C.tapMovePx + 1, 600, 1.05);
-  expect(c.stick).toBe(null);
-  c.move(2, 100 + 30, 600, 1 + C.longPressSec + 0.01);
-  expect(c.stick).toMatchObject({ cx: 100, cy: 600, kx: 130, ky: 600 });
+  c.move(2, 100 + C.tapMovePx - 1, 600, 1.03);
+  expect(c.stick).toBe(null); // 9 px: まだ
+  c.move(2, 100 + C.tapMovePx, 600, 1.05);
+  expect(c.stick).toMatchObject({ cx: 100, cy: 600, kx: 100 + C.tapMovePx, ky: 600 });
   expect(c.dir.x).toBeGreaterThan(0);
-  c.up(2, 130, 600, 1.3);
-  expect(log).toEqual(['start']);
-  c.down(3, 100, 600, 2);
-  c.move(3, 120, 600, 2.05);
-  c.up(3, 125, 600, 2.1);
-  expect(log).toEqual(['start']);
+  c.move(2, 130, 600, 1.1);
+  c.up(2, 130, 600, 1.15);
+  expect(log).toEqual(['start']); // 払うでもシュッでもない
   expect(c.stick).toBe(null);
+});
+
+// R1e fix1（見直しの Important 1）: すべらせてから止めた指が 0.18 秒でスティックになるとき、つまみと向きは最後の指の所（0 にしない）
+test('R1e fix1: すべらせてから止めた指（最後の move のあと update だけ）でも、スティックのつまみと向きは最後の指の所', () => {
+  const a = rig();
+  a.c.down(1, 300, 200, 0);
+  a.c.down(2, 100, 600, 1);
+  a.c.move(2, 130, 600, 1.05); // 見直しの probe: 30 px
+  a.c.update(1.19);
+  expect(a.c.stick).toMatchObject({ cx: 100, cy: 600, kx: 130, ky: 600 });
+  expect(a.c.dir.x).toBeGreaterThan(0.3);
+  // 10 px 未満のずれのまま長押し → 0.18 秒でスティックになったとき、つまみはその指の所（deadPx より外なら向きも出る）
+  const b = rig();
+  b.c.down(1, 300, 200, 0);
+  b.c.down(2, 100, 600, 1);
+  b.c.move(2, 100, 600 - (C.tapMovePx - 1), 1.05);
+  b.c.update(1 + C.longPressSec + 0.01);
+  expect(b.c.stick).toMatchObject({ cx: 100, cy: 600, kx: 100, ky: 600 - (C.tapMovePx - 1) });
+  expect(b.c.dir.y).toBeLessThan(0);
 });
 
 test('M1: スティックを動かしている間に溜めの指を離すと、放ち、スティックは消える', () => {

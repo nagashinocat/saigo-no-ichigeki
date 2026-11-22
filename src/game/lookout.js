@@ -69,11 +69,12 @@ export function lookoutArrow(hero, buildings, watchers, azimuthDeg = 0, threats 
 //  - 出すのは、見つかっていない・隠れていない・隠れられる（hideBlock が null）・危ない者がいるとき
 //  - 見つかった・隠れた・隠れられなくなった（掴まれた・待ち時間・溜めていない）ら、すぐ消す
 //  - 危なくなくなったら、出てから minShowSec 秒を過ぎていれば消す。出ている間の危ないかは holdK 倍に広げて見る（ちらつかない）
-// s: { hero, enemies, buildings, hideBlock, azimuthDeg }。戻り値: { show, deg（矢印の画面の角か null）, t（出てからの秒） }
+// s: { hero, enemies, buildings, hideBlock, azimuthDeg }。戻り値: { show, deg（矢印の画面の角か null。毎フレーム今の主人公から物陰へ）,
+// spot（矢印の先の物陰 { x, z } か null）, t（出てからの秒） }
 export function createLookout(cfg = CONFIG) {
   const L = cfg.lookout;
   let show = false, shownT = 0, clock = 0, danger = false, arrow = null, checks = 0;
-  const out = { show: false, deg: null, t: 0 };
+  const out = { show: false, deg: null, spot: null, t: 0 };
   const near = (H, bs) => bs.filter((b) => Math.abs(b.x - H.x) - b.w / 2 < L.nearBuildings && Math.abs(b.z - H.z) - b.d / 2 < L.nearBuildings);
   function check(s) {
     checks++;
@@ -98,7 +99,11 @@ export function createLookout(cfg = CONFIG) {
         else if (show && shownT >= L.minShowSec) show = false;
       }
       if (show) shownT += dt;
-      out.show = show; out.deg = show && arrow ? arrow.deg : null; out.t = show ? shownT : 0;
+      // fix1: 物陰は checkEvery ごとに選び直すが、矢印の角は毎フレーム今の主人公の所からその物陰へ（安い。0.2 秒古い角にしない）
+      const on = show && arrow;
+      out.show = show; out.t = show ? shownT : 0;
+      out.spot = on ? arrow.spot : null;
+      out.deg = on ? screenBearingDeg(arrow.spot.x - s.hero.x, arrow.spot.z - s.hero.z, s.azimuthDeg ?? 0) : null;
       return out;
     },
   };

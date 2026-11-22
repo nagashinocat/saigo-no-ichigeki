@@ -27,39 +27,76 @@ test('R1e: シュッの値は config にある（約 40 px・約 0.18 秒）', (
   expect(F.maxSec).toBeCloseTo(0.18, 6);
 });
 
-test('R1e: 0.18 秒の内に 40 px 動かすと、その場でシュッ（onHide。画面の向き・長さ 1 と、払った線の始めと終わり）。スティックにも払うにもならない', () => {
+// R1e fix1（見直しの案 (a)、取りまとめ役の判断）: 10 px 動けばすぐ仮のスティック（すぐ動き始める）。触れてから 0.18 秒の内に 40 px 以上動かし、
+// しかも 0.18 秒の内に離したときだけシュッ（仮のスティックを消して隠れる）。指を置いたままなら、どれだけ速くてもスティック
+test('R1e fix1: 0.18 秒の内に 40 px 動かして離すとシュッ（離したときに onHide。画面の向き・長さ 1 と、払った線）。それまでは仮のスティックで動く', () => {
   const { c, log } = rig();
   c.down(2, 100, 600, 1);
-  c.move(2, 120, 600, 1.05);
-  expect(hides(log)).toHaveLength(0);
-  c.move(2, 100 + F.minPx * 0.6, 600 - F.minPx * 0.8, 1 + F.maxSec - 0.01); // ちょうど 40 px（右上）
+  c.move(2, 120, 600, 1.03);
+  expect(c.stick).not.toBe(null); // 仮のスティック（すぐ動き始める）
+  expect(c.dir.x).toBeGreaterThan(0);
+  c.move(2, 100 + F.minPx * 0.6, 600 - F.minPx * 0.8, 1.1); // ちょうど 40 px（右上）
+  expect(hides(log)).toHaveLength(0); // 置いたままの間はまだ
+  c.up(2, 100 + F.minPx * 0.6, 600 - F.minPx * 0.8, 1 + F.maxSec - 0.01);
   expect(hides(log)).toHaveLength(1);
   const [, d, s] = hides(log)[0];
   expect(d.x).toBeCloseTo(0.6, 6);
   expect(d.y).toBeCloseTo(-0.8, 6);
   expect(s).toMatchObject({ x0: 100, y0: 600, x1: 124, y1: 568 });
-  // 払った指は離れるまで何もしない（スティックにならない・もう一度シュッにならない・離しても払わない）
-  c.update(1.5);
-  c.move(2, 200, 400, 1.6);
-  c.up(2, 200, 400, 1.7);
-  expect(c.stick).toBe(null);
-  expect(hides(log)).toHaveLength(1);
+  expect(c.stick).toBe(null); // 仮のスティックは消える
+  expect(c.dir).toEqual({ x: 0, y: 0 });
   expect(log.filter((e) => e[0] === 'puff')).toHaveLength(0);
   expect(c.charging).toBe(true);
 });
 
-test('R1e: 39 px ではシュッにならない。0.18 秒を過ぎての 40 px はシュッではなくスティック', () => {
+test('R1e fix1: 速く 40 px 以上倒して、そのまま指を置いておく → スティック。隠れない（あとで離しても）', () => {
+  const { c, log } = rig();
+  c.down(2, 100, 600, 1);
+  c.move(2, 100 + F.minPx + 30, 600, 1.04); // 0.04 秒で 70 px
+  c.update(1 + F.maxSec); // 置いたまま 0.18 秒
+  c.update(1.3);
+  expect(c.stick).toMatchObject({ cx: 100, cy: 600 });
+  expect(c.dir.x).toBeGreaterThan(0.9);
+  c.up(2, 100 + F.minPx + 30, 600, 1.4);
+  expect(hides(log)).toHaveLength(0);
+  expect(log).toEqual(['start']);
+});
+
+test('R1e fix1: しきいの両側: 39 px で離す → 何もしない。40 px でも離すのが 0.18 秒ちょうど以降 → 隠れない', () => {
   const a = rig();
   a.c.down(2, 100, 600, 1);
-  a.c.move(2, 100 + F.minPx - 1, 600, 1.1);
-  a.c.up(2, 100 + F.minPx - 1, 600, 1.15);
+  a.c.move(2, 100 + F.minPx - 1, 600, 1.05);
+  a.c.up(2, 100 + F.minPx - 1, 600, 1.1);
   expect(a.log).toEqual(['start']); // 払うでもない（10 px 以上動いた）
   const b = rig();
   b.c.down(2, 100, 600, 1);
-  b.c.move(2, 100 + F.minPx + 20, 600, 1 + F.maxSec + 0.01);
+  b.c.move(2, 100 + F.minPx, 600, 1.05);
+  b.c.up(2, 100 + F.minPx, 600, 1 + F.maxSec + 0.01);
   expect(hides(b.log)).toHaveLength(0);
-  expect(b.c.stick).toMatchObject({ cx: 100, cy: 600 });
-  expect(b.c.dir.x).toBeGreaterThan(0.9);
+  const c1 = rig();
+  c1.c.down(2, 100, 600, 1);
+  c1.c.move(2, 100 + F.minPx, 600, 1.05);
+  c1.c.up(2, 100 + F.minPx, 600, 1 + F.maxSec - 0.01);
+  expect(hides(c1.log)).toHaveLength(1);
+});
+
+test('R1e fix1: 0.18 秒を過ぎてから 40 px を越えた動きは数えない（ゆっくり倒したスティックは、離しても隠れない）', () => {
+  // 0.18 秒の内には 30 px、0.18 秒を過ぎて 60 px → 置いたままのスティック。離しても隠れない
+  const { c, log } = rig();
+  c.down(2, 100, 600, 1);
+  c.move(2, 130, 600, 1.1);
+  c.move(2, 160, 600, 1 + F.maxSec + 0.02);
+  c.up(2, 160, 600, 1 + F.maxSec + 0.05);
+  expect(hides(log)).toHaveLength(0);
+});
+
+test('R1e fix1: 0.18 秒の内に 40 px 先まで払って少し戻してから離しても、シュッ（いちばん遠くまで払った向き）', () => {
+  const { c, log } = rig();
+  c.down(2, 100, 600, 1);
+  c.move(2, 100, 600 + 50, 1.05);
+  c.up(2, 100, 600 + 25, 1.1);
+  expect(hides(log)).toHaveLength(1);
+  expect(hides(log)[0][1].y).toBeCloseTo(1, 6);
 });
 
 test('R1e: 離したときに 40 px（move が来なかった）でも、0.18 秒の内ならシュッ。0.18 秒を過ぎて離せば何もしない', () => {
@@ -105,7 +142,7 @@ test('R1e: スティックの指は、すばやく大きく動かしても・離
   expect(c.charging).toBe(true);
 });
 
-test('R1e: 3 本目の指は無視する（スティックがあっても、シュッの指が離れる前でも）', () => {
+test('R1e: 3 本目の指は無視する（スティックがあっても、シュッの途中の指が離れる前でも）', () => {
   const { c, log } = rig();
   c.down(2, 100, 600, 1);
   c.update(1.3); // スティック
@@ -115,10 +152,12 @@ test('R1e: 3 本目の指は無視する（スティックがあっても、シ�
   expect(log).toEqual(['start']);
   c.up(2, 100, 600, 1.5);
   c.down(4, 100, 600, 2);
-  c.move(4, 100, 600 - F.minPx, 2.05); // シュッ
-  c.down(5, 200, 500, 2.1); // その指はまだ離れていない: 3 本目
-  c.move(5, 200 + F.minPx * 2, 500, 2.12);
-  c.up(5, 200 + F.minPx * 2, 500, 2.13);
+  c.move(4, 100, 600 - F.minPx, 2.05); // シュッの途中（仮のスティック）
+  c.down(5, 200, 500, 2.08); // その指はまだ離れていない: 3 本目
+  c.move(5, 200 + F.minPx * 2, 500, 2.09);
+  c.up(5, 200 + F.minPx * 2, 500, 2.1);
+  expect(hides(log)).toHaveLength(0);
+  c.up(4, 100, 600 - F.minPx, 2.12); // 2 本目を 0.18 秒の内に離す: シュッ
   expect(hides(log)).toHaveLength(1);
   expect(log.filter((e) => e[0] === 'puff')).toHaveLength(0);
 });

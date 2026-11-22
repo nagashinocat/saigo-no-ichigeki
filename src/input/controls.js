@@ -3,13 +3,14 @@ import { CONFIG } from '../config.js';
 // M1（持ち主 09:15、spec §16）: 指の操作（左右に分けない）。描画もゲームも知らず、指の id・画面の px・時刻（秒）だけで決める。
 //  1 本目の指（どこでも）: 触れたら溜め（onChargeStart）、離すと放つ（onChargeEnd）。pointercancel・reset は放たずに打ち切る（onChargeCancel）
 //  溜めている間の 2 本目の指:
-//    R1e（持ち主 16:45「2本目の指をシュッと払う」）: 触れてから flick.maxSec 秒の内に flick.minPx px 以上動かす → シュッ（隠れる）。
-//      その場で onHide(dir, { x0, y0, x1, y1 })（dir は画面の向き、長さ 1。払った線の始めと終わりの px）。離したときに越えていても同じ。
-//      払った指は離れるまで何もしない（スティックにも払うにもならない）
-//    longPressSec 秒以上押す → 押した所に浮かぶジョイスティック（stick）。滑らせた向きと量が dir。離すと消える（払わず、放たず、隠れない）。
-//      R1e: tapMovePx px 以上動かしても、longPressSec 秒まではスティックにしない（シュッになりうる）。そのときつまみは指の所
+//    longPressSec 秒以上押す、または tapMovePx px 以上動かす → 押した所に浮かぶジョイスティック（stick）。滑らせた向きと量が dir
+//      （つまみと向きは最後の指の所から。動かずに長押しでなっても、それまでのずれを捨てない）。離すと消える（払わず、放たない）
+//    R1e（持ち主 16:45「2本目の指をシュッとなぞる」）・fix1（見直しの案 (a)）: 触れてから flick.maxSec 秒の内に flick.minPx px 以上動かし、
+//      しかも flick.maxSec 秒の内に離した → シュッ（隠れる）。離したときに、仮のスティックを消して onHide(dir, { x0, y0, x1, y1 })
+//      （dir はいちばん遠くまで動かした画面の向き、長さ 1。払った線の始めと終わりの px）。10 px で出た仮のスティックで少し動くのは害がない
+//      （隠れる向きとほぼ同じ）。指を置いたままなら、どれだけ速く動かしてもスティックのまま（強く倒しても誤って隠れない）。
+//      flick.maxSec 秒を過ぎた指（本当のスティック）は、離しても隠れない・放たない
 //    それより短く、動きも tapMovePx px 未満で離す → 払う（onPuff(x, y)。押した所に「足りない」を出せるように）
-//    longPressSec 秒より前に tapMovePx〜flick.minPx px だけ動かして離す → 何もしない
 //    M2 のスティックを同じ向きに 2 回倒して隠れるはやめた（R1e。溜めながらでは使えなかった。PC の向きのキーの 2 回押しは keyTwice.js）
 //  3 本目からの指は無視する。溜めの指が離れたら、2 本目（スティック）は消え、その指は離れるまで何もしない
 //  溜めていない（1 本目がない）ときは、動きも払うもない（最初の指は必ず溜め）
@@ -52,19 +53,23 @@ export function createControls({ onChargeStart = () => {}, onChargeEnd = () => {
   const C = cfg.controls;
   const F = C.flick;
   let charge = null; // 溜めの指の id
-  let second = null; // 2 本目: { id, x0, y0, t0, stick, flicked, dir }
+  let second = null; // 2 本目: { id, x0, y0, t0, x, y（最後の指の所）, fx, fy, fd（flick.maxSec 秒の内でいちばん遠くまで動かした所と距離）, stick, dir }
   const dead = new Set(); // 溜めの指が離れたあとも残っている指（離れるまで何もしない）
   let stick = null; // { cx, cy, kx, ky }（画面の px。描く側が読む）
 
-  const toStick = (s) => { s.stick = true; stick = { cx: s.x0, cy: s.y0, kx: s.x0, ky: s.y0 }; };
-  // シュッか（まだスティックでなく、触れてから flick.maxSec 秒の内に flick.minPx px 以上）。そうなら onHide して、その指はもう何もしない
-  function tryFlick(s, x, y, t) {
-    if (s.stick || s.flicked || t - s.t0 >= F.maxSec) return false;
-    const dx = x - s.x0, dy = y - s.y0, d = Math.hypot(dx, dy);
-    if (d < F.minPx) return false;
-    s.flicked = true;
-    onHide({ x: dx / d, y: dy / d }, { x0: s.x0, y0: s.y0, x1: x, y1: y });
-    return true;
+  // つまみと向きを最後の指の所 (s.x, s.y) から（輪の外なら輪の縁）
+  function aim(s) {
+    s.dir = stickVector(s.x - s.x0, s.y - s.y0, C);
+    const dx = s.x - s.x0, dy = s.y - s.y0, d = Math.hypot(dx, dy), k = d > C.stickRadiusPx ? C.stickRadiusPx / d : 1;
+    stick.kx = s.x0 + dx * k; stick.ky = s.y0 + dy * k;
+  }
+  const toStick = (s) => { s.stick = true; stick = { cx: s.x0, cy: s.y0, kx: s.x0, ky: s.y0 }; aim(s); };
+  // flick.maxSec 秒の内の指の所を覚える（いちばん遠くまで動かした所）
+  function track(s, x, y, t) {
+    s.x = x; s.y = y;
+    if (t - s.t0 >= F.maxSec) return;
+    const d = Math.hypot(x - s.x0, y - s.y0);
+    if (d > s.fd) { s.fd = d; s.fx = x; s.fy = y; }
   }
   function dropSecond(keep = false) {
     if (second && keep) dead.add(second.id);
@@ -91,25 +96,27 @@ export function createControls({ onChargeStart = () => {}, onChargeEnd = () => {
         return;
       }
       if (id === charge || second || dead.has(id)) return; // 3 本目は無視
-      second = { id, x0: x, y0: y, t0: t, stick: false, flicked: false, dir: ZERO };
+      second = { id, x0: x, y0: y, t0: t, x, y, fx: x, fy: y, fd: 0, stick: false, dir: ZERO };
     },
     move(id, x, y, t) {
       if (!second || id !== second.id) return;
-      if (second.flicked || tryFlick(second, x, y, t)) return;
-      if (!second.stick && t - second.t0 >= C.longPressSec) toStick(second);
-      if (!second.stick) return;
-      second.dir = stickVector(x - second.x0, y - second.y0, C);
-      // つまみは指の所（輪の外なら輪の縁）
-      const dx = x - second.x0, dy = y - second.y0, d = Math.hypot(dx, dy), k = d > C.stickRadiusPx ? C.stickRadiusPx / d : 1;
-      stick.kx = second.x0 + dx * k; stick.ky = second.y0 + dy * k;
+      track(second, x, y, t);
+      if (!second.stick && (Math.hypot(x - second.x0, y - second.y0) >= C.tapMovePx || t - second.t0 >= C.longPressSec)) { toStick(second); return; }
+      if (second.stick) aim(second);
     },
     up(id, x, y, t) {
       if (dead.delete(id)) return;
       if (id === charge) { endCharge(onChargeEnd); return; }
       if (!second || id !== second.id) return;
-      if (!second.flicked && tryFlick(second, x, y, t)) { dropSecond(); return; }
-      const tap = !second.flicked && !second.stick && t - second.t0 < C.longPressSec && Math.hypot(x - second.x0, y - second.y0) < C.tapMovePx;
+      const s = second;
+      track(s, x, y, t);
       dropSecond();
+      // シュッ: flick.maxSec 秒の内に flick.minPx px 以上動かして、flick.maxSec 秒の内に離した（仮のスティックは消えた）
+      if (t - s.t0 < F.maxSec && s.fd >= F.minPx) {
+        onHide({ x: (s.fx - s.x0) / s.fd, y: (s.fy - s.y0) / s.fd }, { x0: s.x0, y0: s.y0, x1: s.fx, y1: s.fy });
+        return;
+      }
+      const tap = !s.stick && t - s.t0 < C.longPressSec && Math.hypot(x - s.x0, y - s.y0) < C.tapMovePx;
       if (tap) onPuff(x, y);
     },
     cancel(id) {
@@ -119,7 +126,7 @@ export function createControls({ onChargeStart = () => {}, onChargeEnd = () => {
     },
     // 時刻を進める（指が動かなくても、長押しでスティックが出る）
     update(t) {
-      if (second && !second.stick && !second.flicked && t - second.t0 >= C.longPressSec) toStick(second);
+      if (second && !second.stick && t - second.t0 >= C.longPressSec) toStick(second);
     },
     // タブを隠した・blur: 放たずに打ち切る。残っている指も忘れる（up が来ないことがある）
     reset() {

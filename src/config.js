@@ -109,8 +109,8 @@ export const CONFIG = {
   // 指を離すと消える。stickRadiusPx の輪いっぱいで全速、deadPx より内は止まる）、それより短く tapMovePx px 未満の動きで離せば払う
   // M2（持ち主 15:20）: PC の隠れる操作。向きのキーを同じ向きに素早く 2 回押す（keyTwice: mag より深く・window 秒の内・向きのずれ angleDeg° 以内、
   // 間に release より浅く戻す。input/keyTwice.js）。M2 のスティックを 2 回倒すはやめた（R1e、持ち主 16:45）
-  // R1e（持ち主 16:45「2本目の指をシュッと払う」）: 2 本目の指を、触れてから flick.maxSec 秒の内に flick.minPx px 以上動かす（まだスティックで
-  // ない）と、その画面の向きの物陰へ隠れる。radar: スティックのまわりの敵の向きの印の輪（M2 の 65 px の約 1.5 倍）。印は markScale 倍。
+  // R1e（持ち主 16:45「2本目の指をシュッと払う」。遊ぶ人への言葉は「シュッとなぞる」）・fix1: 2 本目の指を、触れてから flick.maxSec 秒の内に
+  // flick.minPx px 以上動かし、flick.maxSec 秒の内に離すと、その画面の向きの物陰へ隠れる（置いたままならスティック）。radar: スティックのまわりの敵の向きの印の輪（M2 の 65 px の約 1.5 倍）。印は markScale 倍。
   // 画面の端では、印が画面の内に収まるよう輪が同じ中心のまま minRadiusPx まで小さくなる（ui/joystick.js radarRadius）
   controls: {
     longPressSec: 0.18, tapMovePx: 10, stickRadiusPx: 56, deadPx: 6,

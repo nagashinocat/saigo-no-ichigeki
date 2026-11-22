@@ -187,3 +187,37 @@ test('R1e: 確かめるのは数回/秒（checkEvery 秒ごと）。その間の
   expect(lo.checks).toBeLessThanOrEqual(Math.ceil(1 / L.checkEvery) + 1);
   expect(lo.checks).toBeGreaterThanOrEqual(Math.floor(1 / L.checkEvery) - 1);
 });
+
+// R1e fix1（見直し: 矢印が 0.2 秒古くなる）: 選んだ物陰は checkEvery ごとに選び直すが、矢印の角は毎フレーム、今の主人公の所から
+// その物陰へ向け直す。主人公が動いても、矢印の向きに払えば（M2 の hide と同じ探し方で）15° の内の物陰へ入る
+test('R1e fix1: 主人公が動いても、矢印は毎フレームその物陰の方へ向き直り、矢印の向きのシュッで 15° の内の物陰へ入る', () => {
+  let frames = 0;
+  for (const seed of [1, 2, 3, 4, 5, 6]) {
+    const g = createGame({ seed, cfg: quiet });
+    g.begin(); g.pressStart();
+    for (let t = 0; t < 1; t += DT) g.update(DT);
+    const e = threatFor(g);
+    if (!e) continue;
+    const lo = createLookout();
+    const hero = { ...g.hero };
+    let s = lo.update(DT, { hero, enemies: [e], buildings: g.city.buildings, hideBlock: null, azimuthDeg: 0 });
+    if (!s.show || s.deg == null) continue;
+    const spot = s.spot;
+    // 次の確かめまでの間（checkEvery 秒）、主人公は 28 m/s で物陰と直角の向きへ動く
+    const away = Math.atan2(spot.z - hero.z, spot.x - hero.x) + Math.PI / 2;
+    for (let i = 0; i < Math.floor(L.checkEvery / DT) - 1; i++) {
+      hero.x += Math.cos(away) * 28 * DT; hero.z += Math.sin(away) * 28 * DT;
+      s = lo.update(DT, { hero, enemies: [e], buildings: g.city.buildings, hideBlock: null, azimuthDeg: 0 });
+      expect(s.show).toBe(true);
+      const want = screenBearingDeg(s.spot.x - hero.x, s.spot.z - hero.z, 0);
+      expect(Math.abs(((s.deg - want + 540) % 360) - 180)).toBeLessThan(1e-6); // 今の主人公から物陰へ
+      const r = (s.deg * Math.PI) / 180, w = screenToWorld(Math.cos(r), Math.sin(r), 0);
+      const p = findCover(hero, w, g.city.buildings, [], CONFIG);
+      expect(p).not.toBe(null);
+      const b = screenBearingDeg(p.x - hero.x, p.z - hero.z, 0);
+      expect(Math.abs(((b - s.deg + 540) % 360) - 180)).toBeLessThanOrEqual(15);
+      frames++;
+    }
+  }
+  expect(frames).toBeGreaterThan(5);
+});
