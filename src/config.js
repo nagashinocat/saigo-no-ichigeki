@@ -1,3 +1,8 @@
+// R3 fix1（点検 Important 1・持ち主 19:03「githubで公開」）: 共有のリンクの正式な URL。ここ一か所で決める。
+// 既定は GitHub Pages（リポジトリ nagashinocat/saigo-no-ichigeki）。ビルドのときに VITE_SHARE_URL で上書きできる
+// （例 VITE_SHARE_URL=https://… npm run build）。artifact（iframe の中）や別の場所で開いても、共有の文のリンクはこの URL になる（daily.js shareBase）
+export const SHARE_BASE_URL = import.meta.env?.VITE_SHARE_URL || 'https://nagashinocat.github.io/saigo-no-ichigeki/';
+
 export const CONFIG = {
   roundSeconds: 60,
   cityRadius: 680,          // m（S8: 420 → 680、面積 約 2.6 倍）。最大の一発は街の端より先まで届く

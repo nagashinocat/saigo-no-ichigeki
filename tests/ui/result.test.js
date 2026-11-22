@@ -1,5 +1,5 @@
 import { test, expect } from 'vitest';
-import { shareText, shareOrCopy, SHARE_NOTE, headlineText, resultContent, breakdownLines, bestLine, GAME_TITLE, AMOUNT_LABEL } from '../../src/ui/result.js';
+import { shareText, shareOrCopy, shareFlow, buildCopyFallback, SHARE_NOTE, headlineText, resultContent, breakdownLines, bestLine, GAME_TITLE, AMOUNT_LABEL } from '../../src/ui/result.js';
 import { budgetLine } from '../../src/ui/format.js';
 
 const CLEAR = { clear: true, total: 95, survivors: [] };
@@ -143,4 +143,61 @@ test('R3: 共有は Web Share、無ければクリップボードへ写して「
   expect(await shareOrCopy('T', { nav: {}, doc: doc(false) })).toBe('failed');
   expect(await shareOrCopy('T', { nav: null, doc: null })).toBe('failed');
   expect(SHARE_NOTE.copied).toBe('コピーしました');
+});
+
+// R3 fix1（点検 Important 1）: iframe の中で正式な URL が無ければリンクを出さず、街の名前だけで友達が同じ街を探せるようにする
+test('R3 fix1: リンクが無いときの共有の文は街の名前だけ（URL を出さない）', () => {
+  const t = shareText(2.7e12, CLEAR_R, null, { reason: 'released', city: { ...CITY, link: null }, titles: [] });
+  expect(t).toBe([
+    '「最後の一撃」撃退成功！ ランク S',
+    '被害額 ¥2.7兆（国家予算（一般会計 約112兆円）の約8.8日分）',
+    '今日の街 11/21 に挑戦',
+    '#最後の一撃',
+  ].join('\n'));
+  expect(t).not.toMatch(/https?:|null|undefined/);
+  const b = shareText(0, null, null, { reason: 'blackhole', city: { ...CITY, link: null }, titles: [] });
+  expect(b).not.toMatch(/https?:|null|undefined/);
+  expect(b).toContain('今日の街 11/21 に挑戦');
+  // 街も無ければ挑戦の行ごと出さない
+  expect(shareText(2.7e12, CLEAR_R, null, { reason: 'released' })).not.toMatch(/https?:|null|undefined|挑戦/);
+});
+
+// 小さな作り物の document（textarea・ボタン・押す）
+function fakeDoc() {
+  const mk = (tag) => {
+    const e = { tag, className: '', textContent: '', value: '', children: [], attrs: {}, listeners: {}, style: {}, selected: false, removed: false,
+      append(...c) { this.children.push(...c); }, setAttribute(k, v) { this.attrs[k] = v; }, addEventListener(t, f) { (this.listeners[t] ??= []).push(f); },
+      select() { this.selected = true; }, focus() { this.focused = true; }, remove() { this.removed = true; } };
+    return e;
+  };
+  return { createElement: mk, createTextNode: (t) => ({ tag: '#text', textContent: t }), body: { append() {} }, execCommand() { throw new Error('no'); } };
+}
+const find = (e, pred) => (pred(e) ? e : (e.children ?? []).map((c) => find(c, pred)).find(Boolean));
+test('R3 fix1: Web Share もクリップボードも使えないとき、文を選べる読み取り専用の textarea で出す（閉じるボタン付き）', async () => {
+  const doc = fakeDoc();
+  const nav = { share: async () => { throw new Error('NotAllowedError'); }, clipboard: { writeText: async () => { throw new Error('NotAllowedError'); } } };
+  expect(await shareOrCopy('文', { nav, doc })).toBe('failed');
+  const shown = [], notes = [];
+  const r = await shareFlow('共有の文', { share: (t) => shareOrCopy(t, { nav, doc }), note: (m) => notes.push(m), fallback: (t) => shown.push(t) });
+  expect(r).toBe('failed');
+  expect(shown).toEqual(['共有の文']);
+  expect(notes).toEqual([]); // 「コピーできませんでした」だけで終わらせない
+  // 写せたときは「コピーしました」、取り消しは何も出さない
+  const n2 = [];
+  await shareFlow('x', { share: async () => 'copied', note: (m) => n2.push(m), fallback: () => n2.push('FALLBACK') });
+  await shareFlow('x', { share: async () => 'cancel', note: (m) => n2.push(m), fallback: () => n2.push('FALLBACK') });
+  expect(n2).toEqual(['コピーしました']);
+  // 出し方: 読み取り専用・全部を選んだ textarea と閉じるボタン
+  let closed = 0;
+  const box = buildCopyFallback(doc, '共有の文\nhttps://example.com/?city=20261121', () => closed++);
+  const ta = find(box, (e) => e.tag === 'textarea');
+  expect(ta.value).toBe('共有の文\nhttps://example.com/?city=20261121');
+  expect(ta.attrs.readonly).toBe('');
+  expect(ta.selected).toBe(true);
+  expect(box.className).toContain('result-copybox');
+  const btn = find(box, (e) => e.tag === 'button');
+  expect(btn.textContent).toBe('閉じる');
+  btn.listeners.click[0]();
+  expect(closed).toBe(1);
+  expect(find(box, (e) => e.textContent && /手で/.test(e.textContent))).toBeTruthy();
 });

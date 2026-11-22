@@ -28,14 +28,31 @@ export function citySeed(key) {
   return (h ^ (h >>> 16)) & 0x7fffffff;
 }
 
+// R3 fix1（点検 Minor 1）: 「もう一度」は日本時間の 0 時をまたいでも同じ街。今日の街の鍵を sessionStorage に置いて読み直し、
+// 次の pickCity が一度だけ使う（?seed= と ?city= は URL に残るので覚えない）。保存できなければ、ふつうの今日の街
+export const RETRY_CITY_KEY = 'saigo-no-ichigeki:retry-city';
+export function rememberRetryCity(storage, c) {
+  if (c?.source !== 'daily' || !c.key) return;
+  try { storage?.setItem(RETRY_CITY_KEY, c.key); } catch { /* 保存できない */ }
+}
+function takeRetryCity(storage) {
+  try {
+    const v = storage?.getItem(RETRY_CITY_KEY);
+    if (v != null) storage.removeItem(RETRY_CITY_KEY);
+    return parseCityKey(v);
+  } catch { return null; }
+}
+
 // どの街で遊ぶか。{ source: 'debug' | 'link' | 'daily', key: 'YYYYMMDD' | null, seed, today }
-// 今日の日付のリンクは今日の街と同じ（見出しも「今日の街」）
-export function pickCity({ params, now = Date.now() }) {
+// 今日の日付のリンクは今日の街と同じ（見出しも「今日の街」）。storage: sessionStorage（もう一度の街を一度だけ使う。?seed=・?city= が先）
+export function pickCity({ params, now = Date.now(), storage = null }) {
   const today = jstDayKey(now);
+  const retry = takeRetryCity(storage); // 先に読んで消す（?seed=・?city= のときも残さない）
   const seedParam = Number.parseInt(params.get('seed') ?? '', 10);
   if (Number.isFinite(seedParam)) return { source: 'debug', key: null, seed: seedParam, today };
   const link = parseCityKey(params.get('city'));
   if (link && link !== today) return { source: 'link', key: link, seed: citySeed(link), today };
+  if (!link && retry) return { source: 'daily', key: retry, seed: citySeed(retry), today };
   return { source: 'daily', key: today, seed: citySeed(today), today };
 }
 
@@ -51,8 +68,23 @@ export function cityLabel(c) {
   return `今日の街 ${md(c.key, c.key)}`;
 }
 
-// 共有するリンク: 今のページ（origin + pathname）に ?city= だけ（ほかの引数は付けない）。試しの種は ?seed=
-export function cityLink(c, loc = typeof location === 'undefined' ? { origin: '', pathname: '' } : location) {
-  const base = loc.origin + loc.pathname;
+// R3 fix1（点検 Important 1）: 共有するリンクの元（origin + pathname）。artifact では iframe の中のアドレス（別のオリジン）になり、
+// 友達が開けないので出さない。canonical: 正式な URL（config.js の SHARE_BASE_URL。まだ無ければ null）。
+//  - 今の場所が正式な URL と同じ（引数・# は比べない）か、上の窓で正式な URL が無い → 今の場所
+//  - iframe の中か、正式な URL と違う場所 → 正式な URL（あれば）
+//  - iframe の中で正式な URL が無い → null（リンクを出さない。共有の文は街の名前だけ）
+const baseOf = (u) => { try { const x = new URL(u); return x.origin + x.pathname; } catch { return null; } };
+export function shareBase({ loc, framed, canonical }) {
+  const here = loc.origin + loc.pathname;
+  const canon = canonical ? baseOf(canonical) : null;
+  if (canon && here === canon) return here;
+  if (canon) return canon;
+  return framed ? null : here;
+}
+
+// 共有するリンク: リンクの元に ?city= だけ（ほかの引数は付けない）。試しの種は ?seed=。元が無ければ null
+export function cityLink(c, { loc = typeof location === 'undefined' ? { origin: '', pathname: '' } : location, framed = false, canonical = null } = {}) {
+  const base = shareBase({ loc, framed, canonical });
+  if (!base) return null;
   return c.key ? `${base}?city=${c.key}` : `${base}?seed=${c.seed}`;
 }

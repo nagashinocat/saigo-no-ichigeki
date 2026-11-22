@@ -4,7 +4,7 @@ import { TIERS, pickTier, nextTier, createFpsGovernor } from './render/quality.j
 import { createViews, CITY_CAMERA } from './render/views.js';
 import { createHandView } from './render/handView.js';
 import { buildHandModel } from './render/handModel.js';
-import { CONFIG } from './config.js';
+import { CONFIG, SHARE_BASE_URL } from './config.js';
 import { createStyle } from './render/style.js';
 import { createCityView } from './render/cityView.js';
 import { createDestruction } from './world/destruction.js';
@@ -52,7 +52,7 @@ import { createIntroFlow, introMode, markRetry } from './ui/introFlow.js';
 import { scheduleIntroSfx, renderIntroAudio } from './audio/introSfx.js';
 import { prepareIntroMusic, introMusicPlan } from './audio/introMusic.js';
 import { createIntroClock } from './audio/introClock.js';
-import { pickCity, cityLabel, cityLink } from './game/daily.js';
+import { pickCity, cityLabel, cityLink, rememberRetryCity } from './game/daily.js';
 import { earnedTitles, titleName } from './game/titles.js';
 import { createRecords } from './game/records.js';
 import { createIntroGesture } from './ui/introGesture.js';
@@ -68,16 +68,19 @@ const params = new URLSearchParams(location.search);
 const debugMode = params.has('debug');
 // R3（spec §15 今日の街）: 種は ?seed=（撮影・試し）> ?city=YYYYMMDD（友達のリンク）> 今日の街（日本時間の日付）。
 // 街の作り・軍勢の乱数・種類・見回り・演出の乱数のすべてがこの種から（game.js・下の各部品）
-const cityPick = pickCity({ params });
+const session = (() => { try { return window.sessionStorage; } catch { return null; } })();
+// fix1: もう一度の街（sessionStorage、日本時間の 0 時をまたいでも同じ街）を一度だけ使う
+const cityPick = pickCity({ params, storage: session });
 const seed = cityPick.seed;
-const cityInfo = { label: cityLabel(cityPick), share: cityLabel(cityPick).replace('（リンク）', ''), link: cityLink(cityPick) };
+// fix1: artifact の iframe の中なら、共有のリンクは正式な URL（SHARE_BASE_URL）。無ければリンクを出さない
+const framedPage = (() => { try { return window.self !== window.top; } catch { return true; } })();
+const cityInfo = { label: cityLabel(cityPick), share: cityLabel(cityPick).replace('（リンク）', ''), link: cityLink(cityPick, { loc: location, framed: framedPage, canonical: SHARE_BASE_URL }) };
 // 自己ベストと称号は端末に（localStorage。使えなければ、そのページの間だけ）
 const records = createRecords((() => { try { return window.localStorage; } catch { return null; } })());
 const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || navigator.maxTouchPoints > 1 && matchMedia('(pointer: coarse)').matches;
 const tierParam = params.get('tier');
 // 導入（S6）の始め方: 'full'（最初の読み込み: TAP → 導入 → 題字 → TAP START）・'short'（リトライ: 短い題字から）・
 // 'bypass'（撮影の ?debug で ?intro がないとき: 今までどおりすぐ遊べる）
-const session = (() => { try { return window.sessionStorage; } catch { return null; } })();
 const startMode = introMode({ params, storage: session });
 let tier = tierParam in TIERS ? tierParam : pickTier({ isMobile, deviceMemory: navigator.deviceMemory, cores: navigator.hardwareConcurrency });
 
@@ -140,6 +143,7 @@ const result = createResult(document.getElementById('result'), {
   // 壊れた街や地面のえぐれは作り直せないので、ページを読み直す。R3: 同じ街（今日の街・リンクの街・試しの種）にもう一度挑む
   onRetry() {
     markRetry(session); // 読み直したページは導入を飛ばし、題字と TAP START から
+    rememberRetryCity(session, cityPick); // fix1: 0 時をまたいでも同じ今日の街
     location.reload();
   },
   // 最後の一発をもう一度見る（放つ直前の街へ戻して起こし直す。何度でも同じリプレイ）

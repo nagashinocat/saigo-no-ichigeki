@@ -5,7 +5,9 @@ export const GAME_TITLE = '最後の一撃';
 // 金額の見出し（持ち主 16:48「被害額だけでおまけは書かなくていいよ」）。勝ち負けの見出しより小さく出す
 export const AMOUNT_LABEL = '被害額';
 
-const pageUrl = () => (typeof location === 'undefined' ? '' : location.origin + location.pathname);
+// 今のページ。R3 fix1: iframe の中（artifact）のアドレスは友達が開けないので出さない（null）
+const framed = () => { try { return window.self !== window.top; } catch { return true; } };
+const pageUrl = () => (typeof location === 'undefined' || (typeof window !== 'undefined' && framed()) ? null : location.origin + location.pathname);
 
 // S9（持ち主 13:16）: 放った一発で街の軍勢を全員倒せたら撃退成功、一人でも残れば撃退失敗（残り N 体）。
 // outcome: game.outcome（{ clear, total, survivors }）。時間切れはブラックホール（勝ち負けも破壊額もない）
@@ -26,7 +28,8 @@ export function shareText(total, outcome, url = pageUrl(), { reason = outcome ? 
     lines.push(`${AMOUNT_LABEL} ${formatYen(total)}${cmp ? `（${cmp}）` : ''}`);
   }
   if (titles.length) lines.push('称号' + titles.map((t) => `「${t.name}」`).join(''));
-  lines.push(city ? `${city.share} に挑戦 → ${url}` : url);
+  // R3 fix1: リンクが無い（iframe の中で正式な URL がまだ無い）ときは街の名前だけ
+  lines.push(city ? (url ? `${city.share} に挑戦 → ${url}` : `${city.share} に挑戦`) : url);
   lines.push('#最後の一撃');
   return lines.filter(Boolean).join('\n');
 }
@@ -92,7 +95,36 @@ export async function shareOrCopy(text, { nav = typeof navigator === 'undefined'
   } catch { /* 写せない */ }
   return 'failed';
 }
-export const SHARE_NOTE = { copied: 'コピーしました', failed: 'コピーできませんでした' };
+export const SHARE_NOTE = { copied: 'コピーしました' };
+
+// R3 fix1（点検 Important 1）: 共有を押したあと。写せたら「コピーしました」、どれも使えなければ（artifact の iframe など）
+// 文を手で写せる箱（fallback）を出す。取り消しは何も出さない
+export async function shareFlow(text, { share = shareOrCopy, note, fallback }) {
+  const r = await share(text);
+  if (r === 'failed') fallback(text);
+  else if (SHARE_NOTE[r]) note(SHARE_NOTE[r]);
+  return r;
+}
+
+// 手で写す箱: 一言・読み取り専用で全部を選んだ textarea・閉じるボタン
+export function buildCopyFallback(doc, text, onClose) {
+  const box = doc.createElement('div');
+  box.className = 'result-copybox';
+  const msg = doc.createElement('p');
+  msg.textContent = '自動でコピーできませんでした。下の文を長押しで選んで、手でコピーしてください';
+  const ta = doc.createElement('textarea');
+  ta.value = text;
+  ta.setAttribute('readonly', '');
+  ta.setAttribute('aria-label', '共有の文');
+  const close = doc.createElement('button');
+  close.className = 'result-btn';
+  close.textContent = '閉じる';
+  close.addEventListener('click', () => onClose());
+  box.append(msg, ta, close);
+  ta.addEventListener('focus', () => ta.select());
+  ta.select();
+  return box;
+}
 
 // 結果画面。「もう一度」は onRetry、「リプレイ」は onReplay（最後の一発をもう一度見る）、
 // 「共有」は Web Share か、使えなければクリップボードへ写す（R3）。getShare: () => ({ url, city, titles })（街のリンクと称号）
@@ -124,15 +156,27 @@ export function createResult(root, { onRetry, onReplay = null, share: shareFn = 
   let total = 0, outcome = null, reason = null, extra = null, noteTimer = 0;
   retry.addEventListener('click', () => onRetry());
   replay.addEventListener('click', () => onReplay?.());
+  let copyBox = null;
+  const closeCopyBox = () => { copyBox?.remove(); copyBox = null; };
   share.addEventListener('click', async () => {
-    const text = shareText(total, outcome, extra?.city?.link ?? pageUrl(), { reason, city: extra?.city ?? null, titles: extra?.titles ?? [] });
-    const r = await shareFn(text);
-    if (SHARE_NOTE[r]) {
-      note.textContent = SHARE_NOTE[r];
-      note.hidden = false;
-      clearTimeout(noteTimer);
-      noteTimer = setTimeout(() => { note.hidden = true; }, 2200);
-    }
+    // R3 fix1: 街の情報があればその link（無ければ null = URL を出さない）。iframe の中のアドレスは使わない
+    const url = extra?.city ? (extra.city.link ?? null) : pageUrl();
+    const text = shareText(total, outcome, url, { reason, city: extra?.city ?? null, titles: extra?.titles ?? [] });
+    await shareFlow(text, {
+      share: shareFn,
+      note: (m) => {
+        note.textContent = m;
+        note.hidden = false;
+        clearTimeout(noteTimer);
+        noteTimer = setTimeout(() => { note.hidden = true; }, 2200);
+      },
+      fallback: (t) => {
+        closeCopyBox();
+        copyBox = buildCopyFallback(document, t, closeCopyBox);
+        root.append(copyBox);
+        copyBox.querySelector('textarea').select();
+      },
+    });
   });
   return {
     // o: game.outcome（時間切れは null）。opts.replay: 「リプレイ」を出す（最後の一発を見せ直せるとき）。
@@ -153,6 +197,7 @@ export function createResult(root, { onRetry, onReplay = null, share: shareFn = 
       bestEl.replaceChildren(...(c.best ? [document.createTextNode(c.best.text), ...(c.best.isNew ? [el('b', null, 'NEW!')] : [])] : []));
       bestEl.hidden = !c.best;
       note.hidden = true;
+      closeCopyBox();
       // R3: 折り返すときは全角の間で（「撃退失敗」「残り N 体」をそれぞれ切らない）。文字は同じ
       headline.replaceChildren(...c.headline.split('　').flatMap((part, i) => [...(i ? [document.createTextNode('　')] : []), el('span', 'nobr', part)]));
       // 勝ち負けで色を変える（撃退成功は明るく、失敗は生き残りの光と同じ赤緑の気配）
@@ -170,6 +215,6 @@ export function createResult(root, { onRetry, onReplay = null, share: shareFn = 
       row2.hidden = replay.hidden = !(canReplay && onReplay);
       root.hidden = false;
     },
-    hide() { root.hidden = true; },
+    hide() { closeCopyBox(); root.hidden = true; },
   };
 }
