@@ -17,10 +17,6 @@ export function centreRect(layout, height) {
   return { left: Math.round(hud.x + (hud.w - width) / 2), top: height - hud.y - hud.h + Math.round(Math.max(6, hud.h * 0.12)), width };
 }
 
-export function powerText(power, max) {
-  return `力 ${Math.floor(Math.max(0, Math.min(1, power / max)) * 100)}%`;
-}
-
 // R1b（持ち主 08:24「力のパーセントをもう少しわかりやすくしよう」）: 大きな数字（切り捨ての整数）
 export const powerPct = (power, max) => Math.floor(Math.max(0, Math.min(1, power / max)) * 100);
 // 力の段: 撃退ライン（threshold、charge.js の clearThreshold）未満は low（琥珀）、以上は ready（白熱）、満タンは full（脈打つ）

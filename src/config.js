@@ -43,7 +43,7 @@ export const CONFIG = {
   cinematic: { freezeSec: 1.4 },
   // 湧く速さ（持ち主の決定「終盤ほど一気に増やす」）: 序盤は spawnPerSec で平ら、surgeStart 秒から surgeEnd 秒へ一気に surgeMul 倍まで増える
   // （残り 20 秒ほどで群れになる。60 秒で約 100）。掴んだ一人ごとに貯めた力が drainPerSec ずつ減る。
-  // 浮遊バイクは spawnDist（近い上空カメラの画面の端のすぐ外〜少し内）の道路に湧き、道路に沿って searchSpeed m/s で探し回る
+  // 浮遊バイクは spawnDist（上空カメラの画面の外。R1g でカメラを 0.8 倍に寄せてからは、ほとんどが画面の端より外）の道路に湧き、道路に沿って searchSpeed m/s で探し回る
   // （交差点で曲がる。主人公に近づく向きは inwardBias 倍の重みで選ぶ。roamDist の外へは出ない。laneSpread: 道の中心線からのずれ）。
   // spotDist の内側で建物にさえぎられずに見えたら（spotEvery 秒ごとに確かめる。sightMargin: 建物の足元を広げる）見つけ、
   // spotDist は広場を囲む道（中心線 13m、車線は ±laneSpread）より余裕をもって外まで届くこと（届かないと誰も見つけられない。テストあり）。
@@ -64,7 +64,7 @@ export const CONFIG = {
     // R1f: 吸う 1.5 → 1.2/秒（6 人で 7.2/秒）。fix1 で 0.8 にしたのは、まとめ役の判断で 1.2 に戻した
     // fix2（まとめ役の判断）: 0.8 → 1.2 に戻す
     spawnPerSec: 0.5, surgeStart: 40, surgeEnd: 52, surgeMul: 11, drainPerSec: 1.2, maxGrabbing: 6,
-    spawnDist: [50, 66], roamDist: 75, laneSpread: 1.6,
+    spawnDist: [50, 66], roamDist: 75, laneSpread: 1.6, // 湧く輪（主人公から m）は R1g のカメラでは画面のほぼ外
     searchSpeed: 30, inwardBias: 0.8, turnRate: 16, lookAhead: 2.5, accel: 30, brake: 70,
     // M2（持ち主 09:11「敵の前方ライトを少し広くして」）: 見つけるのは前を照らすライトの中だけ。前の 28 m の丸 → 前向きの扇
     // （spotDist m まで、半分の角 spotHalfAngle rad）。ごく近く（spotNear m）だけは向きによらない（enemies.js seesHero）
@@ -141,7 +141,6 @@ export const CONFIG = {
   // 指を離すと消える。stickRadiusPx の輪いっぱいで全速、deadPx より内は止まる）、それより短く tapMovePx px 未満の動きで離せば払う
   // M2（持ち主 15:20）: PC の隠れる操作。向きのキーを同じ向きに素早く 2 回押す（keyTwice: mag より深く・window 秒の内・向きのずれ angleDeg° 以内、
   // 間に release より浅く戻す。input/keyTwice.js）。M2 のスティックを 2 回倒すはやめた（R1e、持ち主 16:45）
-  // R1e の 2 本目の指のシュッ（flick）は R1f でやめた（持ち主 18:14「似た操作はやめよう」。隠れるのは LOOK OUT! の矢印のタップ）。
   // R1f: タップは、触れてから longPressSec 秒より前に離し、触れた所からの動きが tapSlopPx px 未満（tapMovePx で仮のスティックが出ていてもよい。
   // 実機の軽いタップの指の転がりで払うを取りこぼさない）。radar: スティックのまわりの敵の向きの印の輪（M2 の 65 px の約 1.5 倍）。印は markScale 倍。
   // 画面の端では、印が画面の内に収まるよう輪が同じ中心のまま minRadiusPx まで小さくなる（ui/joystick.js radarRadius）

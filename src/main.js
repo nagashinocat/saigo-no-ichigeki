@@ -92,7 +92,7 @@ const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) ||
 // タッチの端末（指の操作がある）。リトライの TAP（最終レビュー C1）と、blur の一時停止で使う
 const touchDevice = (() => { try { return matchMedia('(pointer: coarse)').matches || (navigator.maxTouchPoints ?? 0) > 0; } catch { return false; } })();
 const tierParam = params.get('tier');
-// 導入（S6）の始め方: 'full'（最初の読み込み: TAP → 導入 → 題字 → TAP START）・'retry'（リトライ: 導入も説明もなし、すぐ遊べる）・'short'（?intro=short 撮影用）・
+// 導入（S6）の始め方: 'full'（最初の読み込み: TAP → 導入 → 題字 → TAP START）・'retry'（リトライ: 導入も説明もなし。PC はすぐ遊べ、タッチの端末は遊ぶ画面の上の TAP を一つ。C1）・'short'（?intro=short 撮影用）・
 // 'bypass'（撮影の ?debug で ?intro がないとき: 今までどおりすぐ遊べる）
 const startMode = introMode({ params, storage: session });
 let tier = tierParam in TIERS ? tierParam : pickTier({ isMobile, deviceMemory: navigator.deviceMemory, cores: navigator.hardwareConcurrency });

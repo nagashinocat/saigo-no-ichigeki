@@ -26,7 +26,7 @@ export function layoutViews(width, height) {
 // 正方形と屋上の点が、横は ±marginX、縦は ndcBottom〜ndcTop（HUD の帯より下）に収まる一番近い距離（tests/render/cityCamera.test.js）。
 // 仰角は、手前の街区の建物（cityGen.js の高さ制限）が広場を隠さないよう高め。道路の格子にまっすぐ沿って見下ろす。
 // 縦画面の横の画角は minHFovDeg（縦は約 69°）、横長の画面の縦の画角は vFovDeg（横の端のゆがみを抑える）。
-// 縦画面では広場まで約 115m（小さな一発でカメラが押されない遠さ。blastCamera.js）。
+// 縦画面では主人公まで約 92 m（枠が収まる一番近い距離 約 115 m に distScale 0.8 を掛ける。R1g。小さな一発でカメラが押されない遠さ。blastCamera.js）。
 export const CITY_CAMERA = {
   elevationDeg: 62, azimuthDeg: 0, minHFovDeg: 52, vFovDeg: 46,
   frameHalf: 35, frameTop: 22,

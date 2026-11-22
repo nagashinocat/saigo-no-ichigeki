@@ -1,5 +1,5 @@
 import { test, expect } from 'vitest';
-import { centreText, centreArrowDeg, centreRect, powerText, armyText, comboText, comboPos, BOSS_TEXT, powerPct, powerStage, gaugeRect, pctRect, lostText, SHORT_TEXT, shortPos } from '../../src/ui/hud.js';
+import { centreText, centreArrowDeg, centreRect, armyText, comboText, comboPos, BOSS_TEXT, powerPct, powerStage, gaugeRect, pctRect, lostText, SHORT_TEXT, shortPos } from '../../src/ui/hud.js';
 import { clearThreshold } from '../../src/game/charge.js';
 import { layoutViews } from '../../src/render/views.js';
 
@@ -27,13 +27,6 @@ test('M1: 「中心まで」は上の帯の真ん中（残り時間・街の軍�
     expect(r.top).toBeGreaterThanOrEqual(h - l.hud.y - l.hud.h);
     expect(r.top).toBeLessThan(h - l.hud.y);
   }
-});
-
-test('貯めた力の文言は上限に対する割合（切り捨て）', () => {
-  expect(powerText(0, 100)).toBe('力 0%');
-  expect(powerText(41.9, 100)).toBe('力 41%');
-  expect(powerText(100, 100)).toBe('力 100%');
-  expect(powerText(150, 100)).toBe('力 100%');
 });
 
 test('S9: 街の軍勢の数（全員倒せばクリア。見回る者を含めた、生きている者の数）', () => {

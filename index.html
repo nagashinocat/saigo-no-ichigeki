@@ -77,8 +77,6 @@
     .hud-pips { position: absolute; display: flex; gap: 7px; transform: translate(-50%, -50%); pointer-events: none; }
     .hud-pips i { width: 11px; height: 11px; border-radius: 50%; background: radial-gradient(circle at 40% 35%, #fff9ec, #ffc46a 70%); box-shadow: 0 0 0 1.5px rgba(20, 10, 30, 0.85), 0 0 8px rgba(255, 200, 110, 0.85); transition: transform 0.2s, opacity 0.2s; }
     .hud-pips i.used { background: rgba(20, 10, 30, 0.35); box-shadow: inset 0 0 0 1.5px rgba(255, 236, 200, 0.55); }
-    .hud-pips.out i { animation: hud-pips-out 0.5s ease-out; }
-    @keyframes hud-pips-out { 0% { transform: scale(1.4); } 100% { transform: scale(1); } }
     .hud-short.show { animation: hud-short 0.9s ease-out forwards; }
     @keyframes hud-short { 0% { opacity: 0; transform: translate(-50%, -30%) scale(1.15); } 12% { opacity: 1; transform: translate(-50%, -50%) scale(1); } 70% { opacity: 1; } 100% { opacity: 0; transform: translate(-50%, -85%); } }
     @media (prefers-reduced-motion: reduce) { .hud-gauge.full .hud-track, .hud-pct.full { animation: none; } }
