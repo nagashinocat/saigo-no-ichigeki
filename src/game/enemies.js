@@ -96,6 +96,7 @@ export function lineOfSight(x, z, buildings, margin = 0, px = 0, pz = 0) {
 // H: 主人公の位置 { x, z }。buildings: 見通しを確かめる建物
 export function seesHero(e, H, buildings, cfg = CONFIG) {
   const E = cfg.enemy;
+  if (H.hidden) return false; // M2: 物陰に隠れている間は誰にも見つからない
   const rx = H.x - e.x, rz = H.z - e.z, d = Math.hypot(rx, rz);
   if (d > E.spotDist) return false;
   if (d > (E.spotNear ?? 0)) {
@@ -334,7 +335,7 @@ export function createEnemies(rng, cfg = CONFIG, { buildings = [], patrolRng = n
   // 知らされた者は heard を覚え（もっと新しい知らせなら書き換える）、hops + 1 < alert.hops なら relayDelay 秒あとに次へ伝える。
   // chase・掴む・群がる・よろめく者は変わらない（自分で見つけた者は今の主人公を追い続ける。持ち主 13:36）
   function call(from, hops) {
-    if (!AL) return;
+    if (!AL || H.hidden) return;
     from.callT = 0;
     const known = { x: H.x, z: H.z, t: time };
     const R2 = AL.radius * AL.radius;
@@ -356,6 +357,7 @@ export function createEnemies(rng, cfg = CONFIG, { buildings = [], patrolRng = n
   // 知らされた者が次へ伝える（覚えた位置のまま）
   function relay(o) {
     o.relayAt = null;
+    if (H.hidden) return; // M2: 隠れている間は知らせが止まる
     o.callT = 0;
     const R2 = AL.radius * AL.radius;
     for (const p of list) {
@@ -479,7 +481,7 @@ export function createEnemies(rng, cfg = CONFIG, { buildings = [], patrolRng = n
           e.recall = (e.recall ?? AL.callEvery) - dt;
           if (e.recall > 0) continue;
           e.recall += AL.callEvery;
-          const sees = e.state !== 'chase' || (e.dist <= E.spotDist && e.x != null && lineOfSight(e.x, e.z, nearBuildings(), E.sightMargin, H.x, H.z));
+          const sees = !H.hidden && (e.state !== 'chase' || (e.dist <= E.spotDist && e.x != null && lineOfSight(e.x, e.z, nearBuildings(), E.sightMargin, H.x, H.z)));
           if (sees) call(e, 0);
         }
       }
@@ -538,6 +540,22 @@ export function createEnemies(rng, cfg = CONFIG, { buildings = [], patrolRng = n
       drainLoad = 0;
       for (const e of list) if (e.state === 'grab') drainLoad += drainMulOf(e, cfg);
       return grabbing;
+    },
+    // M2（持ち主 15:20）: 主人公が物陰に隠れた。追っている者（chase）は見失い、at（最後に見た所）を探す者へ戻る（知らせは伝えない）。
+    // 伝える途中の知らせも止める。見失った者の数を返す
+    loseHero(at) {
+      let n = 0;
+      for (const e of list) {
+        if (e.state === 'search') { e.relayAt = null; continue; }
+        if (e.state !== 'chase' && e.state !== 'approach') continue;
+        if (e.x == null) { e.x = H.x + Math.cos(e.angle) * e.dist; e.z = H.z + Math.sin(e.angle) * e.dist; }
+        e.state = 'search'; e.alert = true; e.searchTime = 0; e.relayAt = null;
+        e.heard = { x: at.x, z: at.z, t: time }; e.hops = AL?.hops ?? 0;
+        e.speed = Math.max(e.speed ?? 0, E.searchSpeed * speedMulOf(e, cfg) * 0.6);
+        resumeRoad(e);
+        n++;
+      }
+      return n;
     },
     // 掴んでいる者の吸う力の合計（ふつうの者 1 人を 1。吸う者 2.5、大物 4）。update のあとの値
     get drainLoad() { return drainLoad; },

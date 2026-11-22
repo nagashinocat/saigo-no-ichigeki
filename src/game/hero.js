@@ -38,6 +38,7 @@ export function createHeroMotion(city, cfg = CONFIG) {
   const boxesAt = footprintGrid(city.buildings, H.radius);
   const maxR = (city.radius ?? cfg.cityRadius) - H.edgePad;
   const move = { x: 0, z: 0 };
+  let dash = null; // M2: 物陰へ滑り込む { x0, z0, x1, z1, t, sec }
 
   // 一つの軸だけ動かして、足元に入ったら、入る前の側の縁へ戻す（その軸の速さは 0。もう一つの軸はそのまま: 壁に沿って滑る）
   function slide(axis, d) {
@@ -60,10 +61,29 @@ export function createHeroMotion(city, cfg = CONFIG) {
       move.x = Number.isFinite(x) ? x * k : 0;
       move.z = Number.isFinite(z) ? z * k : 0;
     },
+    // M2（持ち主 15:20「物陰にシュッと入る」）: to（{ x, z }）へ sec 秒でシュッと滑り込む（はじめが速い ease-out。そのあいだ操作は効かない）。
+    // hero.dashing は進み具合 0〜1（終われば null）。通り道は呼ぶ側（cover.js）がビルにさえぎられないことを確かめてある
+    dash(to, sec) {
+      dash = { x0: hero.x, z0: hero.z, x1: to.x, z1: to.z, t: 0, sec: Math.max(1e-3, sec) };
+      hero.dashing = 0;
+      hero.dashFrom = { x: hero.x, z: hero.z };
+    },
     // 止める（放った瞬間から、主人公は爆心にとどまる）
-    stop() { hero.vx = 0; hero.vz = 0; hero.lean = 0; move.x = 0; move.z = 0; },
+    stop() { dash = null; hero.dashing = null; hero.vx = 0; hero.vz = 0; hero.lean = 0; move.x = 0; move.z = 0; },
     update(dt, { active = true, grabbing = 0 } = {}) {
       if (!(dt > 0)) return;
+      if (dash) {
+        dash.t += dt;
+        const u = Math.min(1, dash.t / dash.sec), e = 1 - (1 - u) ** 3;
+        const x = dash.x0 + (dash.x1 - dash.x0) * e, z = dash.z0 + (dash.z1 - dash.z0) * e;
+        hero.vx = (x - hero.x) / dt; hero.vz = (z - hero.z) / dt;
+        hero.x = x; hero.z = z;
+        const sp = Math.hypot(dash.x1 - dash.x0, dash.z1 - dash.z0);
+        if (sp > 0.1) hero.heading = Math.atan2(dash.z1 - dash.z0, dash.x1 - dash.x0);
+        hero.dashing = u;
+        if (u >= 1) { dash = null; hero.dashing = null; hero.vx = 0; hero.vz = 0; }
+        return;
+      }
       const v = H.speed * heroSpeedFactor(grabbing, cfg);
       const tx = active ? move.x * v : 0, tz = active ? move.z * v : 0;
       // なめらかな加速と減速（目標の速さへ指数で寄せる）

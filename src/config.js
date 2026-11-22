@@ -96,7 +96,13 @@ export const CONFIG = {
   // 向き直り 9 → 16 rad/s、前への傾き 0.3 → 0.42 rad。一歩が radius より長いときは刻んで動かす（薄い足元を飛び越えない）
   // M2（持ち主 15:20「足の速さはバイクよりほんのちょっと遅いくらいじゃないとすぐ捕まるね」）: 22 → 28 m/s（探す 30・突っ込む 32 より少しだけ遅い）
   hero: { speed: 28, accelRate: 12, radius: 1.2, edgePad: 30, grabSlow: 0.2, minSpeedFrac: 0.4, turnRate: 16, leanMax: 0.42 },
+  // M2（持ち主 15:20「物陰にシュッと入る」）: 隠れる。向きの先 minDist〜range m の物陰（ビルの壁から wallDist m の内で、追っている者から見えない所。
+  // step m 刻み、向きのずれ 1 rad ごとに offW m 遠いのと同じに数える）へ dashSec 秒でシュッと滑り込む。そこから leaveDist m 離れるまで見つからない。
+  // 次の隠れるまで cooldown 秒。掴まれている間はできない
+  hide: { dashSec: 0.3, cooldown: 3, range: 26, minDist: 3, step: 1.5, wallDist: 1.6, offW: 6, leaveDist: 3 },
   // M1 の操作（持ち主 09:15、制作側の判断）: 溜めているあいだの 2 本目の指は、longPressSec 秒以上で浮かぶジョイスティック（押した所に出て、
   // 指を離すと消える。stickRadiusPx の輪いっぱいで全速、deadPx より内は止まる）、それより短く tapMovePx px 未満の動きで離せば払う
-  controls: { longPressSec: 0.18, tapMovePx: 10, stickRadiusPx: 56, deadPx: 6 },
+  // M2（持ち主 15:20）: 隠れる操作。スティックを同じ向きに素早く 2 回倒す（mag より深く・window 秒の内・向きのずれ angleDeg° 以内、
+  // 間に release より浅く戻す）。PC は向きのキーの 2 回押し
+  controls: { longPressSec: 0.18, tapMovePx: 10, stickRadiusPx: 56, deadPx: 6, flick: { mag: 0.7, release: 0.35, window: 0.35, angleDeg: 30 } },
 };

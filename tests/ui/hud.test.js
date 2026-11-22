@@ -123,6 +123,7 @@ function fakeRoot() {
       classList: { add: (...c) => c.forEach((x) => cls.add(x)), remove: (...c) => c.forEach((x) => cls.delete(x)), toggle: (c, on) => (on ? cls.add(c) : cls.delete(c)), contains: (c) => cls.has(c) },
       setAttribute() {}, addEventListener() {},
       querySelector: (sel) => get(sel),
+      querySelectorAll: (sel) => [0, 1, 2].map((i) => get(`${sel}:${i}`)), // M2: 払うの 3 つの点
     };
   };
   const get = (sel) => { if (!els.has(sel)) els.set(sel, make()); return els.get(sel); };
@@ -229,4 +230,25 @@ test('R1c: 残り時間の CSS: 大きな数字（ふだんの文字より大き
   expect(px(/\.hud-tnum\s*\{[^}]*font-size:\s*clamp\((\d+)px/)).toBeGreaterThanOrEqual(30);
   expect(px(/\.hud-tbar\s*\{[^}]*height:\s*(\d+)px/)).toBeLessThanOrEqual(6);
   expect(css).toMatch(/\.hud-time\.last \.hud-tfill\s*\{/); // 残り 10 秒は帯も色が変わる
+});
+
+// M2（spec §16「払うを 3 回」）: 残りの払える回数の 3 つの点。スティックが出ていればその輪のすぐ上、出ていなければ街の画面の左下（力の数字の上）
+test('M2: 払うの点の位置（pipsPos）と「もう払えない」', async () => {
+  const { pipsPos, OUT_TEXT } = await import('../../src/ui/hud.js');
+  expect(OUT_TEXT).toBe('もう払えない');
+  const l = layoutViews(390, 844);
+  const R = 56;
+  const s = pipsPos(l, 844, { cx: 120, cy: 600 }, R);
+  expect(s.x).toBeCloseTo(120, 0);
+  expect(s.y).toBeLessThan(600 - R);
+  expect(s.y).toBeGreaterThan(600 - R - 40);
+  const f = pipsPos(l, 844, null, R);
+  const n = pctRect(l, 844);
+  expect(f.y).toBeLessThan(n.top);
+  expect(f.y).toBeGreaterThan(n.top - 40);
+  expect(f.x).toBeGreaterThanOrEqual(n.left);
+  // 画面の端に寄ったスティックでも画面の内
+  const e = pipsPos(l, 844, { cx: 5, cy: 60 }, R);
+  expect(e.x).toBeGreaterThanOrEqual(20);
+  expect(e.y).toBeGreaterThanOrEqual(10);
 });

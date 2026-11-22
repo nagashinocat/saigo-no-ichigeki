@@ -9,6 +9,7 @@ import { createBlast } from './blast.js';
 import { createEnemies } from './enemies.js';
 import { createHeroMotion } from './hero.js';
 import { distFrom } from './centre.js';
+import { findCover } from './cover.js';
 
 export { heroSpeedFactor } from './hero.js';
 
@@ -130,6 +131,17 @@ export function createGame({ seed, cfg = CONFIG }) {
   };
   const canPuff = () => puffBlock() === null;
 
+  // M2（持ち主 15:20）: 隠れる。理由: 'off'（遊んでいない・溜めていない）・'grabbed'（掴まれている・群がられている）・'cooldown'（前の隠れるから
+  // hide.cooldown 秒の内）・'dashing'（滑り込んでいる途中）。隠れられるなら null（物陰が見つかるかは hide が確かめる）
+  let hideCool = 0;
+  const hideBlock = () => {
+    if (hidden || phase !== 'playing' || !charge.active) return 'off';
+    if (grabbing > 0 || enemies.list.some((e) => e.state === 'cling' || e.state === 'grab')) return 'grabbed';
+    if (hero.dashing != null) return 'dashing';
+    if (hideCool > 0) return 'cooldown';
+    return null;
+  };
+
   return {
     city, enemies, power, charge, timer, score,
     // M1: 主人公の位置と速さ { x, z, vx, vz, heading, lean }（読むだけ。試しは x, z を直に置いてよい）
@@ -150,6 +162,25 @@ export function createGame({ seed, cfg = CONFIG }) {
     // M2: 残りの払える回数（HUD の 3 つの点）と、今払えない理由（'out' / 'short' / 'busy' / 'off'。払えるなら null）
     get puffsLeft() { return puffsLeft; },
     get puffBlock() { return puffBlock(); },
+    // M2: 今隠れられない理由（'off' / 'grabbed' / 'cooldown' / 'dashing'。隠れられるなら null）と、次の隠れるまでの秒
+    get hideBlock() { return hideBlock(); },
+    get hideCooldown() { return Math.max(0, hideCool); },
+    // M2（持ち主 15:20）: 向き（世界の x, z）の先の物陰へシュッと滑り込んで隠れる。隠れられたら true（物陰がなければ 'nocover' を知らせて false）
+    hide(dx, dz) {
+      if (hideBlock() !== null) return false;
+      const watchers = enemies.list.filter((e) => e.state !== 'dead' && e.x != null && (!e.patrol || e.hunting || e.dist < cfg.enemy.spotDist + cfg.hide.range));
+      const spot = findCover(hero, { x: dx, z: dz }, city.buildings, watchers, cfg);
+      if (!spot) { emit('hideFail', { reason: 'nocover' }); return false; }
+      const from = { x: hero.x, z: hero.z };
+      hero.lastSeen = from;
+      hero.hidden = true;
+      hero.hideSpot = spot;
+      const lost = enemies.loseHero(from);
+      motion.dash(spot, cfg.hide.dashSec);
+      hideCool = cfg.hide.cooldown;
+      emit('hide', { from, to: spot, lost });
+      return true;
+    },
     // 進行中の一発の読み取り専用の写し（描画が一発ごとに球を描くため）。小爆発は shot.small
     get blasts() {
       return Object.freeze(blasts.map((b) => Object.freeze({ id: b.id, shot: b.shot, front: b.blast.front })));
@@ -179,6 +210,7 @@ export function createGame({ seed, cfg = CONFIG }) {
       // M1: 爆心は放った瞬間の主人公の位置。ここから主人公は止まる
       shot.centre = { x: hero.x, z: hero.z };
       motion.stop();
+      hero.hidden = false;
       emit('shot', shot);
       phase = 'cinematic';
       timer.pause();
@@ -231,6 +263,9 @@ export function createGame({ seed, cfg = CONFIG }) {
       }
 
       charge.update(dt);
+      hideCool -= dt;
+      // M2: 物陰から leaveDist m より離れたら、もう隠れていない（見られれば、また見つかる）
+      if (hero.hidden && hero.dashing == null && Math.hypot(hero.x - hero.hideSpot.x, hero.z - hero.hideSpot.z) > cfg.hide.leaveDist) { hero.hidden = false; emit('unhide', { x: hero.x, z: hero.z }); }
       // 主人公が先に動き、軍勢は今の主人公を追う（掴んでいる者はついてくる）。動くのは溜めている間だけ
       motion.update(dt, { active: charge.active, grabbing });
       grabbing = enemies.update(dt);

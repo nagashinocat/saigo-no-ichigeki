@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { createGame } from './game/game.js';
 import { TIERS, pickTier, nextTier, createFpsGovernor } from './render/quality.js';
-import { createViews } from './render/views.js';
+import { createViews, CITY_CAMERA } from './render/views.js';
 import { createHandView } from './render/handView.js';
 import { buildHandModel } from './render/handModel.js';
 import { CONFIG } from './config.js';
@@ -25,10 +25,12 @@ import { createReplaySim, replayTargets } from './game/replaySim.js';
 import { createRng } from './rng.js';
 import { createControls, keyVector, MOVE_KEYS } from './input/controls.js';
 import { createJoystickView } from './ui/joystick.js';
+import { createFlick } from './input/flick.js';
+import { stickMarks } from './ui/stickMarks.js';
 import { bindPointerInput, eventMs } from './input/bindDom.js';
 import { clearThreshold } from './game/charge.js';
 import { maxEnemyReachFrom } from './game/enemies.js';
-import { createHud } from './ui/hud.js';
+import { createHud, OUT_TEXT } from './ui/hud.js';
 import { createTimeTicks } from './ui/timeLeft.js';
 import { createResult } from './ui/result.js';
 import { createAudio, finaleBoomOpts } from './audio/audio.js';
@@ -111,7 +113,9 @@ function tryPuff(x, y) {
   if (!controls.charging) return false;
   if (!(Number.isFinite(x) && Number.isFinite(y))) { const c = screenCue(game.hero.x, 2.5, game.hero.z); x = c.sx; y = c.sy; }
   if (game.puff()) return true;
-  if (game.phase === 'playing' && !game.power.canSpend(CONFIG.puff.cost)) hud.short(x, y);
+  // M2: 3 回使い切ったら「もう払えない」、力が足りなければ「足りない」
+  const why = game.puffBlock;
+  if (why === 'out') hud.short(x, y, OUT_TEXT); else if (why === 'short') hud.short(x, y);
   return false;
 }
 // R1b（持ち主 08:24「吸われてる時をもっと分かりやすく」）: 掴まれて吸われている間の知らせ（画面の縁の脈打ち・力の数字・手の帯の球・吸われる音）
@@ -137,7 +141,21 @@ const controls = createControls({
   onChargeEnd() { game.pressEnd(); },
   onChargeCancel() { game.pressCancel(); },
   onPuff(x, y) { tryPuff(x, y); },
+  onHide(d) { tryHide(d); },
 });
+// M2（持ち主 15:20）: 隠れる（スティックを同じ向きに 2 回倒す。PC は向きのキーの 2 回押し）。画面の右 = 世界の +x、下 = +z。
+// 掴まれている間・次まで待つ間・物陰がない向きは、主人公の上に短い知らせ
+const HIDE_TEXT = { grabbed: '掴まれていて隠れられない', cooldown: 'まだ隠れられない', nocover: '隠れる物陰がない' };
+function tryHide(d) {
+  if (!controls.charging || game.phase !== 'playing') return false;
+  const why = game.hideBlock;
+  if (game.hide(d.x, d.y)) return true;
+  const c = screenCue(game.hero.x, 2.5, game.hero.z);
+  const reason = why ?? 'nocover';
+  if (HIDE_TEXT[reason]) hud.short(c.sx, c.sy, HIDE_TEXT[reason]);
+  return false;
+}
+const keyFlick = createFlick();
 const joystick = createJoystickView(document.getElementById('stick'));
 // R1c（M1 の見直し Minor 1・2）: 指・マウスの配線は input/bindDom.js（入力の時刻も毎フレームの update も performance.now() の一つの時計。
 // 溜めの指の離す操作は、どのボタンでも放つ）。PC の右クリックは溜めている間の払う
@@ -156,7 +174,7 @@ const nowSec = pointerInput.now;
 // PC: 矢印キーか WASD で動く（溜めている間だけ。押しているキーの集まり）
 const keysDown = new Set();
 window.addEventListener('blur', () => { controls.reset(); keysDown.clear(); });
-window.addEventListener('keyup', (e) => keysDown.delete(e.code));
+window.addEventListener('keyup', (e) => { keysDown.delete(e.code); if (MOVE_KEYS.includes(e.code)) { const v = keyVector(keysDown); keyFlick.push(v.x, v.y, nowSec()); } });
 // PC はマウスで長押ししながら、もう片方の手の Space キーで小爆発
 window.addEventListener('keydown', (e) => {
   // 導入の間: Space / Enter は画面のタップと同じ（TAP START が出ていれば始める）
@@ -172,7 +190,12 @@ window.addEventListener('keydown', (e) => {
   if (replay.active && !replay.finished && ['Space', 'Enter', 'Escape'].includes(e.code)) { e.preventDefault(); skipReplay(); return; }
   // 結果画面では奪わない（ボタンを Space で押せる）
   if (game.phase === 'over') return;
-  if (MOVE_KEYS.includes(e.code)) { e.preventDefault(); keysDown.add(e.code); return; }
+  if (MOVE_KEYS.includes(e.code)) {
+    e.preventDefault(); keysDown.add(e.code);
+    // M2: 向きのキーの 2 回押しで隠れる（押し続けの repeat は数えない）
+    if (!e.repeat) { const v = keyVector(keysDown), h = keyFlick.push(v.x, v.y, nowSec()); if (h) tryHide(h); }
+    return;
+  }
   if (e.code !== 'Space') return;
   e.preventDefault();
   if (!e.repeat) tryPuff();
@@ -720,9 +743,10 @@ function finishFrame(dt, live) {
   const drain = updateDrain(dt);
   hand.setDrain(drain);
   hand.update(dt, h.level, h.active, h.steady);
-  hud.update({ remaining: game.timer.remaining, power: game.power.value, max: CONFIG.power.max, alive: game.aliveCount, drain, dt, hero: game.hero, line: clearLine() });
-  // M1: 浮かぶジョイスティック（遊んでいる間だけ）
-  joystick.update(game.phase === 'playing' && !cinematic.active ? controls.stick : null);
+  const stickNow = game.phase === 'playing' && !cinematic.active ? controls.stick : null;
+  hud.update({ remaining: game.timer.remaining, power: game.power.value, max: CONFIG.power.max, alive: game.aliveCount, drain, dt, hero: game.hero, line: clearLine(), puffs: game.puffsLeft, stick: stickNow, stickR: CONFIG.controls.stickRadiusPx });
+  // M1: 浮かぶジョイスティック（遊んでいる間だけ）。M2: 輪の外側に近くの軍勢の向きの印（スティックが出ている間だけ数える）
+  joystick.update(stickNow, stickNow ? stickMarks(game.hero, game.enemies.list, { azimuthDeg: CITY_CAMERA.azimuthDeg }) : null);
   // 最後の一発を放ってから結果までずっと HUD は出さない（両手が玉を握り込む間も、リプレイの間も）
   hud.setVisible(!debugCam && !cinematic.active && !replay.active && !blackhole.active);
   updateAudio(live, dt);

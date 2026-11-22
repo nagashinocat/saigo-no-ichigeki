@@ -60,6 +60,12 @@
     .hud-drain { position: fixed; inset: 0; opacity: 0; pointer-events: none; background: radial-gradient(ellipse 74% 66% at 50% 45%, rgba(200, 20, 140, 0) 34%, rgba(235, 30, 160, 0.55) 62%, rgba(255, 45, 175, 0.92) 84%, rgb(255, 70, 190) 100%); }
     /* 払える量に足りない: 押した所に小さく */
     .hud-short { position: absolute; transform: translate(-50%, -50%); opacity: 0; pointer-events: none; white-space: nowrap; font-size: clamp(13px, 3.6vw, 17px); font-weight: 800; color: #ffd0e8; text-shadow: 0 1px 3px rgba(20, 10, 30, 0.95), 0 0 8px rgba(255, 60, 160, 0.6); }
+    /* M2: 残りの払える回数（3 つの点）。使った点は暗い輪だけ。位置は hud.js（スティックの輪のすぐ上か、力の数字の上） */
+    .hud-pips { position: absolute; display: flex; gap: 7px; transform: translate(-50%, -50%); pointer-events: none; }
+    .hud-pips i { width: 11px; height: 11px; border-radius: 50%; background: radial-gradient(circle at 40% 35%, #fff9ec, #ffc46a 70%); box-shadow: 0 0 0 1.5px rgba(20, 10, 30, 0.85), 0 0 8px rgba(255, 200, 110, 0.85); transition: transform 0.2s, opacity 0.2s; }
+    .hud-pips i.used { background: rgba(20, 10, 30, 0.35); box-shadow: inset 0 0 0 1.5px rgba(255, 236, 200, 0.55); }
+    .hud-pips.out i { animation: hud-pips-out 0.5s ease-out; }
+    @keyframes hud-pips-out { 0% { transform: scale(1.4); } 100% { transform: scale(1); } }
     .hud-short.show { animation: hud-short 0.9s ease-out forwards; }
     @keyframes hud-short { 0% { opacity: 0; transform: translate(-50%, -30%) scale(1.15); } 12% { opacity: 1; transform: translate(-50%, -50%) scale(1); } 70% { opacity: 1; } 100% { opacity: 0; transform: translate(-50%, -85%); } }
     @media (prefers-reduced-motion: reduce) { .hud-gauge.full .hud-track, .hud-pct.full { animation: none; } }
@@ -84,6 +90,13 @@
     #stick { position: fixed; left: 0; top: 0; pointer-events: none; display: none; }
     #stick.on { display: block; }
     #stick .ring { position: absolute; border-radius: 50%; border: 2px solid rgba(255, 236, 200, 0.75); background: radial-gradient(closest-side, rgba(40, 20, 10, 0.12), rgba(40, 20, 10, 0.34)); box-shadow: 0 0 12px rgba(255, 180, 90, 0.35); transform: translate(-50%, -50%); }
+    /* M2: 輪の外側の軍勢の向きの印（小さな菱形。追う・近づく者は赤く、大物は大きな琥珀、重い者は二重の縁、吸う者は赤紫）。
+       位置・向き・濃さ・大きさは joystick.js が transform / opacity に入れる */
+    #stick .mark { position: absolute; width: 9px; height: 9px; margin: -4.5px 0 0 -4.5px; transform-origin: 4.5px 4.5px; background: #fff3dc; border-radius: 2px; box-shadow: 0 0 0 1px rgba(20, 10, 30, 0.8), 0 0 6px rgba(255, 240, 210, 0.7); }
+    #stick .mark.chase { background: #ff6a4a; box-shadow: 0 0 0 1px rgba(20, 10, 30, 0.85), 0 0 8px rgba(255, 90, 60, 0.9); }
+    #stick .mark.heavy { background: #ffb347; box-shadow: 0 0 0 1px rgba(20, 10, 30, 0.85), 0 0 0 3px #ffb347, 0 0 0 4px rgba(20, 10, 30, 0.85); }
+    #stick .mark.drainer { background: #ff2f8a; border-radius: 50%; box-shadow: 0 0 0 1px rgba(20, 10, 30, 0.85), 0 0 8px rgba(255, 40, 140, 0.9); }
+    #stick .mark.boss { width: 14px; height: 14px; margin: -7px 0 0 -7px; transform-origin: 7px 7px; background: #ffd27a; box-shadow: 0 0 0 2px rgba(20, 10, 30, 0.9), 0 0 12px rgba(255, 200, 90, 1); }
     #stick .knob { position: absolute; border-radius: 50%; background: radial-gradient(circle at 45% 40%, rgba(255, 246, 225, 0.95), rgba(255, 190, 110, 0.85)); box-shadow: 0 0 10px rgba(255, 190, 100, 0.7); transform: translate(-50%, -50%); }
     #start { position: fixed; left: 0; right: 0; top: 30%; text-align: center; pointer-events: none; font-size: clamp(16px, 4.6vw, 26px); font-weight: 700; text-shadow: 0 1px 4px rgba(20, 10, 30, 0.9), 0 0 14px rgba(20, 10, 30, 0.6); }
     #start[hidden], #result[hidden], #result [hidden] { display: none; }
@@ -144,7 +157,7 @@
   <canvas id="game"></canvas>
   <div id="hud"></div>
   <div id="stick"><div class="ring"></div><div class="knob"></div></div>
-  <div id="start">長押しで力を貯め、離して最後の一撃<br><small>貯めながら、もう一本の指を長押しで動く・短くタップで払う</small></div>
+  <div id="start">長押しで力を貯め、離して最後の一撃<br><small>貯めながら、もう一本の指を長押しで動く・短くタップで払う（3 回まで）・同じ向きに 2 回倒すと物陰に隠れる<br>払うは まわりの者を はがす（重い者・大物は倒れず よろめく）</small></div>
   <div id="replay" hidden><span class="replay-tag">リプレイ</span><span class="replay-hint">タップでとばす</span></div>
   <div id="result" hidden></div>
   <script type="module" src="./src/main.js"></script>

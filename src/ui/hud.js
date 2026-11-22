@@ -45,10 +45,21 @@ export function gaugeRect(layout, height) {
   const left = n.left + n.width + Math.round(n.fontSize * 0.25);
   return { left, top: Math.round(n.top + n.fontSize * 0.55 - h / 2), width: hand.x + hand.w - margin - left, height: h };
 }
+// M2（spec §16「払うを 3 回」）: 残りの払える回数の 3 つの点の真ん中（画面の左上原点の px）。スティック（{ cx, cy } px）が出ていれば
+// その輪（半径 R px）のすぐ上（払うのタップは 2 本目の指で、スティックと同じ指の所。目もそこにある）。出ていなければ、街の画面の左下、
+// 力の数字のすぐ上（払うは力も使うので、力の数字と並べて読む。スティックは左下に出ることが多い）
+export function pipsPos(layout, height, stick, R) {
+  const W = layout.hand.x + layout.hand.w;
+  if (stick) return { x: Math.min(W - 30, Math.max(30, stick.cx)), y: Math.max(14, stick.cy - R - 18) };
+  const n = pctRect(layout, height);
+  return { x: n.left + 30, y: n.top - 16 };
+}
 // 吸われた量（力の単位 = %）。10 より小さければ小数 1 桁
 export const lostText = (n) => `−${n < 10 ? (Math.round(n * 10) / 10).toFixed(1) : Math.round(n)}`;
 // 払える量に足りないときに、押した所に小さく出す
 export const SHORT_TEXT = '足りない';
+// M2（spec §16）: 払うを 3 回使い切ったあとに押したとき
+export const OUT_TEXT = 'もう払えない';
 export function shortPos(layout, height, x, y) {
   const W = layout.hand.x + layout.hand.w;
   return { x: Math.min(W - 40, Math.max(40, x)), y: Math.min(height - 20, Math.max(20, y - 40)) };
@@ -87,6 +98,7 @@ export function createHud(root, { threshold = clearThreshold(), total = 60 } = {
     + '<div class="hud-pct low"><small>力</small><b>0</b><em>%</em></div>'
     + '<div class="hud-hint"></div>'
     + '<div class="hud-short"></div>'
+    + '<div class="hud-pips" role="img" aria-label="払える回数"><i></i><i></i><i></i></div>'
     + '<div class="hud-combo"><b></b></div>'
     + '<div class="hud-announce"><span></span></div>';
   const strip = root.querySelector('.hud-strip');
@@ -101,6 +113,8 @@ export function createHud(root, { threshold = clearThreshold(), total = 60 } = {
   const centreEl = root.querySelector('.hud-centre'), centreArrow = centreEl.querySelector('.hud-arrow'), centreSpan = centreEl.querySelector('span');
   const hintEl = root.querySelector('.hud-hint');
   const shortEl = root.querySelector('.hud-short');
+  const pipsEl = root.querySelector('.hud-pips'), pipEls = [...pipsEl.querySelectorAll('i')];
+  let shownPips = '', shownPipsAt = '';
   const comboEl = root.querySelector('.hud-combo'), comboK = comboEl.querySelector('b');
   const annEl = root.querySelector('.hud-announce'), annText = annEl.querySelector('span');
   let comboTimer = 0, annTimer = 0, shortTimer = 0, layoutNow = null, heightNow = 0;
@@ -140,11 +154,11 @@ export function createHud(root, { threshold = clearThreshold(), total = 60 } = {
       hintTimer = setTimeout(() => hintEl.classList.remove('show'), sec * 1000);
     },
     // R1b: 払える量に足りない: 押した所（x, y px。省けば街の画面の真ん中。PC のキーは main.js が主人公の画面の位置を渡す）に小さく「足りない」
-    short(x, y) {
+    short(x, y, text = SHORT_TEXT) {
       if (!layoutNow) return;
       if (!(Number.isFinite(x) && Number.isFinite(y))) { const { city } = layoutNow; x = city.x + city.w / 2; y = heightNow - city.y - city.h / 2; }
       const p = shortPos(layoutNow, heightNow, x, y);
-      shortEl.textContent = SHORT_TEXT;
+      shortEl.textContent = text;
       Object.assign(shortEl.style, { left: p.x + 'px', top: p.y + 'px' });
       restart(shortEl, 'show');
       clearTimeout(shortTimer);
@@ -170,7 +184,23 @@ export function createHud(root, { threshold = clearThreshold(), total = 60 } = {
     },
     // alive: 街に生きている軍勢の数（省けば出さない）。drain: 吸われている間の知らせ（drainFx の状態。省けば無し）、dt: 秒
     // hero（M1）: 主人公の位置 { x, z }（「中心まで ◯ m」と矢印。省けば出さない）。line（M1）: 今の撃退ライン（力の %。省けば作ったときの値）
-    update({ remaining, power, max, alive = null, drain = null, dt = 0, hero = null, line = null }) {
+    // puffs（M2）: 残りの払える回数（省けば点を出さない）。stick: 浮かぶスティック（{ cx, cy } px か null）、stickR: その輪の半径 px
+    update({ remaining, power, max, alive = null, drain = null, dt = 0, hero = null, line = null, puffs = null, stick = null, stickR = 56 }) {
+      if (puffs == null) { if (shownPips !== 'none') { pipsEl.style.display = 'none'; shownPips = 'none'; } }
+      else {
+        const ps = String(puffs);
+        if (ps !== shownPips) {
+          pipsEl.style.display = '';
+          pipEls.forEach((p, i) => p.classList.toggle('used', i >= puffs));
+          pipsEl.setAttribute('aria-label', `払える回数 あと ${puffs}`);
+          shownPips = ps;
+        }
+        if (layoutNow) {
+          const p = pipsPos(layoutNow, heightNow, stick, stickR);
+          const at = `${Math.round(p.x)}|${Math.round(p.y)}`;
+          if (at !== shownPipsAt) { pipsEl.style.left = p.x + 'px'; pipsEl.style.top = p.y + 'px'; shownPipsAt = at; }
+        }
+      }
       if (line != null && Math.abs(line - lineAt) > 1e-6) lineAt = line;
       const ls = lineAt.toFixed(2);
       if (ls !== shownLine) { tick.style.left = tickLabel.style.left = `${ls}%`; shownLine = ls; }

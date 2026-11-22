@@ -1,4 +1,5 @@
 import { CONFIG } from '../config.js';
+import { createFlick } from './flick.js';
 
 // M1（持ち主 09:15、spec §16）: 指の操作（左右に分けない）。描画もゲームも知らず、指の id・画面の px・時刻（秒）だけで決める。
 //  1 本目の指（どこでも）: 触れたら溜め（onChargeStart）、離すと放つ（onChargeEnd）。pointercancel・reset は放たずに打ち切る（onChargeCancel）
@@ -6,6 +7,7 @@ import { CONFIG } from '../config.js';
 //    longPressSec 秒以上押す、または tapMovePx px 以上動かす → 押した所に浮かぶジョイスティック（stick）。滑らせた向きと量が dir。
 //      離すと消える（払わず、放たない）
 //    それより短く、動きも tapMovePx px 未満で離す → 払う（onPuff(x, y)。押した所に「足りない」を出せるように）
+//    M2（持ち主 15:20）: スティックを同じ向きに素早く 2 回倒す → 隠れる（onHide(dir)。dir は画面の向き、長さ 1。flick.js）
 //  3 本目からの指は無視する。溜めの指が離れたら、2 本目（スティック）は消え、その指は離れるまで何もしない
 //  溜めていない（1 本目がない）ときは、動きも払うもない（最初の指は必ず溜め）
 
@@ -35,14 +37,15 @@ export function keyVector(down) {
 
 const ZERO = Object.freeze({ x: 0, y: 0 });
 
-export function createControls({ onChargeStart = () => {}, onChargeEnd = () => {}, onChargeCancel = () => {}, onPuff = () => {}, cfg = CONFIG } = {}) {
+export function createControls({ onChargeStart = () => {}, onChargeEnd = () => {}, onChargeCancel = () => {}, onPuff = () => {}, onHide = () => {}, cfg = CONFIG } = {}) {
   const C = cfg.controls;
+  const flick = createFlick(C.flick);
   let charge = null; // 溜めの指の id
   let second = null; // 2 本目: { id, x0, y0, t0, stick, dir }
   const dead = new Set(); // 溜めの指が離れたあとも残っている指（離れるまで何もしない）
   let stick = null; // { cx, cy, kx, ky }（画面の px。描く側が読む）
 
-  const toStick = (s) => { s.stick = true; stick = { cx: s.x0, cy: s.y0, kx: s.x0, ky: s.y0 }; };
+  const toStick = (s) => { s.stick = true; flick.reset(); stick = { cx: s.x0, cy: s.y0, kx: s.x0, ky: s.y0 }; };
   function dropSecond(keep = false) {
     if (second && keep) dead.add(second.id);
     second = null; stick = null;
@@ -76,6 +79,8 @@ export function createControls({ onChargeStart = () => {}, onChargeEnd = () => {
       if (!second.stick) return;
       const v = stickVector(x - second.x0, y - second.y0, C);
       second.dir = v;
+      const h = flick.push(v.x, v.y, t);
+      if (h) onHide(h);
       // つまみは指の所（輪の外なら輪の縁）
       const dx = x - second.x0, dy = y - second.y0, d = Math.hypot(dx, dy), k = d > C.stickRadiusPx ? C.stickRadiusPx / d : 1;
       stick.kx = second.x0 + dx * k; stick.ky = second.y0 + dy * k;
