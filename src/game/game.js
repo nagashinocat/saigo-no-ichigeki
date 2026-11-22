@@ -26,7 +26,7 @@ const MAX_DT = 0.1;
 // （shot.centre）。払うの爆心も払った瞬間の主人公の位置。勝ち負けの「倒れたか」は、その爆心からの距離で決まる
 export function createGame({ seed, cfg = CONFIG }) {
   const city = generateCity(seed, cfg);
-  // R3: 街の壊せるものの値打ちの合計（ランクの点をこれで割る。今日の街ごとの差をならす）
+  // R3: 街の壊せるものの値打ちの合計（称号の「被害額の大きさ」に使う）
   const cityValue = totalValue(city);
   // 主人公（hero.js）。hero は { x, z, vx, vz, heading, lean } の同じ物で、軍勢の heroPos にも渡す（動くたびに書き換わる）
   const motion = createHeroMotion(city, cfg);
@@ -92,8 +92,8 @@ export function createGame({ seed, cfg = CONFIG }) {
     // R3: 掴んでいた大物がその一撃で倒れた（称号「道連れ」）
     const dragged = draggedIds.size > 0 && enemies.list.some((e) => draggedIds.has(e.id) && e.state === 'dead');
     outcome = { clear: survivors.length === 0, total: releaseIds.size, survivors, ...releaseInfo.extra, cityValue, dragged };
-    // R2: ランク（rank.js）。R3: 点は街の値打ちで割る
-    outcome.rank = rankFor({ clear: outcome.clear, timeLeft: releaseInfo.timeLeft, puffs: releaseInfo.puffsUsed, damage: releaseInfo.damage, cityValue });
+    // R2: ランク（rank.js）。R3 fix1: 残り時間と払った回数の条件
+    outcome.rank = rankFor({ clear: outcome.clear, timeLeft: releaseInfo.timeLeft, puffs: releaseInfo.puffsUsed });
   }
 
   // settled: settle が一気に進めた分の命中（描く側は見た目を作らなくてよい）
@@ -161,7 +161,7 @@ export function createGame({ seed, cfg = CONFIG }) {
 
   return {
     city, enemies, power, charge, timer, score,
-    // R3: 街の壊せるものの値打ちの合計（ランクの点の分母）
+    // R3: 街の壊せるものの値打ちの合計（称号の「被害額の大きさ」）
     cityValue,
     // M1: 主人公の位置と速さ { x, z, vx, vz, heading, lean }（読むだけ。試しは x, z を直に置いてよい）
     hero,

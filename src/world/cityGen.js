@@ -262,7 +262,7 @@ export function generateCity(seed, cfg = CONFIG, opts = {}) {
   return city;
 }
 
-// R3（今日の街）: 街の壊せるものの値打ちの合計（建物 + props + 高架の区間。game.js の壊せるものと同じ）。ランクはこれで割って街ごとの差をならす
+// R3（今日の街）: 街の壊せるものの値打ちの合計（建物 + props + 高架の区間。game.js の壊せるものと同じ）。称号の「被害額の大きさ」に使う
 export function cityValue(city) {
   let v = 0;
   for (const t of city.buildings) v += t.value;
