@@ -217,3 +217,20 @@ test('hold の間は、終わった一発の「保つ」時間が進まない（
   expect(r.t).toBeGreaterThan(fit * 0.95);
   expect(r.mode).toBe('wide');
 });
+
+// 持ち主 2026-11-23 08:41: その場のリトライ。最後の一発で下がった上空カメラ（覚えた一発・ばねの速さ・ねらい）は reset で、
+// 読み直したページの新しい createCameraFollow と同じ姿へ戻る（次の一回の最初のフレームから、いつもの近さ）
+test('createCameraFollow.reset: 大きな一発で下がったあとでも、新しく作ったものと同じ答えに戻る', () => {
+  const dt = 1 / 30;
+  const follow = createCameraFollow();
+  for (let i = 1; i * dt <= 6; i++) {
+    const b = blastAt(0, CONFIG.radius.max, 0.5, i * dt);
+    follow.update(dt, { ...view, blasts: b ? [b] : [], front: b?.front ?? 0 });
+  }
+  expect(follow.t).toBeGreaterThan(50);
+  follow.reset();
+  expect(follow.t).toBe(0);
+  const fresh = createCameraFollow();
+  for (let i = 0; i < 30; i++) expect(follow.update(dt, { ...view })).toBe(fresh.update(dt, { ...view }));
+  expect(follow.mode).toBe(fresh.mode);
+});

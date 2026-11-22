@@ -97,6 +97,8 @@ export function createCameraFollow(c = BLAST_CAM, cfg = CONFIG) {
   return {
     get t() { return t; },
     get mode() { return cameraIntent(records.values(), c, cfg).mode; },
+    // 持ち主 2026-11-23 08:41: その場のリトライ。新しく作ったときと同じ姿へ（下がった距離・ばねの速さ・ねらい・覚えた一発）
+    reset() { t = 0; v = 0; goal = 0; records.clear(); fitKey = ''; fitT = 0; },
     update(dt, { pos, dir, tanV, tanH, blasts = [], front = 0, hold = false }) {
       let soon = front;
       const seen = new Set();

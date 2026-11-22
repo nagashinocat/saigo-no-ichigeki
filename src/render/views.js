@@ -157,6 +157,12 @@ export function createViews(renderer, getTier = () => ({ bloom: false, heatHaze:
       followTarget = target;
       if (snap || !target) { F.x = target?.x ?? 0; F.z = target?.z ?? 0; F.vx = F.vz = 0; }
     },
+    // 持ち主 2026-11-23 08:41: その場のリトライ。上空カメラを新しい一回の始まりへ（最後の一発で下がった距離・揺れを戻し、主人公へすぐ合わせる）
+    resetCamera(target) {
+      follow.reset();
+      shakeClock = 0;
+      this.follow(target, { snap: true });
+    },
     // 今ついていっている点（なめらかにした後）
     get followAt() { return { x: F.x, z: F.z }; },
     resize(w, h) {
