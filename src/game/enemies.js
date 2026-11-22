@@ -217,14 +217,21 @@ export function createEnemies(rng, cfg = CONFIG, { buildings = [], patrolRng = n
     if (nb !== wallAt) { wallAt = nb; const p = CH.riderPad; wallBoxes = nb.map((b) => ({ x0: b.x - b.w / 2 - p, x1: b.x + b.w / 2 + p, z0: b.z - b.d / 2 - p, z1: b.z + b.d / 2 + p })); }
     const c = Math.cos(a), s = Math.sin(a);
     let lim = r;
+    // 最終レビュー Minor 1: 2 本の軸（x・z）の板の交わりを手で展開（毎フレーム使い捨ての配列を作らない）。外れた箱は continue
     for (const b of wallBoxes) {
       let t0 = 0, t1 = lim;
-      for (const [o, d, lo, hi] of [[H.x, c, b.x0, b.x1], [H.z, s, b.z0, b.z1]]) {
-        if (Math.abs(d) < 1e-9) { if (o <= lo || o >= hi) { t0 = Infinity; break; } continue; }
-        let ta = (lo - o) / d, tb = (hi - o) / d;
-        if (ta > tb) [ta, tb] = [tb, ta];
-        t0 = Math.max(t0, ta); t1 = Math.min(t1, tb);
-        if (t0 > t1) break;
+      if (Math.abs(c) < 1e-9) { if (H.x <= b.x0 || H.x >= b.x1) continue; } else {
+        let ta = (b.x0 - H.x) / c, tb = (b.x1 - H.x) / c;
+        if (ta > tb) { const q = ta; ta = tb; tb = q; }
+        if (ta > t0) t0 = ta;
+        if (tb < t1) t1 = tb;
+        if (t0 > t1) continue;
+      }
+      if (Math.abs(s) < 1e-9) { if (H.z <= b.z0 || H.z >= b.z1) continue; } else {
+        let ta = (b.z0 - H.z) / s, tb = (b.z1 - H.z) / s;
+        if (ta > tb) { const q = ta; ta = tb; tb = q; }
+        if (ta > t0) t0 = ta;
+        if (tb < t1) t1 = tb;
       }
       if (t0 <= t1 && t0 > 0) lim = Math.min(lim, t0 - 0.05);
     }
