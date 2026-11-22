@@ -55,6 +55,17 @@ export function timeTickRecipe(n, C = TICK_CUE) {
   };
 }
 
+// R1f（持ち主 18:14「派手でかっこいいアクション…短い効果音」）: 物陰へ跳ぶ音。踏み切りの「シュッ」（帯域のノイズが低い所から高い所へ二つ重なる風切り）と、
+// 着地の「トン」（低い一打と、ごく短い砂のノイズ）。どちらも世界の音（master）を通る（効果音の大きさに従う）
+export const HIDE_CUE = {
+  whoosh: [{ dur: 0.16, freq: 900, gain: 0.1, q: 1.2, attack: 0.03 }, { dur: 0.2, freq: 2600, gain: 0.08, q: 1.6, attack: 0.05, when: 0.05 }],
+  thud: { f0: 150, f1: 55, dur: 0.16, gain: 0.2 },
+  grit: { dur: 0.06, freq: 3200, gain: 0.05, q: 0.9, attack: 0.002 },
+};
+export function hideRecipe(kind, C = HIDE_CUE) {
+  return kind === 'land' ? { thud: { ...C.thud }, grit: { ...C.grit } } : { whoosh: C.whoosh.map((w) => ({ ...w })) };
+}
+
 // 一つのレシピが同時に鳴らす声の大きさの合計（天井の確かめ用。和音・重なりの足し算の上限）
 export function recipePeak(r) {
   if (r.tones) return r.tones.reduce((a, t) => a + t.gain, 0) + r.sparkle.gain;

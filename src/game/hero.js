@@ -1,5 +1,6 @@
 import { CONFIG } from '../config.js';
 import { GRID } from '../world/cityGen.js';
+import { hideMotionAt } from './hideMotion.js';
 
 // M1（持ち主 09:11、spec §16）: 動く主人公。通りと広場の上を浮いたまま動き、ビルの足元は通り抜けない（壁に沿って滑る）。
 // 街の中心から cityRadius − edgePad m より外へは出ない。掴んでいる者の数だけ遅くなる（heroSpeedFactor）。
@@ -63,23 +64,29 @@ export function createHeroMotion(city, cfg = CONFIG) {
     },
     // M2（持ち主 15:20「物陰にシュッと入る」）: to（{ x, z }）へ sec 秒でシュッと滑り込む（はじめが速い ease-out。そのあいだ操作は効かない）。
     // hero.dashing は進み具合 0〜1（終われば null）。通り道は呼ぶ側（cover.js）がビルにさえぎられないことを確かめてある
-    dash(to, sec) {
-      dash = { x0: hero.x, z0: hero.z, x1: to.x, z1: to.z, t: 0, sec: Math.max(1e-3, sec) };
+    // R1f（持ち主 18:14「派手でかっこいいアクション」）: plan（hideMotion.js の planHideMotion）があれば、その道すじ（しゃがむ → 跳ぶ・壁を蹴る）で動く。
+    // hero.action = { plan, t }（跳び始めからの秒）は、着地のしゃがみが終わる（plan.total）まで残る（描く側が残像・高さ・着地の光に使う）
+    dash(to, sec, plan = null) {
+      dash = { x0: hero.x, z0: hero.z, x1: to.x, z1: to.z, t: 0, sec: Math.max(1e-3, sec), plan };
       hero.dashing = 0;
       hero.dashFrom = { x: hero.x, z: hero.z };
+      hero.action = plan ? { plan, t: 0 } : null;
     },
     // 止める（放った瞬間から、主人公は爆心にとどまる）
-    stop() { dash = null; hero.dashing = null; hero.vx = 0; hero.vz = 0; hero.lean = 0; move.x = 0; move.z = 0; },
+    stop() { dash = null; hero.dashing = null; hero.action = null; hero.vx = 0; hero.vz = 0; hero.lean = 0; move.x = 0; move.z = 0; },
     update(dt, { active = true, grabbing = 0 } = {}) {
       if (!(dt > 0)) return;
+      if (hero.action) { hero.action.t += dt; if (hero.action.t >= hero.action.plan.total) hero.action = null; }
       if (dash) {
         dash.t += dt;
         const u = Math.min(1, dash.t / dash.sec), e = 1 - (1 - u) ** 3;
-        const x = dash.x0 + (dash.x1 - dash.x0) * e, z = dash.z0 + (dash.z1 - dash.z0) * e;
+        let x = dash.x0 + (dash.x1 - dash.x0) * e, z = dash.z0 + (dash.z1 - dash.z0) * e;
+        if (dash.plan) { const m = hideMotionAt(dash.plan, Math.min(dash.t, dash.plan.sec)); x = m.x; z = m.z; }
         hero.vx = (x - hero.x) / dt; hero.vz = (z - hero.z) / dt;
         hero.x = x; hero.z = z;
-        const sp = Math.hypot(dash.x1 - dash.x0, dash.z1 - dash.z0);
-        if (sp > 0.1) hero.heading = Math.atan2(dash.z1 - dash.z0, dash.x1 - dash.x0);
+        const sp = Math.hypot(hero.vx, hero.vz);
+        if (sp > 0.5) hero.heading = Math.atan2(hero.vz, hero.vx);
+        else if (Math.hypot(dash.x1 - dash.x0, dash.z1 - dash.z0) > 0.1) hero.heading = Math.atan2(dash.z1 - dash.z0, dash.x1 - dash.x0);
         hero.dashing = u;
         if (u >= 1) { dash = null; hero.dashing = null; hero.vx = 0; hero.vz = 0; }
         return;

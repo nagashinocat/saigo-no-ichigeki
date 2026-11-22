@@ -120,6 +120,10 @@ export const CONFIG = {
   // step m 刻み、向きのずれ 1 rad ごとに offW m 遠いのと同じに数える）へ dashSec 秒でシュッと滑り込む。そこから leaveDist m 離れるまで見つからない。
   // 次の隠れるまで cooldown 秒。掴まれている間はできない
   // 物陰では、ライトが真正面から seeDist m の内を照らさない限り見つからない。同じ物陰にいられるのは holdSec 秒まで（ずっと隠れたままにしない）
+  // R1f（持ち主 18:14「派手でかっこいいアクション」）: 物陰へ跳ぶ動き（game/hideMotion.js）。crouchSec 秒しゃがんで踏み切り（その間に道すじの
+  // crouchCreep だけ進む）、高さ leapH m の弧で跳ぶ（道すじが kickMinLen m 以上で、真ん中から kickNear m の内にビルの面があれば、その壁を蹴る）。
+  // 物陰に着くのは dashSec 秒（前のまま）。そのあと landSec 秒、着地のしゃがみ（見た目だけ）。残像・光の尾・着地の光は render/hideAction.js
+  hideAction: { crouchSec: 0.06, crouchCreep: 0.04, leapH: 4, kickMinLen: 6, kickNear: 3.5, landSec: 0.16 },
   hide: { holdSec: 12, seeDist: 4, dashSec: 0.3, cooldown: 3, range: 26, minDist: 3, step: 1.5, wallDist: 1.6, offW: 6, leaveDist: 3 },
   // M1 の操作（持ち主 09:15、制作側の判断）: 溜めているあいだの 2 本目の指は、longPressSec 秒以上で浮かぶジョイスティック（押した所に出て、
   // 指を離すと消える。stickRadiusPx の輪いっぱいで全速、deadPx より内は止まる）、それより短く tapMovePx px 未満の動きで離せば払う

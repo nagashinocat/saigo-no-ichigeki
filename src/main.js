@@ -30,6 +30,7 @@ import { createPuffBuffer } from './input/puffBuffer.js';
 import { createLookout } from './game/lookout.js';
 import { createLookoutView } from './ui/lookoutView.js';
 import { createDashStreak } from './render/dashStreak.js';
+import { createHideAction } from './render/hideAction.js';
 import { stickMarks } from './ui/stickMarks.js';
 import { bindPointerInput, eventMs } from './input/bindDom.js';
 import { clearThreshold } from './game/charge.js';
@@ -700,7 +701,17 @@ function syncHero() {
 }
 // M2: 隠れるの滑り込みの光の筋と、物陰でしゃがむ・足元の影（毎フレーム）
 const dashStreak = createDashStreak(cityScene);
-function syncHide(dt) { enemyView.setHeroCrouch(game.phase === 'playing' ? dashStreak.update(game.hero, dt) : dashStreak.update({ ...game.hero, hidden: false, dashing: null }, dt)); }
+// R1f（持ち主 18:14「派手でかっこいいアクション」）: 物陰へ跳ぶ見た目（残像・光の尾・高さ・着地の輪と十字）と着地の音。M2 の筋は跳ぶ動きの間は出さない
+const hideAction = createHideAction(cityScene, { heroGeometry: enemyView.heroBody.geometry });
+function syncHide(dt) {
+  const playing = game.phase === 'playing';
+  const fx = hideAction.update(playing ? game.hero : { ...game.hero, action: null }, dt);
+  const h = playing ? (game.hero.action ? { ...game.hero, dashing: null } : game.hero) : { ...game.hero, hidden: false, dashing: null };
+  enemyView.setHeroCrouch(Math.max(dashStreak.update(h, dt), fx.crouch));
+  enemyView.setHeroHop(playing ? fx.y : 0);
+  if (fx.landed) audio.hideCue('land', screenCue(game.hero.x, 1, game.hero.z).pan);
+}
+game.on('hide', () => audio.hideCue('jump', screenCue(game.hero.x, 1, game.hero.z).pan));
 views.follow(game.hero, { snap: true });
 
 // ゲームを gdt 秒進める（一度に進めるのは最大 0.1 秒ずつ。演出は時間を一気に進めることがある）
@@ -1035,6 +1046,7 @@ if (debugMode) {
   window.__patrolGlow = patrolGlow;
   window.__controls = controls; // M1: 撮影で指の操作を起こす（down / move / up / update）
   window.__lookout = lookout; // R1e: 撮影で LOOK OUT! の確かめた回数を見る
+  window.__lookoutTarget = () => lookoutView.target; // R1f: 撮影で矢印の当たりの丸 { cx, cy, r } を見る
   window.__reachRing = reachRing; // R2: 撮影で届く範囲の輪の状態を見る
   Object.defineProperty(window, '__firstFrameMs', { get: () => firstFrameMs });
   window.__cinematic = cinematic;

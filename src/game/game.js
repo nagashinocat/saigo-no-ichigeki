@@ -12,6 +12,7 @@ import { createEnemies } from './enemies.js';
 import { createHeroMotion } from './hero.js';
 import { distFrom } from './centre.js';
 import { findCover } from './cover.js';
+import { planHideMotion } from './hideMotion.js';
 
 export { heroSpeedFactor } from './hero.js';
 
@@ -213,7 +214,8 @@ export function createGame({ seed, cfg = CONFIG }) {
       hero.hideSpot = spot;
       hero.hideT = 0;
       const lost = enemies.loseHero(from);
-      motion.dash(spot, cfg.hide.dashSec);
+      // R1f: 物陰へ跳ぶ動き（しゃがむ → 跳ぶ・壁を蹴る → 着地）。着く時刻 dashSec は前のまま
+      motion.dash(spot, cfg.hide.dashSec, cfg.hideAction ? planHideMotion(from, spot, city.buildings, cfg) : null);
       hideCool = cfg.hide.cooldown;
       hides++;
       emit('hide', { from, to: spot, lost });

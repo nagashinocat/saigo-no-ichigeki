@@ -541,7 +541,7 @@ export function createEnemyView(scene, tier, { sunDir = new THREE.Vector3(0.8, 0
   group.add(hero, heroXray);
 
   const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _p = new THREE.Vector3(), _s = new THREE.Vector3(1, 1, 1), _e = new THREE.Euler();
-  let time = 0, heroYaw = 0, heroLift = 0, heroLean = 0, heroCrouch = 0;
+  let time = 0, heroYaw = 0, heroLift = 0, heroLean = 0, heroCrouch = 0, heroHop = 0;
   // 演出の一人（最後の一発の軍勢の後ろのカットのいちばん手前の乗り手）: { id, pose, group }。その一人（と group の乗り手）は本当の場所ではなく pose で描く（cinematic.js が決める）
   let focus = null, focusIds = null;
   // その一人の専用の体（riderBody.js、距離の場の網。setRiderBody で渡す）。同じ材質で、インスタンス 1 つ
@@ -658,10 +658,12 @@ export function createEnemyView(scene, tier, { sunDir = new THREE.Vector3(0.8, 0
       mesh.instanceMatrix.needsUpdate = true;
       shadows.instanceMatrix.needsUpdate = true;
       anim.needsUpdate = pose.needsUpdate = shadowAttr.needsUpdate = move.needsUpdate = true;
-      _p.set(heroPos.x, heroLift, heroPos.z); // 主人公は浮いている（足元の地面が下がっても y=0。導入の TAP START のあとだけ下から浮き上がる）
+      _p.set(heroPos.x, heroLift + heroHop, heroPos.z); // 主人公は浮いている（足元の地面が下がっても y=0。導入の TAP START のあとだけ下から浮き上がる）
       // M1: 進む向きを向き、速さに応じて前へ傾く（heroLean）
       // M2: 物陰でしゃがむ（体を縦に縮め、少し前へかがむ）
-      _s.set(1, 1 - 0.32 * heroCrouch, 1);
+      // R1f: 跳ぶ間は少し大きく（上空から跳んだのが分かるように。高さ 1 m ごとに 12%）
+      const hopK = 1 + 0.12 * heroHop;
+      _s.set(hopK, (1 - 0.32 * heroCrouch) * hopK, hopK);
       hero.setMatrixAt(0, _m.compose(_p, _q.setFromEuler(_e.set(heroLean + 0.35 * heroCrouch, heroYaw, 0, 'YXZ')), _s));
       _s.set(1, 1, 1);
       hero.instanceMatrix.needsUpdate = true;
@@ -695,6 +697,8 @@ export function createEnemyView(scene, tier, { sunDir = new THREE.Vector3(0.8, 0
     setHeroLift(y) { heroLift = Number.isFinite(y) ? y : 0; },
     // M2: 物陰でしゃがむ強さ（0〜1）
     setHeroCrouch(k) { heroCrouch = Number.isFinite(k) ? Math.min(1, Math.max(0, k)) : 0; },
+    // R1f: 物陰へ跳ぶ高さ（m。hideAction.js の y）
+    setHeroHop(y) { heroHop = Number.isFinite(y) ? Math.max(0, y) : 0; },
     // M1: 前への傾き（rad。進む向きへ）
     setHeroLean(a) { heroLean = Number.isFinite(a) ? a : 0; },
     get heroYaw() { return heroYaw; },

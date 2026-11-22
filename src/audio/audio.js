@@ -1,6 +1,6 @@
 // Web Audio で合成する音。素材ファイルは使わない。
 import { COLLAPSE, createCollapseGate, collapseVoice, renderCollapseVariant } from './collapse.js';
-import { comboRecipe, bossRecipe, drainVoice, DRAIN_CUE, timeTickRecipe } from './cues.js';
+import { comboRecipe, bossRecipe, drainVoice, DRAIN_CUE, timeTickRecipe, hideRecipe } from './cues.js';
 // 世界の音は master を経由するので、silence で全部まとめて黙らせられる（演出の音は cine から鳴る）。
 // boom を鳴らすまでの待ち（秒）: 無音の間（silenceEnd まで）に弾けても、無音が明けてから鳴らす
 export function boomDelay(silenceEnd, now) {
@@ -367,6 +367,13 @@ export function createAudio({ nav = globalThis.navigator, makeMedia = (src) => n
         o.connect(g); g.connect(bus); o.start(t); o.stop(t + tn.dur + 0.05);
       }
       noiseBurst({ ...r.sparkle, dest: bus });
+    },
+    // R1f: 物陰へ跳ぶ音（kind 'jump' 踏み切りのシュッ / 'land' 着地のトン）。pan: 画面の左右
+    hideCue(kind, pan = 0) {
+      if (!ready()) return;
+      const r = hideRecipe(kind), bus = panner(pan);
+      if (r.whoosh) for (const w of r.whoosh) noiseBurst({ ...w, dest: bus });
+      if (r.thud) { thump({ ...r.thud, dest: bus }); noiseBurst({ ...r.grit, dest: bus }); }
     },
     // R1c: 残り n 秒（10〜1）の刻みの音。世界の音（master）を通る（演出・導入の無音に従う。main.js は遊んでいる間だけ呼ぶ）
     timeTick(n) {
