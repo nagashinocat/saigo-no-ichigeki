@@ -165,16 +165,20 @@ export function createGame({ seed, cfg = CONFIG }) {
     // M2: 今隠れられない理由（'off' / 'grabbed' / 'cooldown' / 'dashing'。隠れられるなら null）と、次の隠れるまでの秒
     get hideBlock() { return hideBlock(); },
     get hideCooldown() { return Math.max(0, hideCool); },
+    // 今の物陰にあと何秒いられるか（隠れていなければ 0）
+    get hideLeft() { return hero.hidden ? Math.max(0, cfg.hide.holdSec - (hero.hideT ?? 0)) : 0; },
     // M2（持ち主 15:20）: 向き（世界の x, z）の先の物陰へシュッと滑り込んで隠れる。隠れられたら true（物陰がなければ 'nocover' を知らせて false）
     hide(dx, dz) {
       if (hideBlock() !== null) return false;
-      const watchers = enemies.list.filter((e) => e.state !== 'dead' && e.x != null && (!e.patrol || e.hunting || e.dist < cfg.enemy.spotDist + cfg.hide.range));
+      // 見えなくなる相手は、今追っている者（chase・よろめいて戻ってくる者）
+      const watchers = enemies.list.filter((e) => (e.state === 'chase' || e.state === 'approach' || e.state === 'stagger') && e.x != null);
       const spot = findCover(hero, { x: dx, z: dz }, city.buildings, watchers, cfg);
       if (!spot) { emit('hideFail', { reason: 'nocover' }); return false; }
       const from = { x: hero.x, z: hero.z };
       hero.lastSeen = from;
       hero.hidden = true;
       hero.hideSpot = spot;
+      hero.hideT = 0;
       const lost = enemies.loseHero(from);
       motion.dash(spot, cfg.hide.dashSec);
       hideCool = cfg.hide.cooldown;
@@ -264,11 +268,18 @@ export function createGame({ seed, cfg = CONFIG }) {
 
       charge.update(dt);
       hideCool -= dt;
-      // M2: 物陰から leaveDist m より離れたら、もう隠れていない（見られれば、また見つかる）
-      if (hero.hidden && hero.dashing == null && Math.hypot(hero.x - hero.hideSpot.x, hero.z - hero.hideSpot.z) > cfg.hide.leaveDist) { hero.hidden = false; emit('unhide', { x: hero.x, z: hero.z }); }
+      // M2: 物陰から leaveDist m より離れたら、もう隠れていない（見られれば、また見つかる）。同じ物陰にいられるのは holdSec 秒まで
+      // （制作側の判断: ずっと隠れたまま満タンまで待つ、にしない。次の物陰へ移る）
+      if (hero.hidden) {
+        hero.hideT += dt;
+        const left = hero.dashing == null && Math.hypot(hero.x - hero.hideSpot.x, hero.z - hero.hideSpot.z) > cfg.hide.leaveDist;
+        if (left || hero.hideT > cfg.hide.holdSec) { hero.hidden = false; emit('unhide', { x: hero.x, z: hero.z, reason: left ? 'left' : 'time' }); }
+      }
       // 主人公が先に動き、軍勢は今の主人公を追う（掴んでいる者はついてくる）。動くのは溜めている間だけ
       motion.update(dt, { active: charge.active, grabbing });
       grabbing = enemies.update(dt);
+      // M2: 物陰で見つかった（照らされて追われる・掴まれた）ら、もう隠れていない
+      if (hero.hidden && hero.dashing == null && enemies.list.some((e) => e.state === 'chase' || e.state === 'grab' || e.state === 'cling')) { hero.hidden = false; emit('found', { x: hero.x, z: hero.z }); }
       // 掴んでいる者の吸う力（R1: 吸う者 ×2.5、大物 ×4）
       const v0 = power.value;
       power.drain(enemies.drainLoad * cfg.enemy.drainPerSec * dt);

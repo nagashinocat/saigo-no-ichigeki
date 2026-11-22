@@ -245,8 +245,10 @@ test('見つけた瞬間（R0）: 止まらず、推進の光が一瞬強まっ�
 test('R0 fix1: 描かれる位置でも、主人公から 25 m 以内の軍勢はどのフレームでも 6 m/s 以上で動く（掴む者・群がる者も）', async () => {
   const { createGame } = await import('../../src/game/game.js');
   let frames = 0, grabFrames = 0, minV = Infinity, heavyOrbit = 0, heavyStagger = 0, bossFrames = 0, heavyMin = Infinity;
+  // M2: 払うは 3 回までになったが、ここは動きの下限を確かめる（よろめく重い者のフレームも数えたい）ので、回数の制限を外す
+  const cfg = { ...CONFIG, puff: { ...CONFIG.puff, uses: Infinity } };
   for (const seed of [1, 2]) for (const puff of [false, true]) {
-    const g = createGame({ seed });
+    const g = createGame({ seed, cfg });
     g.pressStart();
     const DT = 1 / 30;
     const prev = new Map();

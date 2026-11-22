@@ -4,7 +4,8 @@ import { createScore } from '../../src/game/score.js';
 import { radiusFor } from '../../src/game/charge.js';
 import { CONFIG } from '../../src/config.js';
 
-const quiet = { ...CONFIG, enemy: { ...CONFIG.enemy, spawnPerSec: 0 } };
+// M2: 貯める速さが 1.9/秒になり、満タンまで 50 秒を超える。残り 20 秒から加わる見回る者・49 秒の大物に掴まれないよう、どちらも置かない
+const quiet = { ...CONFIG, enemy: { ...CONFIG.enemy, spawnPerSec: 0, patrol: { ...CONFIG.enemy.patrol, count: 0 }, kinds: {} } };
 const record = (g, names) => {
   const log = [];
   for (const n of names) g.on(n, (p) => log.push([n, p]));

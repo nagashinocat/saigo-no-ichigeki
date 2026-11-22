@@ -183,7 +183,8 @@ test('先読みを延ばしても、長押しへの BGM の反応は速いまま
 });
 
 test('払う・掴まれる・時間がたって軍勢が増える間、ゲームは最後の一発の合図（shot / cinematicStart / over）を出さない', () => {
-  const game = createGame({ seed: 7 });
+  // M2: 払うは 3 回までになったが、ここは払うたびに合図が出ないことを何度も確かめたいので、回数の制限を外す
+  const game = createGame({ seed: 7, cfg: { ...CONFIG, puff: { ...CONFIG.puff, uses: Infinity } } });
   const seen = [];
   for (const ev of ['shot', 'cinematicStart', 'cinematicEnd', 'over', 'puff', 'fizzle']) game.on(ev, () => seen.push(ev));
   game.pressStart();
@@ -191,7 +192,8 @@ test('払う・掴まれる・時間がたって軍勢が増える間、ゲー�
   for (let i = 0; i < 58 * FPS; i++) {
     const t = i / FPS, c = t % 4;
     if (c === 0) game.pressStart();
-    if (Math.abs(c - 1.2) < 0.5 / FPS || Math.abs(c - 2.4) < 0.5 / FPS) game.puff();
+    // M2: 貯める速さが 1.9/秒になり、足りずに払えないことがあるので、払う分の力を足してから払う
+    if (Math.abs(c - 1.2) < 0.5 / FPS || Math.abs(c - 2.4) < 0.5 / FPS) { game.power.add(CONFIG.puff.cost); game.puff(); }
     // 足りずに離す（放たない）: 力を最小より少なくしてから離す
     if (Math.abs(c - 2.5) < 0.5 / FPS) { game.power.drain(Math.max(0, game.power.value - CONFIG.power.minRelease / 2)); game.pressEnd(); }
     game.update(1 / FPS);

@@ -96,8 +96,16 @@ export function lineOfSight(x, z, buildings, margin = 0, px = 0, pz = 0) {
 // H: 主人公の位置 { x, z }。buildings: 見通しを確かめる建物
 export function seesHero(e, H, buildings, cfg = CONFIG) {
   const E = cfg.enemy;
-  if (H.hidden) return false; // M2: 物陰に隠れている間は誰にも見つからない
   const rx = H.x - e.x, rz = H.z - e.z, d = Math.hypot(rx, rz);
+  // M2（持ち主 15:20）: 物陰に隠れている間は、ライトが真正面から近く（hide.seeDist m の内）を照らさない限り見つからない
+  // （隠れたまま動かなければ一生見つからない、にしない。見失った者が最後に見た所のまわりを探すと、近くに隠れた主人公を照らしうる）
+  const hidden = !!H.hidden;
+  const reach = hidden ? (cfg.hide?.seeDist ?? 0) : E.spotDist;
+  if (d > reach) return false;
+  if (hidden) {
+    const off = Math.abs(wrap(Math.atan2(rz, rx) - (e.heading ?? 0)));
+    return off <= (E.spotHalfAngle ?? Math.PI) && lineOfSight(e.x, e.z, buildings, E.sightMargin, H.x, H.z);
+  }
   if (d > E.spotDist) return false;
   if (d > (E.spotNear ?? 0)) {
     const off = Math.abs(wrap(Math.atan2(rz, rx) - (e.heading ?? 0)));

@@ -80,6 +80,7 @@ test('最後の一発を放ったときは始まらない（演出は時間切�
   game.on('over', ({ reason }) => { if (reason === 'blackhole') bh.play(); });
   game.pressStart();
   for (let i = 0; i < 600; i++) game.update(1 / 60);
+  game.power.add(CONFIG.power.max); // M2: 貯める速さが遅くなり、掴まれると足りずに放てないことがあるので、放てる力にしておく
   game.pressEnd();
   for (let i = 0; i < 1200 && game.phase !== 'over'; i++) game.update(1 / 60);
   expect(game.phase).toBe('over');

@@ -3,7 +3,9 @@ export const CONFIG = {
   cityRadius: 680,          // m（S8: 420 → 680、面積 約 2.6 倍）。最大の一発は街の端より先まで届く
   plazaRadius: 12,          // 主人公の立つ広場。ここには建物を置かない
   // 貯めた力: 長押しの間だけ chargePerSec で貯まる（max で止まる）。離すと最後の一発（minRelease 未満なら放たず、貯めた力は残る）
-  power:   { max: 100, chargePerSec: 3, minRelease: 10 },
+  // M2（§16 の釣り合い。数は task-M2-report.md）: 払うが 3 回になり、隠れるで見失わせられるので、貯める速さ 3 → 1.9/秒
+  // （見つからずに貯めきって約 53 秒。最善の操作で満タン p50 約 53 秒・撃退成功 7〜8 割）
+  power:   { max: 100, chargePerSec: 1.9, minRelease: 10 },
   // 小爆発: 貯めた力を cost 使い、主人公のまわり radius m の軍勢を払う（ビルは壊さず、破壊額にも入らない）
   // 費用は持ち主の決定（2026-11-21、払うの費用・半径の調整を許可）で 8 → 4.5（速く群れる軍勢を何度も払えるように。釣り合いは下の enemy の説明）
   // R0（持ち主 22:15「かなり簡単」）: 軍勢を速く・集まるようにしたので、払う回数が増える（最善の操作で 15 → 約 23 回）。費用 4.5 → 3 で釣り合わせる
@@ -54,11 +56,13 @@ export const CONFIG = {
     searchSpeed: 30, inwardBias: 0.8, turnRate: 16, lookAhead: 2.5, accel: 30, brake: 70,
     // M2（持ち主 09:11「敵の前方ライトを少し広くして」）: 見つけるのは前を照らすライトの中だけ。前の 28 m の丸 → 前向きの扇
     // （spotDist m まで、半分の角 spotHalfAngle rad）。ごく近く（spotNear m）だけは向きによらない（enemies.js seesHero）
-    spotDist: 40, spotHalfAngle: 0.8, spotNear: 5, spotEvery: 0.15, sightMargin: 0.8, alertAfter: 12, alertRate: 0.05, alertAtSpawn: 0.1,
+    // M2: 前の「気配」（探して alertAfter 秒たつか毎秒 alertRate の確率で、主人公の今の位置へ寄っていく）はやめた（ライトで見つからなければ
+    // 来ない。見つかれば知らせで集まる）。12 / 0.05 / 0.1 → Infinity / 0 / 0
+    spotDist: 36, spotHalfAngle: 0.8, spotNear: 5, spotEvery: 0.15, sightMargin: 0.8, alertAfter: Infinity, alertRate: 0, alertAtSpawn: 0,
     // M2（「見つかったらどんどん集まってくる」）: 見つけた者は光り、radius m の内の探す者・見回る者へ知らせる。知らされた者は relayDelay 秒で
     // 次へ伝える（hops 段まで）。主人公が見えている追う者・掴む者は callEvery 秒ごとに知らせ直す（最後に見えた所が今の主人公へ）。
     // 知らされただけの者は最後に見えた所へ向かい、そこから sweepDist m の内を探し回る（自分で見つけたら今の主人公を追う）
-    alert: { radius: 120, relayDelay: 0.5, hops: 2, callEvery: 1, sweepDist: 40, flashSec: 0.6 },
+    alert: { radius: 120, relayDelay: 0.5, hops: 2, callEvery: 1, sweepDist: 25, flashSec: 0.6 },
     speed: 32, chaseAccel: 60, chaseTurnRate: 8, snapDist: 6, slowDist: 0.5, slowMin: 0.35, grabRange: 2.5,
     // R0（持ち主 22:15「まだ主人公前で止まる感じ」）: 掴んだ者は orbitSpeed m/s で主人公のまわりを回りながら吸う。
     // 枠が埋まっていて群がる者は swarmRing（r0 m から perRing 人ごとに step m 外、maxRing 回りまで）を speed m/s で回り、
@@ -99,7 +103,8 @@ export const CONFIG = {
   // M2（持ち主 15:20「物陰にシュッと入る」）: 隠れる。向きの先 minDist〜range m の物陰（ビルの壁から wallDist m の内で、追っている者から見えない所。
   // step m 刻み、向きのずれ 1 rad ごとに offW m 遠いのと同じに数える）へ dashSec 秒でシュッと滑り込む。そこから leaveDist m 離れるまで見つからない。
   // 次の隠れるまで cooldown 秒。掴まれている間はできない
-  hide: { dashSec: 0.3, cooldown: 3, range: 26, minDist: 3, step: 1.5, wallDist: 1.6, offW: 6, leaveDist: 3 },
+  // 物陰では、ライトが真正面から seeDist m の内を照らさない限り見つからない。同じ物陰にいられるのは holdSec 秒まで（ずっと隠れたままにしない）
+  hide: { holdSec: 12, seeDist: 4, dashSec: 0.3, cooldown: 3, range: 26, minDist: 3, step: 1.5, wallDist: 1.6, offW: 6, leaveDist: 3 },
   // M1 の操作（持ち主 09:15、制作側の判断）: 溜めているあいだの 2 本目の指は、longPressSec 秒以上で浮かぶジョイスティック（押した所に出て、
   // 指を離すと消える。stickRadiusPx の輪いっぱいで全速、deadPx より内は止まる）、それより短く tapMovePx px 未満の動きで離せば払う
   // M2（持ち主 15:20）: 隠れる操作。スティックを同じ向きに素早く 2 回倒す（mag より深く・window 秒の内・向きのずれ angleDeg° 以内、

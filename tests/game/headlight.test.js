@@ -55,7 +55,7 @@ test('M2: ライトは前の 28 m の丸より遠くまで届き、前向きの�
 });
 
 test('M2: 前の丸（28 m）より遠い所でも、ライトの中なら見つけて突っ込む。背を向けて通り過ぎる者は見つけない', () => {
-  const ahead = rider(roadNode(0, 0)[0], 36, -Math.PI / 2);
+  const ahead = rider(roadNode(0, 0)[0], 32, -Math.PI / 2); // 主人公まで約 34.5 m
   const away = rider(-roadNode(0, 0)[0], 14, Math.PI / 2);
   const e = field([ahead, away]);
   run(e, 0.5);
