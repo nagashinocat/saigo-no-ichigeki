@@ -1,5 +1,6 @@
 // Web Audio で合成する音。素材ファイルは使わない。
 import { COLLAPSE, createCollapseGate, collapseVoice, renderCollapseVariant } from './collapse.js';
+import { comboRecipe, bossRecipe } from './cues.js';
 // 世界の音は master を経由するので、silence で全部まとめて黙らせられる（演出の音は cine から鳴る）。
 // boom を鳴らすまでの待ち（秒）: 無音の間（silenceEnd まで）に弾けても、無音が明けてから鳴らす
 export function boomDelay(silenceEnd, now) {
@@ -346,7 +347,47 @@ export function createAudio({ nav = globalThis.navigator, makeMedia = (src) => n
     o.connect(g); g.connect(dest); o.start(t); o.stop(t + dur + 0.05);
   }
 
+  // 左右の位置へ（pan -1〜1）。dest は省けば master
+  function panner(pan, dest = master) {
+    const p = ctx.createStereoPanner(); p.pan.value = Math.max(-1, Math.min(1, pan || 0));
+    p.connect(dest);
+    return p;
+  }
+
   return {
+    // R1: 払うの腕前（×k）の音。pan: 画面の左右（cues.screenPan）。k が増えるたびに一段ずつ上がる
+    combo(k, pan = 0) {
+      if (!ready()) return;
+      const r = comboRecipe(k), t0 = now(), bus = panner(pan);
+      for (const tn of r.tones) {
+        const t = t0 + (tn.when ?? 0);
+        const o = ctx.createOscillator(); o.type = tn.type; o.frequency.setValueAtTime(tn.f, t);
+        const g = ctx.createGain(); env(g.gain, t, tn.attack, tn.gain, tn.dur);
+        o.connect(g); g.connect(bus); o.start(t); o.stop(t + tn.dur + 0.05);
+      }
+      noiseBurst({ ...r.sparkle, dest: bus });
+    },
+    // R1: 大物が来た知らせの音（遠い警笛の二度のうなりと、探照灯の点く音）。pan: 大物の画面の左右、near: 近さ 0〜1
+    bossArrive(pan = 0, near = 0.5) {
+      if (!ready()) return;
+      const r = bossRecipe({ near }), t0 = now(), bus = panner(pan);
+      for (const h of r.horns) {
+        const t = t0 + h.when;
+        const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.Q.value = 2;
+        lp.frequency.setValueAtTime(h.lp[0], t);
+        lp.frequency.exponentialRampToValueAtTime(h.lp[1], t + h.attack + 0.2);
+        lp.frequency.exponentialRampToValueAtTime(h.lp[0], t + h.dur);
+        const g = ctx.createGain(); env(g.gain, t, h.attack, h.gain, h.dur);
+        lp.connect(g); g.connect(bus);
+        for (const f of h.f) {
+          const o = ctx.createOscillator(); o.type = 'sawtooth'; o.frequency.setValueAtTime(f, t);
+          o.frequency.linearRampToValueAtTime(f * 0.97, t + h.dur);
+          o.connect(lp); o.start(t); o.stop(t + h.dur + 0.05);
+        }
+      }
+      noiseBurst({ dur: r.clank.dur, freq: r.clank.freq, gain: r.clank.gain, q: r.clank.q, when: r.clank.when, attack: 0.002, dest: bus });
+      thump({ ...r.thud, dest: bus });
+    },
     // 最初のユーザー操作で呼ぶ（ブラウザの自動再生の制限）
     // 操作と見なされない入力（タッチの pointerdown）で呼んでも害はない（resume は待ったままか断られる）。鳴らせるまで操作のたびに呼ぶ。
     // 戻り値: running になったら true の約束（断られたら false。reject は残さない）

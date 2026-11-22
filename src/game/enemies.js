@@ -53,6 +53,12 @@ export function swarmRing(layer, cfg = CONFIG) {
   return S.r0 + S.step * Math.min(S.maxRing, Math.floor(Math.max(0, layer) / S.perRing));
 }
 
+// R1: 種類（e.kind: 'heavy' / 'drainer' / 'boss'。ふつうの者と見回る者は無し）の決まり（CONFIG.enemy.kinds）
+const kindOf = (e, E) => (e.kind ? E.kinds?.[e.kind] ?? null : null);
+// 速さの倍率（重い者 0.8、大物 0.9）と吸う力の倍率（吸う者 2.5、大物 4）
+export const speedMulOf = (e, cfg = CONFIG) => kindOf(e, cfg.enemy)?.speedMul ?? 1;
+export const drainMulOf = (e, cfg = CONFIG) => kindOf(e, cfg.enemy)?.drainMul ?? 1;
+
 // 道路の交差点の位置（格子の番号 i, j → m）。道路の中心線は街区の中心から半分の間隔ずれたところ
 export const roadNode = (i, j) => [(i + 0.5) * P, (j + 0.5) * P];
 
@@ -90,8 +96,17 @@ export function lineOfSight(x, z, buildings, margin = 0) {
 //   spotT（見つけてからの秒。見た目の推進の光の一瞬の強まり）、hunting（狩りに加わった見回る者）
 // buildings: 見通しを確かめる建物（遊んでいる間は壊れない）
 // patrolRng: 見回る者の乱数（省けば見回る者は置かない。探す者の乱数 rng とは別にして、釣り合いを変えない）
-export function createEnemies(rng, cfg = CONFIG, { buildings = [], patrolRng = null } = {}) {
+// typeRng（R1）: 探す者の種類（重い者・吸う者）と大物の湧く場所の乱数（省けば種類はなく、大物も来ない。rng とは別にして、
+//   湧く場所・動きの乱数の並びを変えない）
+// 払うが当たって倒れなかった者（重い者・大物、e.hp が残る）は stagger（よろめき）: 後ろへ押し戻されながら回り、掴む枠から外れ、
+//   stagger.sec 秒で突っ込み直す。同じ一発には二度当たらない（e.lastHit）
+// heroPos（R1）: 主人公の位置 { x, z }（既定は原点。動く主人公の仕事が同じ物を書き換えて渡せる）。種類の仕組み（よろめき・大物の知らせ）は
+//   これを主人公として使う（ほかの前からの仕組みは、まだ原点を主人公とする）
+export function createEnemies(rng, cfg = CONFIG, { buildings = [], patrolRng = null, typeRng = null, heroPos = { x: 0, z: 0 } } = {}) {
   const E = cfg.enemy;
+  const KB = typeRng ? E.kinds?.boss : null;
+  let bossBorn = false, drainLoad = 0;
+  const arrivals = [];
   const near = buildings.filter((b) => b.dist - Math.hypot(b.w, b.d) / 2 < E.spotDist);
   let list = [];
   let nextId = 1;
@@ -123,12 +138,21 @@ export function createEnemies(rng, cfg = CONFIG, { buildings = [], patrolRng = n
     e.di = pick.di; e.dj = pick.dj; e.ni += pick.di; e.nj += pick.dj;
   }
 
-  function spawn() {
-    const a = rng() * Math.PI * 2;
-    const r = E.spawnDist[0] + rng() * (E.spawnDist[1] - E.spawnDist[0]);
-    const lane = [(rng() - 0.5) * 2 * E.laneSpread, (rng() - 0.5) * 2 * E.laneSpread];
-    const fwd = rng(), alertRoll = rng();
+  // 種類を決める（湧いた時刻 time で。typeRng は湧くたびに一つ使う）
+  function pickKind() {
+    if (!typeRng || !E.kinds) return null;
+    const u = typeRng(), H = E.kinds.heavy, D = E.kinds.drainer;
+    if (H && time >= H.after && u < H.share) return 'heavy';
+    if (D && time >= D.after && u >= (H?.share ?? 0) && u < (H?.share ?? 0) + D.share) return 'drainer';
+    return null;
+  }
+  function spawn(rand = rng, kind = pickKind()) {
+    const a = rand() * Math.PI * 2;
+    const r = E.spawnDist[0] + rand() * (E.spawnDist[1] - E.spawnDist[0]);
+    const lane = [(rand() - 0.5) * 2 * E.laneSpread, (rand() - 0.5) * 2 * E.laneSpread];
+    const fwd = rand(), alertRoll = rand();
     const e = { id: nextId++, x: Math.cos(a) * r, z: Math.sin(a) * r, state: 'search', speed: E.searchSpeed, turn: 0, searchTime: 0, alert: alertRoll < E.alertAtSpawn, lane };
+    if (kind) { e.kind = kind; e.hp = E.kinds[kind].hp; e.speed *= E.kinds[kind].speedMul; }
     // 広場の中に湧く（試しの設定）なら、すぐに近づく
     if (r < cfg.plazaRadius) {
       e.state = 'chase'; e.speed = approachSpeed(r, cfg); e.heading = a + Math.PI;
@@ -221,7 +245,7 @@ export function createEnemies(rng, cfg = CONFIG, { buildings = [], patrolRng = n
     // 道の中心線（交差点を通り、進む向きに沿う線）へ寄せながら進む: 線からのずれを lookAhead m 先で戻す向き
     const off = e.di * (e.z - tz) - e.dj * (e.x - tx);
     steer(e, Math.atan2(e.dj, e.di) - Math.atan(off / E.lookAhead), E.turnRate, dt);
-    accel(e, E.searchSpeed, dt);
+    accel(e, E.searchSpeed * speedMulOf(e, cfg), dt);
     e.x += Math.cos(e.heading) * e.speed * dt;
     e.z += Math.sin(e.heading) * e.speed * dt;
     place(e);
@@ -241,7 +265,7 @@ export function createEnemies(rng, cfg = CONFIG, { buildings = [], patrolRng = n
     e.spotT = (e.spotT ?? 0) + dt;
     const toHero = Math.atan2(-e.z, -e.x);
     steer(e, toHero, e.dist < E.snapDist ? Math.PI * 8 : E.chaseTurnRate, dt);
-    e.speed = Math.min(approachSpeed(e.dist, cfg), Math.max(e.speed, 0) + E.chaseAccel * dt); // 減速の曲線より速くならない
+    e.speed = Math.min(approachSpeed(e.dist, cfg) * speedMulOf(e, cfg), Math.max(e.speed, 0) + E.chaseAccel * dt); // 減速の曲線より速くならない
     const step = e.speed * dt;
     let dx = Math.cos(e.heading) * step, dz = Math.sin(e.heading) * step;
     const ux = e.x / e.dist, uz = e.z / e.dist;
@@ -282,6 +306,25 @@ export function createEnemies(rng, cfg = CONFIG, { buildings = [], patrolRng = n
     place(e);
   }
 
+  // よろめく者（R1）: 主人公から外へ push m/s（stagger.sec 秒でなめらかに 0 へ）押し戻されながら、左回りに spin m/s で回る。
+  // 終われば chase へ戻り、そのまま突っ込み直す（速さは今の速さから上げる）
+  function staggerStep(e, dt) {
+    const S = E.stagger, H = heroPos;
+    e.staggerT += dt;
+    if (e.x == null) { e.x = Math.cos(e.angle) * e.dist; e.z = Math.sin(e.angle) * e.dist; }
+    const u = Math.min(1, e.staggerT / S.sec);
+    const out = S.push * (1 - u) * (1 - u * 0.5);
+    const rx = e.x - H.x, rz = e.z - H.z;
+    const r0 = Math.max(Math.hypot(rx, rz), 0.5), r = r0 + out * dt;
+    const a = Math.atan2(rz, rx) + (S.spin / r) * dt;
+    e.x = H.x + Math.cos(a) * r; e.z = H.z + Math.sin(a) * r;
+    e.speed = Math.hypot(out, S.spin);
+    e.heading = wrap(a + Math.atan2(S.spin, out));
+    e.turn = S.spin / r;
+    place(e);
+    if (u >= 1) { e.state = 'chase'; e.alert = true; e.spotT = 0; delete e.layer; e.unpile = null; }
+  }
+
   // 群がった者を群がった順に（swarmSeq。試しで直に置いた者は前）並べ、段を 0, 1, … と振り直す（数を返す）。
   // list の並び（見回る者は始めから前にいる）では決めない: あとから群がった見回る者が段 0 に割り込み、皆の高さと掴む順が入れ替わらないように
   let swarmSeq = 0;
@@ -309,11 +352,13 @@ export function createEnemies(rng, cfg = CONFIG, { buildings = [], patrolRng = n
       }
       for (const e of list) {
         if (e.state === 'dead') continue;
+        if (e.state === 'stagger') { staggerStep(e, dt); e.lean = (e.lean ?? e.turn) + (e.turn - (e.lean ?? e.turn)) * (1 - Math.exp(-dt / LEAN_SEC)); continue; }
+        const mul = speedMulOf(e, cfg);
         if (e.state === 'grab' || e.state === 'cling') { // 掴んでからの秒（見た目が主人公の横へ寄るのに使う）
-          e.grabTime += dt;
+          e.grabTime = (e.grabTime ?? 0) + dt;
           if (e.unpile != null) e.unpile += dt;
-          if (e.state === 'grab') orbitStep(e, dt, E.grabRange, E.orbitSpeed);
-          else orbitStep(e, dt, swarmRing(e.layer, cfg), E.swarm.speed);
+          if (e.state === 'grab') orbitStep(e, dt, E.grabRange, E.orbitSpeed * mul);
+          else orbitStep(e, dt, swarmRing(e.layer, cfg), E.swarm.speed * mul);
           e.lean = (e.lean ?? e.turn) + (e.turn - (e.lean ?? e.turn)) * (1 - Math.exp(-dt / LEAN_SEC));
           continue;
         }
@@ -328,7 +373,7 @@ export function createEnemies(rng, cfg = CONFIG, { buildings = [], patrolRng = n
         const free = grabbing < E.maxGrabbing;
         const ring = free ? E.grabRange : swarmRing(clinging, cfg);
         if (e.state === 'chase' && e.dist <= ring) { // もう輪の内側（大きな群れの外の輪・試しの置き方）: その場から回り始める
-          orbitStep(e, dt, ring, free ? E.orbitSpeed : E.swarm.speed);
+          orbitStep(e, dt, ring, (free ? E.orbitSpeed : E.swarm.speed) * mul);
           arrived = true;
         } else if (e.state === 'chase') arrived = chaseStep(e, dt, ring);
         // 傾きの見た目に使う、なめらかにした曲がる速さ（交差点の一瞬の曲がりでちらつかない）
@@ -336,7 +381,7 @@ export function createEnemies(rng, cfg = CONFIG, { buildings = [], patrolRng = n
         if (!arrived) continue;
         e.grabTime = 0;
         // 着いた瞬間から回り始める（速さ・向きは回る者のもの）。外へは出ない
-        e.speed = Math.max(e.speed, free ? E.orbitSpeed : E.swarm.speed);
+        e.speed = Math.max(e.speed, (free ? E.orbitSpeed : E.swarm.speed) * mul);
         e.heading = wrap(e.angle + Math.PI / 2);
         if (free) { e.state = 'grab'; grabbing++; } else { e.state = 'cling'; e.swarmSeq = swarmSeq++; e.layer = clinging++; }
       }
@@ -349,18 +394,46 @@ export function createEnemies(rng, cfg = CONFIG, { buildings = [], patrolRng = n
         acc -= 1;
         list.push(spawn());
       }
+      // R1: 大物は boss.at 秒に 1 体だけ（気配を感じた者として、すぐ主人公へ向かう）。湧いた場所は arrivals で知らせる
+      if (KB && !bossBorn && time >= KB.at) {
+        bossBorn = true;
+        const b = spawn(typeRng, 'boss');
+        b.alert = true;
+        list.push(b);
+        arrivals.push({ id: b.id, x: b.x, z: b.z, t: time, dist: Math.hypot(b.x - heroPos.x, b.z - heroPos.z) });
+      }
+      drainLoad = 0;
+      for (const e of list) if (e.state === 'grab') drainLoad += drainMulOf(e, cfg);
       return grabbing;
     },
-    applyBlastFront(front) {
-      let killed = 0;
+    // 掴んでいる者の吸う力の合計（ふつうの者 1 人を 1。吸う者 2.5、大物 4）。update のあとの値
+    get drainLoad() { return drainLoad; },
+    // 主人公の位置（heroPos。種類の仕組みが使う）
+    get heroPos() { return heroPos; },
+    // 大物が湧いた知らせ（{ id, x, z, t, dist（主人公から）}）。読んだら空にする
+    takeArrivals() { return arrivals.splice(0); },
+    // 前線 front m の内の者に当てる。当たった数（倒れた者とよろめいた者）を返す。
+    // blast: { id, small }。small（払う）なら、hp の残る者（重い者・大物）は倒れずによろめき、同じ一発（id）には二度当たらない。
+    // 省けば（最後の一発）、当たった者はみな倒れる
+    applyBlastFront(front, blast = null) {
+      let hits = 0;
+      const small = !!blast?.small;
       for (const e of list) {
         if (e.state === 'dead' || e.dist > front) continue;
+        if (small && blast.id != null) { if (e.lastHit === blast.id) continue; e.lastHit = blast.id; }
+        hits++;
+        const hp = e.hp ?? kindOf(e, E)?.hp ?? 1;
+        if (small && hp > 1) {
+          e.hp = hp - 1;
+          if (e.state === 'grab' || e.state === 'cling') { delete e.layer; e.unpile = null; }
+          e.state = 'stagger'; e.staggerT = 0;
+          continue;
+        }
         e.state = 'dead';
         e.deadTime = 0;
-        killed++;
       }
-      if (killed) relayer();
-      return killed;
+      if (hits) relayer();
+      return hits;
     },
   };
 }

@@ -1,5 +1,5 @@
 import { test, expect } from 'vitest';
-import { puffButtonRect, powerText, armyText } from '../../src/ui/hud.js';
+import { puffButtonRect, powerText, armyText, comboText, comboPos, BOSS_TEXT } from '../../src/ui/hud.js';
 import { layoutViews } from '../../src/render/views.js';
 
 const inHandStrip = (r, layout, H) => {
@@ -29,4 +29,27 @@ test('貯めた力の文言は上限に対する割合（切り捨て）', () =>
 test('S9: 街の軍勢の数（全員倒せばクリア。見回る者を含めた、生きている者の数）', () => {
   expect(armyText(95)).toBe('街の軍勢 95');
   expect(armyText(0)).toBe('街の軍勢 0');
+});
+
+// R1（spec §15 払うの腕前・大物）
+test('R1: まとめて払った「×k」の文言。大物の知らせは「大物が来る」', () => {
+  expect(comboText(3)).toBe('×3');
+  expect(comboText(12)).toBe('×12');
+  expect(BOSS_TEXT).toBe('大物が来る');
+});
+
+test('R1: 「×k」は主人公の少し上（群がる軍勢に重ねない）で、どの画面でも街の画面の内', () => {
+  for (const [w, h] of [[390, 844], [360, 640], [1280, 720], [844, 390]]) {
+    const l = layoutViews(w, h);
+    const top = h - l.city.y - l.city.h, bottom = h - l.city.y;
+    const sx = l.city.x + l.city.w / 2, sy = top + l.city.h / 2; // 主人公は上空の画面の真ん中ほど
+    const p = comboPos(l, h, sx, sy);
+    expect(p.y, `${w}x${h}`).toBeLessThan(sy - 40);
+    expect(p.y).toBeGreaterThan(top);
+    expect(p.x).toBeCloseTo(sx, 6);
+    // 画面の外の主人公でも、街の画面の内へ寄せる
+    const q = comboPos(l, h, -500, h * 3);
+    expect(q.x).toBeGreaterThanOrEqual(l.city.x);
+    expect(q.y).toBeLessThanOrEqual(bottom);
+  }
 });

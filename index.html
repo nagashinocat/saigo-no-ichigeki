@@ -30,6 +30,17 @@
     .hud-puff.off { border-color: rgba(255, 255, 255, 0.28); background: rgba(30, 26, 40, 0.5); color: rgba(255, 255, 255, 0.38); box-shadow: none; cursor: default; }
     .hud-hint { position: absolute; text-align: center; font-size: clamp(14px, 4vw, 20px); font-weight: 800; opacity: 0; transition: opacity 0.25s; text-shadow: 0 1px 3px rgba(20, 10, 30, 0.9), 0 0 10px rgba(20, 10, 30, 0.6); }
     .hud-hint.show { opacity: 1; transition: opacity 0.08s; }
+    /* R1 まとめて払った「×k」: 主人公の少し上に小さく跳ねて、すぐ消える（群がる軍勢には重ねない） */
+    .hud-combo { position: absolute; transform: translate(-50%, -50%); display: flex; flex-direction: column; align-items: center; line-height: 1; opacity: 0; pointer-events: none; padding: 0.25em 0.7em 0.3em; border-radius: 0.6em; background: radial-gradient(closest-side, rgba(24, 10, 4, 0.62), rgba(24, 10, 4, 0.38) 70%, rgba(24, 10, 4, 0)); }
+    .hud-combo b { font-size: clamp(22px, 6.4vw, 32px); font-weight: 900; font-style: italic; letter-spacing: 0.02em; color: #fff7e0; -webkit-text-stroke: 1px rgba(60, 25, 5, 0.85); text-shadow: 0 0 10px rgba(255, 170, 60, 0.85), 0 2px 3px rgba(20, 10, 30, 0.9); font-variant-numeric: tabular-nums; }
+    .hud-combo.show { animation: hud-combo 1.05s ease-out forwards; }
+    @keyframes hud-combo { 0% { opacity: 0; transform: translate(-50%, -30%) scale(1.5); } 10% { opacity: 1; transform: translate(-50%, -50%) scale(0.95); } 18% { transform: translate(-50%, -50%) scale(1); } 65% { opacity: 1; } 100% { opacity: 0; transform: translate(-50%, -80%) scale(1); } }
+    /* R1 大物が来た知らせ: 街の画面の上の方に、細い光の線にはさまれた大きな文字が閃いて消える */
+    .hud-announce { position: absolute; text-align: center; opacity: 0; pointer-events: none; }
+    .hud-announce span { display: inline-block; padding: 0.18em 0.9em; font-size: clamp(26px, 8.2vw, 44px); font-weight: 900; letter-spacing: 0.22em; color: #fff1d0; text-shadow: 0 0 14px rgba(255, 150, 40, 0.95), 0 0 30px rgba(255, 90, 20, 0.6), 0 2px 4px rgba(20, 10, 30, 0.95);
+      border-top: 2px solid rgba(255, 196, 110, 0.9); border-bottom: 2px solid rgba(255, 196, 110, 0.9); background: linear-gradient(90deg, rgba(40, 14, 6, 0), rgba(40, 14, 6, 0.55) 20%, rgba(40, 14, 6, 0.55) 80%, rgba(40, 14, 6, 0)); }
+    .hud-announce.show { animation: hud-announce 2.4s ease-out forwards; }
+    @keyframes hud-announce { 0% { opacity: 0; transform: scaleX(1.6); filter: brightness(3); } 8% { opacity: 1; transform: scaleX(1); filter: brightness(1.6); } 14% { opacity: 0.55; } 20% { opacity: 1; filter: brightness(1); } 78% { opacity: 1; } 100% { opacity: 0; transform: scaleX(1.04); } }
     @media (pointer: coarse) { .hud-puff small { display: none; } }
     #start { position: fixed; left: 0; right: 0; top: 30%; text-align: center; pointer-events: none; font-size: clamp(16px, 4.6vw, 26px); font-weight: 700; text-shadow: 0 1px 4px rgba(20, 10, 30, 0.9), 0 0 14px rgba(20, 10, 30, 0.6); }
     #start[hidden], #result[hidden], #result [hidden] { display: none; }

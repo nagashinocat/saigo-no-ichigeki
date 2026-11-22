@@ -18,7 +18,8 @@ const MAX_DT = 0.1;
 export function createGame({ seed, cfg = CONFIG }) {
   const city = generateCity(seed, cfg);
   // 見回る者（S8）は別の乱数（探して掴みに来る者の湧き方・動きは前のまま）
-  const enemies = createEnemies(createRng(seed + 1), cfg, { buildings: city.buildings, patrolRng: createRng((seed ^ 0x9a7b1) >>> 0) });
+  // R1: 種類（重い者・吸う者）と大物の乱数も別（typeRng）
+  const enemies = createEnemies(createRng(seed + 1), cfg, { buildings: city.buildings, patrolRng: createRng((seed ^ 0x9a7b1) >>> 0), typeRng: createRng((seed * 0x2c1b3c6d + 0x51ed27) >>> 0) });
   const power = createPower(cfg.power);
   const charge = createCharge(power, cfg);
   const timer = createTimer(cfg.roundSeconds);
@@ -50,7 +51,8 @@ export function createGame({ seed, cfg = CONFIG }) {
   function startBlast(shot) {
     const targets = [];
     if (!shot.small) for (const [id, t] of byKey) if (!destroyed.has(id)) targets.push({ id, dist: t.dist });
-    const b = { id: nextBlastId++, shot, blast: createBlast(shot, targets, cfg), values: [] };
+    // hits: 払う（小爆発）がこれまでに当てた軍勢の数（R1 の「×k」）
+    const b = { id: nextBlastId++, shot, blast: createBlast(shot, targets, cfg), values: [], hits: 0 };
     blasts.push(b);
     return b;
   }
@@ -67,7 +69,7 @@ export function createGame({ seed, cfg = CONFIG }) {
     const survivors = [];
     for (const e of enemies.list) {
       if (!releaseIds.has(e.id) || e.state === 'dead') continue;
-      survivors.push({ id: e.id, x: e.x, z: e.z, patrol: !!e.patrol });
+      survivors.push({ id: e.id, x: e.x, z: e.z, patrol: !!e.patrol, ...(e.kind ? { kind: e.kind } : {}) });
     }
     outcome = { clear: survivors.length === 0, total: releaseIds.size, survivors };
   }
@@ -82,7 +84,12 @@ export function createGame({ seed, cfg = CONFIG }) {
         b.values.push(target.value);
         emit('hit', settled ? { hit, target, settled } : { hit, target });
       }
-      enemies.applyBlastFront(b.blast.front);
+      const n = enemies.applyBlastFront(b.blast.front, b.shot.small ? { id: b.id, small: true } : null);
+      // R1: 一度の払うで k ≥ combo.from 体を払ったら「×k」を知らせる（数が増えるたびに。見せるだけで力は戻さない）
+      if (b.shot.small && n > 0) {
+        b.hits += n;
+        if (b.hits >= (cfg.puff.combo?.from ?? Infinity)) emit('combo', { k: b.hits, blastId: b.id });
+      }
     }
     blasts = blasts.filter((b) => !b.blast.done);
   }
@@ -192,7 +199,9 @@ export function createGame({ seed, cfg = CONFIG }) {
 
       charge.update(dt);
       grabbing = enemies.update(dt);
-      power.drain(grabbing * cfg.enemy.drainPerSec * dt);
+      // 掴んでいる者の吸う力（R1: 吸う者 ×2.5、大物 ×4）
+      power.drain(enemies.drainLoad * cfg.enemy.drainPerSec * dt);
+      for (const a of enemies.takeArrivals()) emit('bossArrive', a);
       updateBlasts(dt);
       timer.update(dt);
       // 時間切れまで放たなければ、主人公はブラックホールになる（破壊額はつかない）

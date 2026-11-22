@@ -16,6 +16,41 @@ export const RIDER = {
 
 export const SUIT = '#2c3133', PLATE = '#3b4240', DARK = '#191c1f', HELM = '#30363c', BOOT = '#141617';
 export const HULL = '#8e9389', DECK = '#b5b8ab', BELLY = '#23272a', HOUSING = '#2a2f31', GLOW = '#ffffff';
+// R1: 重い者・大物の装甲（暗い青銅）と、大物の探照灯の筒
+export const ARMOR = '#4d463a', LAMP = '#202426';
+
+// R1（軍勢の種類）: 部品ごとの出る種類（aOnly）。0 はどの者にも、1 は装甲の者（重い者・大物）だけ、2 は大物だけ。
+// 形は一つの網のまま（instanced）で、種類（aKind）に合わない部品は頂点シェーダーが潰す
+export const ONLY = { all: 0, armored: 1, boss: 2 };
+// 部位の番号（figureGeo）に足すもの: 9 装甲の縁の光（琥珀）、13 探照灯のレンズ
+export const PART_TRIM = 9, PART_LENS = 13;
+const only = (g, v) => { g.setAttribute('aOnly', new THREE.BufferAttribute(new Float32Array(g.attributes.position.count).fill(v), 1)); return g; };
+
+// 装甲の者のバイク（hull を横へ 1.22 倍に広げる前の座標）: 両脇の張り出した箱、鼻先の前の衝角の板、尾の厚い板。縁に琥珀の光の筋。
+// 大物はさらに、鼻先の上に探照灯（筒と光るレンズ）
+function armoredParts() {
+  const A = (g) => only(part(g, 7, [0, 0, 0], ARMOR), ONLY.armored);
+  const T = (g) => only(part(g, PART_TRIM, [0, 0, 0], GLOW), ONLY.armored);
+  const hex = (sx, h, sz) => new THREE.CylinderGeometry(1, 1, h, 6).scale(sx, 1, sz);
+  return [
+    A(at(hex(0.17, 0.3, 0.62), 0.47, 0.32, -0.08)),
+    A(at(hex(0.17, 0.3, 0.62), -0.47, 0.32, -0.08)),
+    A(at(box(0.78, 0.2, 0.12), 0, 0.33, 1.5)),
+    A(at(box(0.62, 0.12, 0.3), 0, 0.5, -1.0)),
+    T(at(box(0.03, 0.05, 0.95), 0.645, 0.36, -0.08)),
+    T(at(box(0.03, 0.05, 0.95), -0.645, 0.36, -0.08)),
+    T(at(box(0.66, 0.04, 0.03), 0, 0.37, 1.57)),
+    T(at(box(0.5, 0.035, 0.03), 0, 0.57, -1.16)),
+  ];
+}
+function bossParts() {
+  const B = (g, id, c) => only(part(g, id, [0, 0, 0], c), ONLY.boss);
+  return [
+    B(at(new THREE.CylinderGeometry(0.15, 0.13, 0.34, 12).rotateX(Math.PI / 2), 0, 0.66, 1.02), 7, LAMP),
+    B(at(box(0.06, 0.2, 0.06), 0, 0.5, 0.95), 7, LAMP),
+    B(at(new THREE.CircleGeometry(0.13, 14), 0, 0.66, 1.195), PART_LENS, GLOW),
+  ];
+}
 
 // focus: 演出で大きく映る一人のバイク（riderBody.js）。ここでは輪と推進の光だけを返し（尾の輪は細かく丸く、脇の光の線は丸い棒）、
 // 車体・座席・安定板・握り・足の板は riderBody.js が距離の場と丸い形で組み直す
@@ -100,9 +135,14 @@ function riderParts() {
     part(shin(-0.2), 4, [0, 0, 0], SUIT),
     part(at(box(0.13, 0.12, 0.26), 0.24, 0.45, 0.14), 4, [0, 0, 0], BOOT),
     part(at(box(0.13, 0.12, 0.26), -0.24, 0.45, 0.14), 4, [0, 0, 0], BOOT),
+    // R1: 装甲の者の大きな肩当て（胴と一緒に前へかがむ）
+    only(up(at(box(0.2, 0.13, 0.34), 0.27, 1.45, 0), 0, hip, ARMOR), ONLY.armored),
+    only(up(at(box(0.2, 0.13, 0.34), -0.27, 1.45, 0), 0, hip, ARMOR), ONLY.armored),
   ];
 }
 
+// aOnly のない部品は、どの者にも出る（0）
 export function buildRiderBikeGeometry() {
-  return mergeGeometries([...bikeParts(), ...riderParts()].map((g) => g.toNonIndexed()));
+  const parts = [...bikeParts(), ...riderParts(), ...armoredParts(), ...bossParts()].map((g) => (g.attributes.aOnly ? g : only(g, ONLY.all)).toNonIndexed());
+  return mergeGeometries(parts);
 }

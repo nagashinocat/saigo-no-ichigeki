@@ -53,12 +53,18 @@ test('払わずに長押しし続けるだけでは満タンに届かず、60 �
   expect(CONFIG.enemy.maxGrabbing * CONFIG.enemy.drainPerSec).toBeGreaterThan(CONFIG.power.chargePerSec * 1.5);
 });
 
+// R1: 吸う者（×2.5）・大物（×4）・2 回払う重い者が来るので、「掴まれてから払う」だけでは 12 回の半分も満タンに届かず、中央の時刻は
+// どちらも Infinity になる（前の比べ方では比べられない）。満タンに届いた回の数、同じなら届いた回の中央の時刻で比べる
 test('「何人かに掴ませておく」より、早く払うほうが早く満タンになる', () => {
-  const med = (o) => { const ts = Array.from({ length: 12 }, (_, i) => play(i + 1, o).full).sort((a, b) => a - b); return ts[6]; };
-  const early = med({ grab: 1, crowd: Infinity });
-  const lazy = med({ grab: 4, crowd: Infinity });
-  expect(early).toBeLessThan(lazy);
-});
+  const rank = (o) => {
+    const got = Array.from({ length: 12 }, (_, i) => play(i + 1, o).full).filter(Number.isFinite).sort((a, b) => a - b);
+    return { n: got.length, med: got.length ? got[Math.floor(got.length / 2)] : Infinity };
+  };
+  const early = rank({ grab: 1, crowd: Infinity });
+  const lazy = rank({ grab: 4, crowd: Infinity });
+  expect(early.n).toBeGreaterThan(0);
+  expect(early.n > lazy.n || (early.n === lazy.n && early.med < lazy.med)).toBe(true);
+}, 60000);
 
 // S9: 撃退成功（放った一発で街の軍勢を全員倒す）。最善に近い操作で力が level に届いた瞬間に離す
 function releaseAtLevel(seed, level) {
@@ -89,4 +95,4 @@ test('S9 / R0 fix1: 最善に近い操作で満タンで放てば必ず撃退成
   }
   // 99% なら、届いた回はみな撃退成功（満タンの少し手前で放っても勝てる）
   for (const s of seeds) { const o = releaseAtLevel(s, 99); if (o) expect(o.clear).toBe(true); }
-});
+}, 60000); // R1: 8 の種を何度も最後まで遊ぶ重いテスト（並べて走らせると既定の 5 秒を超える）

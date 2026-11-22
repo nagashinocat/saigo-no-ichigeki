@@ -40,6 +40,10 @@ export const BIKE = {
   // 大きく描くときの中心を主人公へ寄せる範囲（anchorFor）: anchorNear m より内では主人公を中心にし、anchorFar m で自分の足元へ戻す
   anchorNear: 4, anchorFar: 12,
   deadFling: 1.1,     // s
+  // R1: 大きい者（大物 1.6 倍、重い者）は、掴んで回る輪をこれだけ外へ（大きな車体が主人公にめり込まない）
+  kindCling: { boss: 0.85, heavy: 0.12 },
+  // R1: 払いが当たってよろめく者（stagger）: 鼻先が上がり（staggerPitch rad）、左右に大きく揺れる（staggerRoll rad、staggerRate rad/s）
+  staggerPitch: 0.45, staggerRoll: 0.55, staggerRate: 19,
 };
 
 const hash = (n) => { const x = Math.sin(n * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
@@ -103,7 +107,7 @@ function grabPose(e, fronts, time, cfg) {
   const r0 = Math.max(1e-6, Math.hypot(p.x, p.z));
   // 描く半径: 判定の半径を grabRange − clingRadius だけ内へ（掴む者は主人公の横、群がる者はそのすぐ外）。寄り終えてからは小刻みに引っ張る
   const tugK = smooth(BIKE.grabSettle + 0.15, BIKE.grabSettle + 0.6, e.grabTime ?? 1);
-  const rT = Math.max(0.8, BIKE.clingRadius + ((e.dist ?? r0) - E.grabRange) + BIKE.tug * tugK * Math.sin(time * 9.3 + h * 17));
+  const rT = Math.max(0.8, BIKE.clingRadius + (BIKE.kindCling[e.kind] ?? 0) + ((e.dist ?? r0) - E.grabRange) + BIKE.tug * tugK * Math.sin(time * 9.3 + h * 17));
   const r = r0 * (1 - k) + rT * k;
   let y = p.y + (0.04 * Math.sin(time * 5.3 + h * 11) + BIKE.tugY * tugK * Math.sin(time * 7.7 + h * 29) - p.y) * k;
   // 群がる者（layer がある）は掴む者より高く、段ごとにずらす。枠が空いて掴んだ者（unpile）は下りる
@@ -143,5 +147,14 @@ export function bikePose(e, fronts = [], time = 0, cfg = CONFIG) {
       anchor: p.anchor * (1 - smooth(0, 0.5, k)), // 主人公を中心に大きく描くのをやめていく（遠くへ飛んだ者が大きく描かれすぎない）
     };
   }
-  return approachPose(e, fronts, time, cfg);
+  const p = approachPose(e, fronts, time, cfg);
+  if (e.state === 'stagger') {
+    // 払いに弾かれて後ろへよろめく: 鼻先が上がり、左右に大きく揺れ、推進の光がちらつく（だんだん収まる）
+    const u = Math.min(1, (e.staggerT ?? 0) / (cfg.enemy.stagger?.sec ?? 0.5)), k = (1 - u) * (1 - u);
+    p.pitch -= BIKE.staggerPitch * k;
+    p.roll += BIKE.staggerRoll * k * Math.sin(time * BIKE.staggerRate + hash(e.id) * 9);
+    p.thrust *= 1 - 0.6 * k * (0.5 + 0.5 * Math.sin(time * 47));
+    p.reach = 0;
+  }
+  return p;
 }

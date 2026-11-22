@@ -8,8 +8,10 @@
 //  4) S9 の勝ち負け（放った一発で街の軍勢を全員倒せたら撃退成功）: 最善の操作で、力が L（85〜100）に届いた瞬間に放ったときの
 //     撃退成功の割合（L ごと）と、そのうち一番よい L（最善の放ち方）の成功率。放つと遊びは止まるので、一回の流れの中で
 //     L に届いた瞬間ごとに「生きている軍勢がみな radiusFor(力) の内か」を見る（game.settle と同じ判定。tests/game/balance.test.js で確かめる）
-// を、seed 1〜30 で出す。ENEMY='{...}' / PUFF='{...}' / RADIUS='{...}' で CONFIG の一部を差し替えられる。SEEDS=n で seed 1〜n（調整の下見用）。
+// を、seed 1〜30 で出す。ENEMY='{...}' / PUFF='{...}' / RADIUS='{...}' / POWER='{...}' で CONFIG の一部を差し替えられる。SEEDS=n で seed 1〜n（調整の下見用）。
 // QUICK=1 で最善の操作の候補を、よく選ばれる数通りに絞る（調整の下見用）
+// R1: 軍勢の種類（重い者・吸う者・大物）は game.js の中で動く。各操作の行に、×3 以上の払いの回数（p50）も出す。
+//  KINDS='{...}' で CONFIG.enemy.kinds の一部を差し替えられる
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -17,7 +19,8 @@ const root = path.resolve(process.argv[2] ?? path.join(path.dirname(new URL(impo
 const { createGame } = await import(pathToFileURL(path.join(root, 'src/game/game.js')).href);
 const { CONFIG: BASE } = await import(pathToFileURL(path.join(root, 'src/config.js')).href);
 // ENEMY='{"speed":8}' で CONFIG.enemy の一部を差し替えて試せる
-const CONFIG = { ...BASE, enemy: { ...BASE.enemy, ...JSON.parse(process.env.ENEMY ?? '{}') }, puff: { ...BASE.puff, ...JSON.parse(process.env.PUFF ?? '{}') }, radius: { ...BASE.radius, ...JSON.parse(process.env.RADIUS ?? '{}') } };
+const CONFIG = { ...BASE, enemy: { ...BASE.enemy, ...JSON.parse(process.env.ENEMY ?? '{}') }, puff: { ...BASE.puff, ...JSON.parse(process.env.PUFF ?? '{}') }, radius: { ...BASE.radius, ...JSON.parse(process.env.RADIUS ?? '{}') }, power: { ...BASE.power, ...JSON.parse(process.env.POWER ?? '{}') } };
+if (process.env.KINDS) { const k = JSON.parse(process.env.KINDS); CONFIG.enemy.kinds = Object.fromEntries(Object.entries(BASE.enemy.kinds ?? {}).map(([n, v]) => [n, { ...v, ...(k[n] ?? {}) }])); }
 const { radiusFor } = await import(pathToFileURL(path.join(root, 'src/game/charge.js')).href);
 const DT = 1 / 30;
 const SEEDS = Array.from({ length: Number(process.env.SEEDS ?? 30) }, (_, i) => i + 1);
@@ -52,6 +55,8 @@ console.log(`60 秒で湧く数: ${total.toFixed(1)}（0〜40 秒 ${(() => { let
 //    その組み合わせのうち、満タンに届く seed が多く、届く時刻が早いものを「最善」とする
 function play(seed, { grab, trigger, crowd }) {
   const g = createGame({ seed, cfg: CONFIG });
+  const combos = new Set();
+  g.on('combo', (c) => combos.add(c.blastId));
   g.pressStart();
   let t = 0, full = Infinity, puffs = 0, grabSec = 0;
   while (g.phase === 'playing' && t < CONFIG.roundSeconds - DT / 2) {
@@ -61,7 +66,7 @@ function play(seed, { grab, trigger, crowd }) {
     grabSec += g.grabbing * DT;
     if (full === Infinity && g.power.value >= CONFIG.power.max - 1e-6) full = t;
   }
-  return { full, end: g.power.value, puffs, grabSec };
+  return { full, end: g.power.value, puffs, grabSec, combos: combos.size };
 }
 const NO_PUFF = { grab: Infinity, trigger: 0, crowd: Infinity };
 const SPAM = { grab: 'spam', trigger: 0, crowd: Infinity }; // 払える力があればいつでも払う
@@ -77,7 +82,7 @@ const summary = (st, runs) => {
   const fulls = runs.map((r) => r.full), ends = runs.map((r) => r.end), got = fin(fulls);
   const pq = (p) => (got.length ? q(got, p).toFixed(1) : '-');
   return { reached: got.length, med: got.length ? q(got, 0.5) : Infinity,
-    line: `${st === NO_PUFF ? '払わない（ずっと長押しだけ）: ' : st === SPAM ? '払い続ける（払える力があればいつでも払う）: ' : `掴まれ${st.grab}人 or ${st.trigger}m以内に${st.crowd}人で払う: `}満タンに届いた ${got.length}/${runs.length}  満タンの時刻（届いた回） p25=${pq(0.25)} p50=${pq(0.5)} p75=${pq(0.75)}  60秒の力 p50=${q(ends, 0.5).toFixed(1)}  払った回数 p50=${q(runs.map((r) => r.puffs), 0.5)}  掴まれた人秒 p50=${q(runs.map((r) => r.grabSec), 0.5).toFixed(1)}` };
+    line: `${st === NO_PUFF ? '払わない（ずっと長押しだけ）: ' : st === SPAM ? '払い続ける（払える力があればいつでも払う）: ' : `掴まれ${st.grab}人 or ${st.trigger}m以内に${st.crowd}人で払う: `}満タンに届いた ${got.length}/${runs.length}  満タンの時刻（届いた回） p25=${pq(0.25)} p50=${pq(0.5)} p75=${pq(0.75)}  60秒の力 p50=${q(ends, 0.5).toFixed(1)}  払った回数 p50=${q(runs.map((r) => r.puffs), 0.5)}（×3 以上 p50=${q(runs.map((r) => r.combos), 0.5)}）  掴まれた人秒 p50=${q(runs.map((r) => r.grabSec), 0.5).toFixed(1)}` };
 };
 for (const st of [NO_PUFF, SPAM]) console.log(summary(st, SEEDS.map((s) => play(s, st))).line);
 for (const st of strategies) {

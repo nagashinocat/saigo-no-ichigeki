@@ -7,7 +7,9 @@ export const CONFIG = {
   // 小爆発: 貯めた力を cost 使い、主人公のまわり radius m の軍勢を払う（ビルは壊さず、破壊額にも入らない）
   // 費用は持ち主の決定（2026-11-21、払うの費用・半径の調整を許可）で 8 → 4.5（速く群れる軍勢を何度も払えるように。釣り合いは下の enemy の説明）
   // R0（持ち主 22:15「かなり簡単」）: 軍勢を速く・集まるようにしたので、払う回数が増える（最善の操作で 15 → 約 23 回）。費用 4.5 → 3 で釣り合わせる
-  puff:    { cost: 3, radius: 22 },
+  // R1: 一度の払うで combo.from 体以上を払うと「×k」を出す（見せるだけ。力は戻さない: 持ち主 09:11 で払うは回数制限になるため、
+  // 力を戻す払うの腕前はやめた）
+  puff:    { cost: 2.8, radius: 22, combo: { from: 3 } },
   // 最後の一発の半径（貯めた力 / power.max で決まる）。S8: max 440 → 720（街の端 680 m と、見回る軍勢の一番外
   // （maxEnemyReach、約 603 m）より十分先まで。最大溜めなら街のどこにいる軍勢も必ず巻き込む）
   // fix1（持ち主 15:33「軍勢は街の全体に」）: 見回る者が街の端まで行くので max 720 → 730（maxEnemyReach 約 685 m + 40 m より先）
@@ -44,7 +46,9 @@ export const CONFIG = {
   // fix1: 撃退には ほぼ満タンが要る（radius の knee）。満タンの時刻 p50 は届いた回だけで数えて 53.6 秒、最善の放ち方（L=99）で撃退成功 22/30
   // 数は .superpowers/sdd/2026-11-21-machi-hakai-round5/task-R0-report.md
   enemy:   {
-    spawnPerSec: 0.5, surgeStart: 40, surgeEnd: 52, surgeMul: 11, drainPerSec: 1.4, maxGrabbing: 6,
+    // R1（重い者・吸う者・大物を入れた仮の釣り合い。持ち主 09:11 で動く主人公と払うの回数制限に変わるので、そこで作り直す）:
+    // 払う 3 → 2.8、吸う 1.4 → 1.5/秒（tests/game/balance.test.js の範囲に戻す。数は task-R1-report.md）
+    spawnPerSec: 0.5, surgeStart: 40, surgeEnd: 52, surgeMul: 11, drainPerSec: 1.5, maxGrabbing: 6,
     spawnDist: [50, 66], roamDist: 75, laneSpread: 1.6,
     searchSpeed: 30, inwardBias: 0.8, turnRate: 16, lookAhead: 2.5, accel: 30, brake: 70,
     spotDist: 28, spotEvery: 0.15, sightMargin: 0.8, alertAfter: 12, alertRate: 0.05, alertAtSpawn: 0.1,
@@ -60,6 +64,19 @@ export const CONFIG = {
     // 最大溜めの一発はこの帯の外端より先まで届く（maxEnemyReach）
     // R0: 残り 20 秒（joinAt 秒）からは、主人公から joinDist m の内の見回る者も狩りに加わる（気配を感じた探す者として集まる）
     patrol: { count: 70, speed: 22, joinAt: 40, joinDist: 220 },
+    // R1（spec §15「軍勢の種類」）: 探す者の種類。どれも撃退の数に入り、最後の一発は 1 回で倒す（hp は払うの回数）。
+    //  heavy（重い者）: after 秒からの探す者の share。払う 2 回ではがれる（1 回目は後ろへよろめく）。速さ ×speedMul
+    //  drainer（吸う者）: after 秒からの探す者の share。掴んでいる間、drainPerSec の drainMul 倍を吸う
+    //  boss（大物）: at 秒に 1 体だけ（気配を感じた者として主人公へ）。払う 3 回、吸う ×4、大きく描き、探照灯を持つ
+    // 種類の乱数は探す者の乱数とは別（game.js の typeRng）。湧く場所・動きの乱数の並びは前のまま
+    kinds: {
+      heavy: { share: 0.15, after: 20, hp: 2, speedMul: 0.8, drainMul: 1 },
+      drainer: { share: 0.15, after: 30, hp: 1, speedMul: 1, drainMul: 2.5 },
+      boss: { at: 49, hp: 3, speedMul: 0.9, drainMul: 4 },
+    },
+    // 払うが当たって倒れなかった者（重い者・大物）のよろめき: sec 秒、外へ push m/s（なめらかに 0 へ）と、回る向きへ spin m/s。
+    // 止まって見えない（どの瞬間も spin 以上の速さ）。そのあと突っ込み直す
+    stagger: { sec: 0.55, push: 20, spin: 9 },
   },
   score:   { comboStep: 0.1, comboMax: 3 },
 };

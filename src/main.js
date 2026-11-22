@@ -28,6 +28,7 @@ import { createHud } from './ui/hud.js';
 import { createResult } from './ui/result.js';
 import { createAudio, finaleBoomOpts } from './audio/audio.js';
 import { createHitFeed } from './audio/hitFeed.js';
+import { screenPan } from './audio/cues.js';
 import { transitObstacles } from './world/transit.js';
 import { transitMix } from './audio/transitSound.js';
 import { createPatrolGlow, patrolGlowVisible } from './render/patrolGlow.js';
@@ -223,6 +224,30 @@ game.on('shot', (shot) => {
 // 足りずに離した: 放たず、両手がびくっと震え、ひとこと知らせる
 game.on('fizzle', () => { hand.fizzle(); hud.hint('まだ足りない。もっと貯めてから離して'); });
 game.on('puff', (shot) => { explosionView.begin(shot); hand.release(shot); });
+// R1: まとめて払った「×k」を上空の画面の主人公の少し上に出し、主人公の画面の左右から澄んだ音（k が増えるたびに一段上がる）
+const _cueV = new THREE.Vector3();
+// 世界の点 (x, y, z) を、今の街のカメラの画面の px（左上原点）と、音の左右・近さへ
+function screenCue(x, y, z) {
+  const cam = cityCam();
+  cam.updateMatrixWorld();
+  const dist = _cueV.set(x, y, z).distanceTo(cam.position);
+  _cueV.applyMatrix4(cam.matrixWorldInverse);
+  const pan = screenPan(_cueV.x, _cueV.z);
+  _cueV.set(x, y, z).project(cam);
+  const { city } = views.layout, H = views.size.h;
+  return { sx: city.x + (_cueV.x + 1) / 2 * city.w, sy: H - city.y - (_cueV.y + 1) / 2 * city.h, pan, dist };
+}
+game.on('combo', ({ k }) => {
+  const c = screenCue(0, 2.5, 0);
+  hud.combo(k, c.sx, c.sy);
+  audio.combo(k, c.pan);
+});
+// R1: 大物が来た: 街の画面に「大物が来る」が閃き、大物のいる側から遠い警笛と探照灯の点く音（探照灯の大きな振りは enemyView）
+game.on('bossArrive', ({ x, z }) => {
+  hud.announce();
+  const c = screenCue(x, 3, z);
+  audio.bossArrive(c.pan, Math.max(0, Math.min(1, 1 - c.dist / 220)));
+});
 
 // 軍勢と主人公の姿
 const enemyView = createEnemyView(cityScene, tier, { sunDir: style.sunDir, heroBody });
