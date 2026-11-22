@@ -45,3 +45,28 @@ export function recipePeak(r) {
   if (r.tones) return r.tones.reduce((a, t) => a + t.gain, 0) + r.sparkle.gain;
   return r.horns.reduce((a, h) => a + h.gain * h.f.length, 0) + r.clank.gain + r.thud.gain;
 }
+
+// R1b（持ち主 08:24「吸われてる音と画面点滅入れた方がいいかな」）: 吸われる音。掴まれている間ずっと鳴る、オリジナルの合成音:
+//   hiss  帯域ノイズの吸い込み。画面の縁の脈打ち（drainFx の phase、1 秒に 3 回より少ない）の一回ごとに、帯が高い所から低い所へ下がる
+//   whine うねりながら下がる細い唸り（三角波。warble の速さ・深さで揺れる）
+// k: 強さ 0〜1（drainFx。掴んでいる者の吸う力の合計）。強いほど大きく、低く。phase: 脈打ちの位相 0〜1（山は 0.5）。
+// audio.js が毎フレーム、この値へなめらかに寄せる。hiss の gain は帯域を通す前の白いノイズに掛ける（帯域を通ると振れ幅は約 1/4）。
+// 実際の出口の大きさは scripts/drain-preview.mjs で測る（ふつうの者 1 人で約 −24 dBFS、6 人で約 −14 dBFS。天井より十分下）
+export const DRAIN_CUE = {
+  hiss: { hi: 2600, lo: 650, q: 1.6, gain: 0.4, floor: 0.35, deepen: 0.3 },
+  whine: { f: 640, drop: 0.72, gain: 0.08, floor: 0.45, deepen: 0.28 },
+  warble: { rate: 6.5, depth: 0.035 },
+  lp: { open: 5200, closed: 2600 },
+};
+export function drainVoice(k, phase, C = DRAIN_CUE) {
+  const s = clamp(Number.isFinite(k) ? k : 0, 0, 1);
+  const p = ((Number.isFinite(phase) ? phase : 0) % 1 + 1) % 1;
+  // 一回の吸い込みの山（位相 0 で谷、0.5 で山）
+  const env = 0.5 - 0.5 * Math.cos(2 * Math.PI * p);
+  const H = C.hiss, W = C.whine;
+  return {
+    hiss: { f: H.hi * (H.lo / H.hi) ** p * (1 - H.deepen * s), q: H.q, gain: s > 0 ? H.gain * s * (H.floor + (1 - H.floor) * env) : 0 },
+    whine: { f: W.f * W.drop ** p * (1 - W.deepen * s), gain: s > 0 ? W.gain * s * (W.floor + (1 - W.floor) * env) : 0 },
+    lp: C.lp.closed + (C.lp.open - C.lp.closed) * s,
+  };
+}

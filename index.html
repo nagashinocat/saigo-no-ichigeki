@@ -18,12 +18,40 @@
     body { font-family: system-ui, "Hiragino Sans", "Noto Sans JP", sans-serif; color: #fff; }
     #hud { position: fixed; inset: 0; pointer-events: none; }
     .hud-strip { position: absolute; display: flex; justify-content: space-between; align-items: flex-start; box-sizing: border-box; padding: 0.6em 4vw 0; text-shadow: 0 1px 3px rgba(20, 10, 30, 0.85), 0 0 10px rgba(20, 10, 30, 0.5); }
-    .hud-power-text { font-size: clamp(18px, 5.6vw, 30px); font-weight: 800; letter-spacing: 0.02em; font-variant-numeric: tabular-nums; }
+    .hud-left { min-width: 0; }
     .hud-right { display: flex; flex-direction: column; align-items: flex-end; }
     .hud-time { font-size: clamp(13px, 3.8vw, 20px); font-weight: 700; opacity: 0.92; padding-top: 0.35em; }
     .hud-army { font-size: clamp(11px, 3vw, 15px); font-weight: 700; opacity: 0.85; margin-top: 0.15em; color: #c9f5d8; font-variant-numeric: tabular-nums; }
-    .hud-power { position: absolute; height: 5px; background: rgba(0, 0, 0, 0.45); }
-    .hud-power i { display: block; height: 100%; transform-origin: left; background: linear-gradient(90deg, #ffb347, #fff3c4); box-shadow: 0 0 8px #ffc766; }
+    /* R1b（持ち主 08:24「力のパーセントをもう少しわかりやすく」）: 手の帯の上端の太いゲージと、撃退ラインの目盛り。
+       色は段で変わる: 撃退ライン未満は琥珀、以上は白熱、満タンはゆっくり脈打つ。吸われて減った分は赤紫の影が遅れて縮む */
+    .hud-gauge { position: absolute; --drain: 0; }
+    .hud-track { position: absolute; inset: 0; border-radius: 999px; overflow: hidden; background: rgba(8, 4, 14, 0.62); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.16), 0 1px 4px rgba(0, 0, 0, 0.5); }
+    .hud-track i { position: absolute; inset: 0; transform-origin: left; transform: scaleX(0); border-radius: inherit; }
+    .hud-ghost { background: rgba(255, 70, 190, 0.85); }
+    .hud-fill { background: linear-gradient(90deg, #c96a12, #ffb347 60%, #ffd98a); box-shadow: 0 0 10px rgba(255, 170, 60, 0.7); }
+    .hud-gauge.ready .hud-fill, .hud-gauge.full .hud-fill { background: linear-gradient(90deg, #ffd27a, #fff6e2 45%, #ffffff); box-shadow: 0 0 14px rgba(255, 244, 220, 0.95); }
+    .hud-gauge.full .hud-track { animation: hud-full 1.3s ease-in-out infinite; }
+    .hud-tick { position: absolute; top: -5px; bottom: -5px; width: 3px; margin-left: -1.5px; border-radius: 2px; background: #fff; box-shadow: 0 0 0 1px rgba(20, 10, 30, 0.75), 0 0 6px rgba(255, 255, 255, 0.8); }
+    .hud-tick-label { position: absolute; top: calc(100% + 6px); transform: translateX(-100%); padding-right: 0.5em; white-space: nowrap; font-size: clamp(10px, 2.7vw, 13px); font-weight: 700; letter-spacing: 0.12em; opacity: 0.62; text-shadow: 0 1px 3px rgba(20, 10, 30, 0.9); }
+    .hud-gauge.ready .hud-tick-label, .hud-gauge.full .hud-tick-label { opacity: 0.9; }
+    @keyframes hud-full { 0%, 100% { box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.3), 0 0 6px rgba(255, 240, 210, 0.5); } 50% { box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.9), 0 0 22px rgba(255, 244, 220, 1); } }
+    /* 大きな数字（手の帯の上端の一列の左。ゲージはその右） */
+    .hud-pct { position: absolute; display: flex; align-items: baseline; line-height: 1; font-weight: 900; font-variant-numeric: tabular-nums; color: rgb(255, 190, 92); text-shadow: 0 2px 4px rgba(20, 10, 30, 0.9), 0 0 16px rgba(255, 150, 40, 0.45); }
+    .hud-pct small { font-size: 0.34em; font-weight: 800; margin-right: 0.3em; opacity: 0.8; align-self: center; color: #fff; }
+    .hud-pct b { font-weight: 900; letter-spacing: -0.01em; }
+    .hud-pct em { font-style: normal; font-size: 0.5em; font-weight: 800; margin-left: 0.04em; }
+    .hud-pct.ready { color: rgb(255, 250, 236); text-shadow: 0 2px 4px rgba(20, 10, 30, 0.9), 0 0 18px rgba(255, 240, 200, 0.9); }
+    .hud-pct.full { color: #fff; animation: hud-full-num 1.3s ease-in-out infinite; }
+    @keyframes hud-full-num { 0%, 100% { text-shadow: 0 2px 4px rgba(20, 10, 30, 0.9), 0 0 12px rgba(255, 240, 200, 0.6); } 50% { text-shadow: 0 2px 4px rgba(20, 10, 30, 0.9), 0 0 30px rgba(255, 250, 230, 1), 0 0 8px #fff; } }
+    .hud-pct.draining { text-shadow: 0 2px 4px rgba(20, 10, 30, 0.9), 0 0 18px rgba(255, 60, 180, 0.8); }
+    .hud-lost { position: absolute; left: 0.2em; top: calc(100% + 5px); font-size: clamp(13px, 3.6vw, 17px); font-weight: 900; font-variant-numeric: tabular-nums; color: #ff6fd0; text-shadow: 0 1px 3px rgba(20, 10, 30, 0.95), 0 0 10px rgba(255, 60, 180, 0.7); opacity: 0; }
+    /* 吸われている間の画面の縁（赤紫の脈打ち。真ん中は暗くしない。濃さと速さは drainFx.js が決める） */
+    .hud-drain { position: fixed; inset: 0; opacity: 0; pointer-events: none; background: radial-gradient(ellipse 78% 70% at 50% 45%, rgba(170, 20, 120, 0) 48%, rgba(215, 35, 150, 0.6) 78%, rgba(240, 50, 165, 0.95) 100%); }
+    /* 払える量に足りない: 押した所に小さく */
+    .hud-short { position: absolute; transform: translate(-50%, -50%); opacity: 0; pointer-events: none; white-space: nowrap; font-size: clamp(13px, 3.6vw, 17px); font-weight: 800; color: #ffd0e8; text-shadow: 0 1px 3px rgba(20, 10, 30, 0.95), 0 0 8px rgba(255, 60, 160, 0.6); }
+    .hud-short.show { animation: hud-short 0.9s ease-out forwards; }
+    @keyframes hud-short { 0% { opacity: 0; transform: translate(-50%, -30%) scale(1.15); } 12% { opacity: 1; transform: translate(-50%, -50%) scale(1); } 70% { opacity: 1; } 100% { opacity: 0; transform: translate(-50%, -85%); } }
+    @media (prefers-reduced-motion: reduce) { .hud-gauge.full .hud-track, .hud-pct.full { animation: none; } }
     .hud-puff { position: absolute; pointer-events: auto; touch-action: none; box-sizing: border-box; margin: 0; padding: 0; border-radius: 50%; border: 2px solid rgba(255, 236, 190, 0.95); background: radial-gradient(circle at 50% 40%, rgba(255, 214, 140, 0.55), rgba(120, 50, 20, 0.55)); color: #fff; font-family: inherit; font-weight: 800; display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1.05; text-shadow: 0 1px 3px rgba(20, 10, 30, 0.9); box-shadow: 0 0 14px rgba(255, 190, 100, 0.55); cursor: pointer; -webkit-tap-highlight-color: transparent; }
     .hud-puff small { font-size: 0.42em; font-weight: 700; opacity: 0.75; }
     .hud-puff:active:not(.off) { transform: scale(0.94); }

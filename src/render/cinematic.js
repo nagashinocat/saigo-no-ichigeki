@@ -13,7 +13,7 @@ import { createSpaceView } from './spaceView.js';
 //      手前のビルが飲まれ、球の全体がだんだん大きく迫る
 //   4. 宇宙（光の壁がまだ進んでいるうちに切り替わる）: 夕暮れの地球の丸みの上で、光の半球が街の前線の残りと同じく
 //      ゆっくりゆるみながら 2 秒あまりかけてふくらみ、止まる（domeAt）。衝撃波の輪が雲の上を走る
-//   5. 半球が地平に沿って押しつぶされ、横一線の光になり、細くなって消える。無音のあと、低い地鳴り
+//   5. 半球が両側から押しつぶされて縦に伸び、縦一線の光（光の柱）になり、細くなって消える（R1b、持ち主 08:24）。無音のあと、低い地鳴り
 // 音の段取り（cue）: silence（放った瞬間）→ erupt（白が晴れ爆発が始まる: 世界の音が戻り、遠い地鳴りがふくらむ）→
 //   burst（弾けた瞬間: 爆発の音が開く。光の壁が届くまでにうなりが開く）→ space → rumble（音は画面に従う。持ち主 13:06）
 // 終わると 'end' を知らせ（結果へ。G4 のリプレイはここに入る）、最後の宇宙の絵を出したまま待つ（held）。
@@ -402,7 +402,7 @@ export function createCinematic(views, enemyView, explosionView, { renderer, sce
       lookAhead: 420, lookUp: portrait ? -250 : -40,
       fovH: SPACE_FOV.h, fovV: SPACE_FOV.v, roll: 0.07 - 0.03 * easeOut(u),
     });
-    // 光の半球: ふくらむ → 押しつぶされて横一線 → 細くなって消える
+    // 光の半球: ふくらむ → 押しつぶされて縦一線（光の柱） → 細くなって消える
     const f = clamp01((t - tl.flatten) / FINALE.flattenSec);
     const th = clamp01((t - tl.flatten - FINALE.flattenSec) / FINALE.thinSec);
     // 半球は街の前線の残りと同じく、ゆっくりゆるみながらふくらみ、domeEnd に止まる（finaleTimeline の domeAt）
@@ -418,10 +418,10 @@ export function createCinematic(views, enemyView, explosionView, { renderer, sce
     // 衝撃波の殻: 半球の少し先を、半球と同じゆっくりした進み（domeAt）でふくらみ、ふくらみきる前に薄れて消える
     const pd = tl.domeAt(t);
     space.setShell(rMax * shellRadius(pd), (1 - smooth((pd - 0.55) / 0.45)) * smooth(u / 0.06) * (1 - f));
-    // 横一線の光: 画面の横幅の大半にわたる
-    const hf = 2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(space.camera.fov) / 2) * space.camera.aspect);
+    // 縦一線の光（R1b）: 街から上へ、画面の高さの大半にわたって伸びる
+    const vf = THREE.MathUtils.degToRad(space.camera.fov);
     const d = space.camera.position.length();
-    const len = 2 * d * Math.tan(hf / 2) * (0.6 + 0.5 * smooth(f / 0.7)) * (1 + 0.15 * th);
+    const len = 2 * d * Math.tan(vf / 2) * (0.45 + 0.4 * smooth(f / 0.7)) * (1 + 0.15 * th);
     const lineI = smooth((f - 0.15) / 0.35) * (1 - smooth((th - 0.35) / 0.65)) * (1.2 + 0.8 * Math.sin(Math.PI * clamp01(f * 1.3)));
     space.setLine(len, r * 1.1 * (1 - 0.8 * flat), th, lineI);
     // 街を見回る軍勢: 生きている者は緑の点、宇宙の光の半球の縁が届いた瞬間に火花（宇宙の座標へ縮める: 半径 radius m → rMax）
@@ -447,7 +447,7 @@ export function createCinematic(views, enemyView, explosionView, { renderer, sce
     g.sat = 1.0; g.warm = 0.1; g.grain = 0.035; g.contrast = 1.05; g.bloom = 0.55;
     g.vig = 0.5;
     g.ca = 0.25 + 0.6 * lineI;
-    g.streak = lineI;
+    g.streak = 0; // 横に伸びる光の筋は縦の柱を横へにじませるので使わない（R1b）
     // 地鳴りの間、ごくわずかに揺れる
     if (t > tl.rumble) {
       const k = Math.min(1, (t - tl.rumble) / 0.4) * 0.0025;

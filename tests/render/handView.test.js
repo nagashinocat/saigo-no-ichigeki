@@ -497,3 +497,27 @@ test('持ち主 18:27: 放つと、溜めていた構えからそのまま指を
     expect(f.reach, detail).toBe(true); // 相手の付け根を越えて深く組む（握り合わせでは指が相手の手の甲へ巻きつく）
   }
 });
+
+// R1b（持ち主 08:24「吸われてる時をもっと分かりやすく」）: 吸われている間、手の帯の球は掴んでいる者の側へ引かれ、
+// 縁の脈打ちに合わせて揺らいで暗くなる。はがれたら元へ戻る。intro（S6）の手のアップは握り込みの震えを止められる
+test('R1b: setDrain で球が掴んでいる者の側（pan）へ引かれ、脈打ちの山で暗く小さくなる。0 で元へ', () => {
+  const view = createHandView(null, 'low');
+  run(view, 0.5, 0.6, true, 1);
+  const c0 = view.orbSphere.center.clone(), r0 = view.orbSphere.radius;
+  const light = () => { let I = 0; view.scene.traverse((o) => { if (o.isPointLight) I = Math.max(I, o.intensity); }); return I; };
+  const I0 = light();
+  view.setDrain({ level: 1, pulse: 1, pan: 0.8 });
+  run(view, 0.1, 0.6, true, 1);
+  const c1 = view.orbSphere.center;
+  expect(c1.x - c0.x).toBeGreaterThan(0.02); // 右（pan 正）へ引かれる
+  expect(view.orbSphere.radius).toBeLessThan(r0);
+  expect(light()).toBeLessThan(I0 * 0.8);
+  view.setDrain({ level: 1, pulse: 1, pan: -0.8 });
+  run(view, 0.1, 0.6, true, 1);
+  expect(view.orbSphere.center.x - c0.x).toBeLessThan(-0.02);
+  view.setDrain(null);
+  run(view, 0.1, 0.6, true, 1);
+  expect(view.orbSphere.center.x).toBeCloseTo(c0.x, 3);
+  expect(view.orbSphere.radius).toBeCloseTo(r0, 3);
+  expectFinite(view);
+});

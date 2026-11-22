@@ -28,7 +28,7 @@ export function finaleScenes() {
     [T0 + tl.rumble, 'rumble'],
   ];
   // 瓦礫: 本物の街（種 1）のビル・小物が、演出の時刻表の前線に飲まれる瞬間。鳴らすのは main.js と同じ段（爆発が始まってから
-  // 横一線の光が消えるまで）。カメラは前線の少し先を逃げる（近さは前線からの距離の目安、左右は爆心から見た向き）
+  // 縦一線の光が消えるまで）。カメラは前線の少し先を逃げる（近さは前線からの距離の目安、左右は爆心から見た向き）
   const city = generateCity(1);
   const STAGES = new Set(['swell', 'race', 'chase', 'space', 'flatten']);
   const items = [...city.buildings.map((b) => ({ ...b, key: 'b' + b.id })), ...city.props.map((p) => ({ ...p, key: 'p' + p.id }))]

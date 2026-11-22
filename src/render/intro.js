@@ -212,6 +212,7 @@ const _hd = new THREE.Vector3();
 export function introHandsTo(hand, state, local, aspect) {
   hand.resize(aspect); // 両手の指先が横で切れない画角と、目の位置へ
   hand.setFlashScale(INTRO.hands.flash); // 握り込んだ鉤爪と、指の間から漏れる芯の光を見せる（閃光で白く飛ばさない）
+  hand.setShakeScale?.(0); // R1b: 握り込みの震えで画面が揺れて見えないように
   if (state.t < 0 || local < state.t - 1e-6) { hand.reset(); state.t = 0; state.released = false; }
   while (state.t < local - 1e-9) {
     const d = Math.min(HAND_DT, local - state.t);
@@ -449,16 +450,13 @@ void main() {
     return { id: 900 + id, x: _a.x, y: _a.y, z: _a.z, yaw: s.yaw + p.yaw, pitch: p.pitch, roll: p.roll, thrust, trail: 1.2, curve: 0, head: 0 };
   };
 
-  function setCam(s, pos, look, fov, shake = 0, roll = 0, time = 0) {
+  // R1b（持ち主 08:24「導入のムービーなんだけど画面揺れなくていいかも、逆に見にくくなってる」）: カメラは揺らさない
+  // （ゆっくり寄る・傾き・カットはそのまま）
+  function setCam(s, pos, look, fov, roll = 0) {
     toWorld(s, pos[0], pos[1], pos[2], cam.position);
     toWorld(s, look[0], look[1], look[2], _b);
     cam.up.set(Math.sin(roll), Math.cos(roll), 0).applyAxisAngle(new THREE.Vector3(0, 1, 0), s.yaw);
     cam.lookAt(_b);
-    if (shake > 0) {
-      const k = time * 37;
-      cam.rotateX(shake * (Math.sin(k) * 0.6 + Math.sin(k * 2.3 + 1.7) * 0.4));
-      cam.rotateY(shake * (Math.sin(k * 1.7 + 0.5) * 0.6 + Math.sin(k * 3.1) * 0.4));
-    }
     cam.fov = fov;
     cam.aspect = views.size.w / Math.max(1, views.size.h);
     cam.updateProjectionMatrix();
@@ -474,11 +472,11 @@ void main() {
   let speed = 0, vpX = 0.5, vpY = 0.5;
   function bikesBeat(t, local, dt) {
     const s = site.bikes;
-    // 一番近いバイクの近さで揺れ・ぶれ・速さの線
+    // 一番近いバイクの近さで色ずれ・速さの線（揺れはなし）
     let near = 0;
     for (const b of bikes) near = Math.max(near, whooshAt(b, t).gain);
     const push = 0.6 * local; // ゆっくり前へ
-    setCam(s, [BIKE_CAM.pos[0], BIKE_CAM.pos[1], BIKE_CAM.pos[2] - push], BIKE_CAM.look, BIKE_CAM.fov - 4 * local, 0.008 + 0.035 * near, -0.05, t);
+    setCam(s, [BIKE_CAM.pos[0], BIKE_CAM.pos[1], BIKE_CAM.pos[2] - push], BIKE_CAM.look, BIKE_CAM.fov - 4 * local, -0.05);
     extra.length = 0;
     clearPool();
     poolU.uShadow.value = 0;
@@ -537,7 +535,7 @@ void main() {
     const c = LIGHT.cam;
     // カメラ: バイクの後ろ・間から主人公を見る。光が増えるほどじわじわ寄り、すくむ瞬間に小さく寄る
     const push = 1.2 * smooth(local / fl);
-    setCam(s, [c.pos[0], c.pos[1], c.pos[2] - push], c.look, c.fov - 6 * smooth((local - fl) / 0.3), 0.003 + 0.01 * snap + 0.025 * hit, 0.02, t);
+    setCam(s, [c.pos[0], c.pos[1], c.pos[2] - push], c.look, c.fov - 6 * smooth((local - fl) / 0.3), 0.02);
     const hp = heroPath('light', local);
     const hx = hp.x, hz = hp.z;
     let yaw = 0, rot;
@@ -653,7 +651,7 @@ void main() {
     pool.visible = false;
     const c = HIDE.cam;
     const push = 0.9 * smooth(local / 2.2);
-    setCam(s, [c.pos[0] - 0.2 * push, c.pos[1] - 0.05 * push, c.pos[2] - push], c.look, c.fov - 3 * push, 0.005 + 0.02 * wash, 0.03, t);
+    setCam(s, [c.pos[0] - 0.2 * push, c.pos[1] - 0.05 * push, c.pos[2] - push], c.look, c.fov - 3 * push, 0.03);
     Object.assign(grade, { exposure: 0.36 + 0.2 * wash, contrast: 1.35, streak: 0, ca: 0.3 + 0.8 * wash, zoom: 0, zoomC: [0.5, 0.5], blur: [0.006 * wash * Math.sign(washSide || 1), 0], grain: 0.07, vig: 0.85, warm: 0.15, sat: 0.95, bloom: 1.0 });
     fx.flash = 0;
   }
@@ -741,6 +739,7 @@ void main() {
       enemyView.sync([], { aids: true });
       hand.reset();
       hand.setFlashScale(1);
+      hand.setShakeScale?.(1);
       handsState.t = -1;
       beatName = null;
     },

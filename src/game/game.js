@@ -41,6 +41,7 @@ export function createGame({ seed, cfg = CONFIG }) {
   let phase = 'ready';
   let hidden = false;
   let grabbing = 0;
+  let drainedTotal = 0; // R1b: 掴まれて実際に吸われた力の合計（増えるだけ）
   let cinematicClock = 0;
   let pendingShot = null;
   let finalBlast = null;
@@ -117,6 +118,8 @@ export function createGame({ seed, cfg = CONFIG }) {
     get phase() { return phase; },
     // 今、主人公を掴んでいる軍勢の数
     get grabbing() { return grabbing; },
+    // R1b: 掴まれて実際に吸われた力の合計（増えるだけ。HUD の「−N」と吸われる音が、フレームごとの差を使う）
+    get drainedTotal() { return drainedTotal; },
     // 今、街に生きている軍勢の数（見回る者を含む。HUD の「街の軍勢 N」）
     get aliveCount() { let n = 0; for (const e of enemies.list) if (e.state !== 'dead') n++; return n; },
     // 最後の一発の勝ち負け（over(released) のあと。それまでと時間切れは null）
@@ -202,7 +205,9 @@ export function createGame({ seed, cfg = CONFIG }) {
       charge.update(dt);
       grabbing = enemies.update(dt);
       // 掴んでいる者の吸う力（R1: 吸う者 ×2.5、大物 ×4）
+      const v0 = power.value;
       power.drain(enemies.drainLoad * cfg.enemy.drainPerSec * dt);
+      drainedTotal += v0 - power.value;
       for (const a of enemies.takeArrivals()) emit('bossArrive', a);
       updateBlasts(dt);
       timer.update(dt);

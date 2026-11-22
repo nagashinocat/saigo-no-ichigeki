@@ -3,7 +3,8 @@ import { createRng } from '../rng.js';
 import { SKY_SUN } from './style.js';
 
 // 宇宙からのカメラ（絵コンテ 4〜5）: 夕暮れの地球の丸み、昼と夜の境目、雲、豆粒ほどの街の灯。
-// その街から光の半球がふくらみ、衝撃波の輪が雲の上を走る。最後に半球は地平に沿って押しつぶされ、横一線の光になって消える。
+// その街から光の半球がふくらみ、衝撃波の輪が雲の上を走る。最後に半球は両側から押しつぶされて縦に伸び、縦一線の光（光の柱）に
+// なって細り、消える（R1b、持ち主 08:24「横一線になって消えるところ、縦一線に消えた方がいいかも」）。
 // 大きさは誇張している（地球の半径 RE = 1000 単位。光の半球は最大で数十単位）。
 // 地球の中心は (0, -RE, 0)、街は地球のてっぺん (0, 0, 0)。
 
@@ -158,7 +159,7 @@ void main() {
   #include <colorspace_fragment>
 }`;
 
-// 光の半球: 中心は白く、縁ほど金から橙、輪郭に熱く光る線。押しつぶされると平たい円盤になる
+// 光の半球: 中心は白く、縁ほど金から橙、輪郭に熱く光る線。押しつぶされると細く高い光の柱になる（R1b）
 const DOME_VERT = /* glsl */`
 varying vec3 vN, vW, vL;
 void main() {
@@ -182,7 +183,7 @@ void main() {
   vec3 edge = mix(vec3(1.0, 0.42, 0.12), vec3(1.0, 0.75, 0.4), n) * 1.6;
   vec3 col = mix(edge, core, smoothstep(0.15, 0.85, mu) * (0.75 + 0.25 * n));
   col += vec3(1.0, 0.85, 0.6) * smoothstep(0.12, 0.0, d.y) * 2.0 * (1.0 - uFlat);
-  // 押しつぶされるほど、縁から溶けて線へ吸い込まれる
+  // 押しつぶされるほど、縁から溶けて縦の光の柱（真ん中の軸）へ吸い込まれる
   col *= 1.0 - uFlat * smoothstep(0.3, 0.95, length(vL.xz));
   // 輪郭の冷たく細い光
   col += vec3(0.7, 0.82, 1.0) * pow(1.0 - mu, 8.0) * 3.0 * (1.0 - uFlat);
@@ -191,16 +192,19 @@ void main() {
   #include <colorspace_fragment>
 }`;
 
-// 横一線の光: 地平に沿った細い光の帯（カメラの向きに合わせた板）。uThin で細くなる
+// 縦一線の光（R1b）: 街から真上へ立つ細い光の柱（カメラの向きに合わせた板。板の縦 vUv.y が柱の長さ、0 が街の足もと）。
+// uThin で細くなる。上へ行くほど淡く、足もとは街に押し当てた明るい根
 const LINE_FRAG = /* glsl */`
 uniform float uI, uThin;
 varying vec2 vUv;
 void main() {
-  float x = abs(vUv.x - 0.5) * 2.0, y = (vUv.y - 0.5) * 2.0;
+  float x = (vUv.x - 0.5) * 2.0, y = vUv.y;
   float w = mix(0.22, 0.012, uThin);
-  float core = exp(-pow(y / w, 2.0)) * (1.0 - smoothstep(0.55, 1.0, x));
-  float glow = exp(-abs(y) / (w * 6.0)) * (1.0 - smoothstep(0.2, 1.0, x)) * 0.35;
-  vec3 col = vec3(1.0, 0.97, 0.92) * core * 6.0 + vec3(1.0, 0.6, 0.3) * glow;
+  float along = smoothstep(0.0, 0.05, y) * (1.0 - smoothstep(0.45, 1.0, y));
+  float core = exp(-pow(x / w, 2.0)) * along;
+  float glow = exp(-abs(x) / (w * 6.0)) * smoothstep(0.0, 0.05, y) * (1.0 - smoothstep(0.15, 0.9, y)) * 0.35;
+  float root = exp(-pow(x / (w * 3.0), 2.0)) * exp(-pow((y - 0.05) / 0.05, 2.0)) * 1.5;
+  vec3 col = vec3(1.0, 0.97, 0.92) * (core * 6.0 + root) + vec3(1.0, 0.6, 0.3) * glow;
   gl_FragColor = vec4(col * uI, 0.0);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
@@ -329,7 +333,7 @@ export function createSpaceView(tier = 'high') {
   sparks.frustumCulled = false;
   scene.add(sparks);
 
-  const _qz = new THREE.Quaternion(), _z = new THREE.Vector3(0, 0, 1), _dir = new THREE.Vector3(), _look = new THREE.Vector3();
+  const _qz = new THREE.Quaternion(), _z = new THREE.Vector3(0, 0, 1), _dir = new THREE.Vector3(), _look = new THREE.Vector3(), _upL = new THREE.Vector3();
   let camRoll = 0;
 
   return {
@@ -351,10 +355,11 @@ export function createSpaceView(tier = 'high') {
       camera.updateProjectionMatrix();
       camera.updateMatrixWorld();
     },
-    // 光の半球の大きさ r（単位）、押しつぶし flat 0〜1（1 で高さ 0、横へ広がる）、明るさ I
+    // 光の半球の大きさ r（単位）、押しつぶし flat 0〜1（R1b: 1 で幅 0。両側から押されて縦へ伸び、光の柱になる）、明るさ I
     setDome(r, flat, I, time) {
-      const h = Math.max(0.002, 1 - flat);
-      const wide = 1 + flat * 1.4;
+      const f = Math.min(1, Math.max(0, flat));
+      const wide = Math.max(0.002, 1 - f);
+      const h = 1 + f * 2.5;
       dome.scale.set(r * wide, r * h, r * wide);
       dome.visible = I > 0.001 && r > 0.01;
       domeU.uI.value = I;
@@ -369,15 +374,17 @@ export function createSpaceView(tier = 'high') {
       earthU.uRing.value = r / RE;
       earthU.uRingI.value = I;
     },
-    // 横一線の光: 長さ len、厚さ thick（単位）、細くなる thin 0〜1、明るさ I。地平に沿うよう、カメラの横向きに置く
+    // 縦一線の光（R1b）: 長さ len、太さ thick（単位）、細くなる thin 0〜1、明るさ I。画面にまっすぐ立つよう、カメラの傾きを戻した
+    // 縦向きに置き、下の端を街（の少し下）に当てて上へ伸ばす
     setLine(len, thick, thin, I) {
       line.visible = I > 0.001;
       lineU.uI.value = I;
       lineU.uThin.value = thin;
-      // 画面に向けた板を、カメラの傾きの分だけ戻す（地平と平行に）
-      line.position.set(0, thick * 0.1, 0);
+      // 画面に向けた板を、カメラの傾きの分だけ戻す（地平に垂直に）
       line.quaternion.copy(camera.quaternion).multiply(_qz.setFromAxisAngle(_z, -camRoll));
-      line.scale.set(len, thick, 1);
+      _upL.set(0, 1, 0).applyQuaternion(line.quaternion);
+      line.position.copy(_upL).multiplyScalar(len * 0.47);
+      line.scale.set(thick, len, 1);
     },
     setScar(I) { earthU.uScar.value = I; },
     // list: [{ x, z, age }]（宇宙の座標。age は飲まれてからの秒、生きていれば -1）、pixelRatio: 画素比

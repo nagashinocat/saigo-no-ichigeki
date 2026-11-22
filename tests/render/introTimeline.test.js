@@ -202,3 +202,10 @@ test('スポットライト（持ち主 18:04）: 一台ずつ飛び込んでき
   // 左右: 画面の右のバイクは右、左は左
   for (const b of LIGHT_BIKES) if (Math.abs(b.pos[0]) > 3) expect(Math.sign(lightBikePan(b, b.lockAt)), `${b.id}`).toBe(Math.sign(b.pos[0]));
 });
+
+// R1b（持ち主 08:24「導入のムービーなんだけど画面揺れなくていいかも」）: カードの叩きつけは揺らさない（縮む動きだけ）
+test('R1b: カードの叩きつけに揺れの秒は無い（大きめから縮んで止まる動きと粒子の閃きだけ）', () => {
+  expect(INTRO.card).not.toHaveProperty('shake');
+  expect(INTRO.card.overshoot).toBeGreaterThan(0);
+  expect(INTRO.card.scale0).toBeGreaterThan(1);
+});

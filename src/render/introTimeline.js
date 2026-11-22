@@ -24,8 +24,8 @@ export const INTRO = {
   // 開ききって buttonGap 秒あとに TAP START
   title: { text: '最後の一撃', lead: 0.2, step: 0.22, burst: 0.6, settle: 0.32, bhGap: 0.4, bhGrow: 0.8, buttonGap: 0.2, buttonFade: 0.5, flashOut: 0.07 },
   shortTitle: { lead: 0.25, step: 0.16, burst: 0.5, settle: 0.28, bhGap: 0.3, bhGrow: 0.6, buttonGap: 0.15, buttonFade: 0.4, flashOut: 0 },
-  // カードの叩きつけ: overshoot 秒で大きめから縮んで止まる、揺れ shake 秒、粒子の閃き grain 秒
-  card: { black: 0.4, overshoot: 0.16, scale0: 1.2, shake: 0.22, grain: 0.12 },
+  // カードの叩きつけ: overshoot 秒で大きめから縮んで止まる、粒子の閃き grain 秒（R1b: 揺れはやめた。持ち主 08:24）
+  card: { black: 0.4, overshoot: 0.16, scale0: 1.2, grain: 0.12 },
   // 3: ライトが主人公を捉える（拍の中の秒）。すくむ
   // 3: スポットライトが一つずつ主人公を捉え（LIGHT_BIKES の lockAt）、十字砲火に縫い止められてすくむ
   light: { flinchAt: 1.36 },

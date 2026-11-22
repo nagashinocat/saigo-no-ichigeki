@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { CONFIG } from '../config.js';
 import { createReplayTimeline } from './replayTimeline.js';
-import { planReplay, aftermathView } from './replayPlan.js';
+import { planReplay, aftermathView, sideWideView, sideWidePose, SIDE_WIDE } from './replayPlan.js';
 import { createReplayLight } from './replayLight.js';
 
 // 最後の一発のリプレイ（画面全体。仕様 12 章の絵コンテ 6〜7）。時間割は replayTimeline.js、撮る場所は replayPlan.js。
@@ -31,7 +31,7 @@ export const REPLAY_BARS = { portrait: 0.6, landscape: 2.39 };
 export const REPLAY_LENS = {
   street: { portrait: 80, landscape: 52 },
   streetSwell: { portrait: 22, landscape: 15 }, // fix1: street のスローの間（遠くの光の玉を大きく）
-  side: { portrait: 66, landscape: 44 },
+  side: SIDE_WIDE.fov, // R1b: ずっと引いた所からの長めのレンズ（replayPlan.js の sideWideView）
   top: { portrait: 62, landscape: 44 },
   hero: { portrait: 40, landscape: 27 },
 };
@@ -133,19 +133,19 @@ export function createReplay(views, { scene, lights = null, fog = null, blastLig
     dimLights(0);
   }
 
+  // R1b（持ち主 08:24「もう少し離れた状態で全体見れた方がかっこいい」）: 前は前線のすぐ外を壁と並んで走っていた。
+  // いまは、ずっと引いた斜め上から光の球・穴の縁・街の端を画面に収めたまま、爆心のまわりを横へ流れる大きな引きの移動撮影
+  // （距離は画面の縦横比と黒い帯ごとに解く。replayPlan.js の sideWideView）
+  let sideView = null, sideKey = '';
   function shotSide(u) {
     if (dust) dust.visible = true;
-    const s = plan.side, F = tl.frontAt(t);
-    const lead = 32 + 0.1 * F;
-    // 壁と並んで横へ走る（前線の円に沿って回る）。壁は外へ広がるので、カメラも同じだけ外へ逃げる
-    const az = s.az + s.look * 0.3 * u;
-    const r = F + lead;
-    _pos.set(Math.cos(az) * r, s.height, Math.sin(az) * r);
-    // 走る向きの前線の上を見る: 光の壁が画面の片側に立って奥へ曲がっていき、手前のビルが横へ流れながら呑まれていく
-    const la = az + s.look * 0.45;
-    _look.set(Math.cos(la) * F * 0.95, Math.min(40, F * 0.1) + 4, Math.sin(la) * F * 0.95);
-    aim(_pos, _look, lens(REPLAY_LENS.side), -0.05 * s.look);
-    setFog(0);
+    const s = plan.side, a = aspect();
+    const key = `${tl.radius}|${a.toFixed(4)}`;
+    if (key !== sideKey) { sideView = sideWideView({ radius: tl.radius, aspect: a, bars: replayBars(a) }); sideKey = key; }
+    const p = sideWidePose(sideView, { u, az: s.az, look: s.look });
+    _pos.fromArray(p.pos); _look.fromArray(p.look);
+    aim(_pos, _look, sideView.fov);
+    setFog(_pos.length() * 0.8);
     setGrade({ sat: 1.0, warm: 0.3, contrast: 1.15, vig: 0.38, ca: 0.3, grain: 0.035, exposure: 0.92, streak: 0, bloom: 1 });
     screen.flash = 1 - smooth(u / 0.05);
     light.hide();

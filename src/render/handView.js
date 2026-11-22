@@ -380,6 +380,10 @@ export function createHandView(models, tierName) {
   let flashScale = 1; // 光が弾ける閃光の強さの倍率（S6 の導入: 握り込んだ鉤爪を白く飛ばさず見せる）
   // 時間切れの結末: 球が内側へつぶれ、両手が引き込まれる（0〜1。blackhole.js が毎フレーム決める）
   let collapse = 0;
+  // R1b（持ち主 08:24）: 吸われている間の球のゆらぎ（drainFx の level・pulse・pan。main.js が毎フレーム）
+  let drainK = 0, drainPulse = 0, drainPan = 0;
+  // 握り込む間の手の震えの倍率（S6 の導入の手のアップは 0: 持ち主 08:24「画面揺れなくていい」）
+  let gripShakeScale = 1;
   const hash = (x) => { const s = Math.sin(x * 127.1) * 43758.5453; return s - Math.floor(s); };
   const _jd = new THREE.Vector3();
   const _c = new THREE.Vector3(), _q = new THREE.Quaternion(), _e = new THREE.Euler(), _mid = new THREE.Vector3(), _away = new THREE.Vector3();
@@ -442,7 +446,7 @@ export function createHandView(models, tierName) {
         orbFade = Math.min(orbFade, Math.max((1 - e.gone) * (1 - 0.45 * joinLat), e.orbBack));
         ember = e.after < 0 ? 0 : THREE.MathUtils.smoothstep(e.after, 0, 0.1) * e.held;
         // 震え: 弾ける直前が最大。保つ間も細かい震えが続く（力をこめて握り続ける）
-        gripShake = e.after < 0 ? GRIP_SHAKE * e.k * e.k : Math.max(GRIP_SHAKE * Math.exp(-e.after / 0.05), GRIP_HOLD_SHAKE * e.held);
+        gripShake = gripShakeScale * (e.after < 0 ? GRIP_SHAKE * e.k * e.k : Math.max(GRIP_SHAKE * Math.exp(-e.after / 0.05), GRIP_HOLD_SHAKE * e.held));
         // 指のこわばりは放った瞬間の力のまま、戻り始めるまで緩めない
         tension = Math.max(tension, grip.lvl * e.held);
         if (e.done) grip = null;
@@ -512,16 +516,20 @@ export function createHandView(models, tierName) {
       // 時間切れ: 球は内側へつぶれて消え（黒い球と光の輪は画面効果が描く）、つぶれるほど明るく燃える
       const implode = 1 - THREE.MathUtils.smoothstep(collapse, 0.05, 0.75);
       const emberPulse = 1 + 0.2 * Math.sin(clock * 13) + 0.08 * Math.sin(clock * 31);
-      const r = Math.max(rBase * orbScale, EMBER_R * emberPulse * ember) * implode;
+      // 吸われている: 球は掴んでいる者の側へ引かれ、脈打ちの山で縮んで暗くなる
+      const suck = drainK * drainPulse;
+      const r = Math.max(rBase * orbScale * (1 - 0.2 * suck), EMBER_R * emberPulse * ember) * implode;
       orbFade = Math.max(orbFade, ember);
       orb.position.copy(ORB_C).add(_mid).add(orbAway);
+      orb.position.x += drainPan * 0.1 * drainK * (0.4 + 0.6 * drainPulse);
+      orb.position.y -= 0.025 * suck;
       orb.scale.setScalar(Math.max(r, 1e-3));
 
       // 明るさ: 貯めるほど強く。0.8 を超えるとちらつき、掴まれていると弱く不安定に瞬く
       const pulse = 1 + (active ? 0.06 + 0.08 * lvl : 0.04) * Math.sin(clock * (active ? 9 + 10 * lvl : 2.2));
       const stutter = weak * (0.25 + 0.45 * (hash(Math.floor(clock * 14)) > 0.55 ? 1 : 0));
       const crackle = amp * 0.18 * (hash(Math.floor(clock * 24) + 7.0) - 0.5);
-      const power = (0.65 + 0.35 * sO) * (1 - 0.5 * weak) * (pulse - stutter + crackle) * orbFade * (1 - 0.6 * fizzK) * (1 + 1.8 * collapse);
+      const power = (0.65 + 0.35 * sO) * (1 - 0.5 * weak) * (pulse - stutter + crackle) * orbFade * (1 - 0.6 * fizzK) * (1 + 1.8 * collapse) * (1 - 0.55 * suck);
       orbU.uTime.value = clock;
       orbU.uLevel.value = Math.max(lvl, ember);
       orbU.uPower.value = Math.max(0.05, power);
@@ -559,6 +567,14 @@ export function createHandView(models, tierName) {
     fizzle() { fizzT = 0; },
     // 構えへ戻す（S6: 導入の手のアップのあと、ゲームを始める前と、撮影で時刻を戻すとき）。貯め 0・放ったあとの動きなし
     setFlashScale(k) { flashScale = Number.isFinite(k) ? Math.max(0, k) : 1; },
+    // R1b: 吸われている間の球のゆらぎ。s: { level 0〜1, pulse 0〜1, pan −1〜1 }（drainFx の状態）。null で止める
+    setDrain(s) {
+      drainK = Number.isFinite(s?.level) ? Math.min(1, Math.max(0, s.level)) : 0;
+      drainPulse = Number.isFinite(s?.pulse) ? Math.min(1, Math.max(0, s.pulse)) : 0;
+      drainPan = Number.isFinite(s?.pan) ? Math.min(1, Math.max(-1, s.pan)) : 0;
+    },
+    // 握り込む間の手の震えの倍率（S6 の導入は 0、ゲームは 1）
+    setShakeScale(k) { gripShakeScale = Number.isFinite(k) ? Math.max(0, k) : 1; },
     reset() { grip = null; push = null; fizzT = Infinity; lvl = 0; clock = 0; collapse = 0; joined = 0; pushed = 0; flashK = 0; },
     // 時間切れの結末のつぶれ具合（0〜1）
     setCollapse(k) { collapse = Number.isFinite(k) ? Math.min(1, Math.max(0, k)) : 0; },

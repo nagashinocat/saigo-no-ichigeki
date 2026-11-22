@@ -15,7 +15,7 @@ import { createSwell } from './pacing.js';
 //                   上へ・外へ引いて球の全体を見せる。前線が半径の spaceFront に来たら宇宙へ
 //   chaseEnd〜flatten 宇宙のカメラ: 光の半球が街の前線の残りと同じくゆっくりゆるみながらふくらみ（domeAt。少なくとも
 //                   domeMin 秒）、衝撃波の輪が雲の上を走る。ふくらみきった半球を spaceHold 秒見せる
-//   flatten〜lineEnd 半球が地平に沿って押しつぶされ、横一線の光になり、細くなって消える
+//   flatten〜lineEnd 半球が両側から押しつぶされて縦に伸び、縦一線の光（光の柱。R1b）になり、細くなって消える
 //   lineEnd〜rumble 無音
 //   rumble〜end     低い地鳴り。end で結果へ渡す
 // 見せ方の時間の進み（timeScale = 爆発の秒 / 演出の秒）は、爆発が始まってから弾けるまで減らずに増え、弾けたあとは 1 のまま

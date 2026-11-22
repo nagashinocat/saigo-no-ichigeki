@@ -83,3 +83,23 @@ test('createRng は同じシードで同じ列', () => {
   expect(sa).toEqual(sb); expect(c()).not.toBe(sa[0]);
   for (const v of sa) { expect(v).toBeGreaterThanOrEqual(0); expect(v).toBeLessThan(1); }
 });
+
+// R1b（持ち主 08:24「力のパーセントをもう少しわかりやすく」）: HUD の「撃退ライン」の目盛り。
+// radiusFor の半径が街の軍勢の一番遠い所（maxEnemyReach）に届く、いちばん少ない力
+test('R1b: 撃退ライン（clearThreshold）は半径が maxEnemyReach に届くいちばん少ない力。約 98%', async () => {
+  const { clearThreshold } = await import('../../src/game/charge.js');
+  const { maxEnemyReach } = await import('../../src/game/enemies.js');
+  const L = clearThreshold();
+  const reach = maxEnemyReach();
+  expect(radiusFor(L)).toBeGreaterThanOrEqual(reach - 1e-6);
+  expect(radiusFor(L - 0.01)).toBeLessThan(reach);
+  expect(L).toBeGreaterThan(97);
+  expect(L).toBeLessThan(99.5);
+  // 届く所が knee の半径より内なら、knee より前の曲線を逆にたどる
+  const near = { ...CONFIG, radius: { ...CONFIG.radius } };
+  const Ln = clearThreshold(near, 300);
+  expect(radiusFor(Ln, near)).toBeCloseTo(300, 6);
+  expect(Ln).toBeLessThan(CONFIG.radius.knee * 100);
+  // 最大の半径でも届かなければ満タン（100）
+  expect(clearThreshold(CONFIG, CONFIG.radius.max + 50)).toBe(CONFIG.power.max);
+});

@@ -215,3 +215,19 @@ test('heroPos: よろめきは渡した主人公の位置から外へ押し戻�
   const [a] = en.takeArrivals();
   expect(a.dist).toBeCloseTo(Math.hypot(a.x - hero.x, a.z - hero.z), 6);
 });
+
+// R1b（持ち主 08:24「吸われてる時をもっと分かりやすく」）: HUD の「−N」と吸われる音の強さのもと。吸われた力の積み上げ（増えるだけ）
+test('R1b: drainedTotal は実際に吸われた力の合計（0 で止まった分は数えない）。払う・最後の一発で使った分は数えない', () => {
+  const g = createGame({ seed: 1, cfg: quiet });
+  expect(g.drainedTotal).toBe(0);
+  g.pressStart();
+  g.power.add(1);
+  g.pressCancel();
+  g.enemies.list.push({ id: 961, kind: 'boss', angle: 0, dist: E.grabRange, state: 'grab', grabTime: 1 });
+  g.update(0.1);
+  const want = Math.min(1, K.boss.drainMul * E.drainPerSec * 0.1);
+  expect(g.drainedTotal).toBeCloseTo(want, 9);
+  for (let i = 0; i < 10; i++) g.update(0.1);
+  expect(g.power.value).toBe(0);
+  expect(g.drainedTotal).toBeCloseTo(1, 9); // 1 しか無かった
+});

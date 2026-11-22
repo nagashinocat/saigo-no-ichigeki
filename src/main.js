@@ -40,6 +40,8 @@ import { scheduleIntroSfx, renderIntroAudio } from './audio/introSfx.js';
 import { prepareIntroMusic, introMusicPlan } from './audio/introMusic.js';
 import { createIntroClock } from './audio/introClock.js';
 import { createIntroGesture } from './ui/introGesture.js';
+import { createDrainFx } from './ui/drainFx.js';
+import { drainMulOf } from './game/enemies.js';
 
 const MAX_FRAME_DT = 0.1;
 const GRABBED_STEADY = 0.15; // 掴まれている間の手の画面の光の安定（弱く瞬く）
@@ -94,7 +96,16 @@ const audio = createAudio();
 // リプレイと結果画面では同じ旋律をゆっくり静かに。時間切れ（ブラックホール）では引き伸ばされて消える
 const bgm = createBgm(() => audio.bgmOutput);
 // 小爆発のボタン（長押しの指とは別の指で押す）。ボタンの上の押下はボタンだけが受け、キャンバスの長押しにはならない
-const hud = createHud(document.getElementById('hud'), { onPuff() { game.puff(); } });
+const hud = createHud(document.getElementById('hud'), { onPuff({ x, y } = {}) { tryPuff(x, y); } });
+// 払う。力が払える量に足りなければ、押した所（キーなら払うのボタンの上）に小さく「足りない」（持ち主 08:24 の制作側の判断）
+function tryPuff(x, y) {
+  if (game.puff()) return true;
+  if (game.phase === 'playing' && !game.power.canSpend(CONFIG.puff.cost)) hud.short(x, y);
+  return false;
+}
+// R1b（持ち主 08:24「吸われてる時をもっと分かりやすく」）: 掴まれて吸われている間の知らせ（画面の縁の脈打ち・力の数字・手の帯の球・吸われる音）
+const drainFx = createDrainFx();
+let drainedSeen = 0;
 const startHint = document.getElementById('start');
 const result = createResult(document.getElementById('result'), {
   // 壊れた街や地面のえぐれは作り直せないので、新しい種でページを読み直す
@@ -145,7 +156,7 @@ window.addEventListener('keydown', (e) => {
   // 結果画面では奪わない（ボタンを Space で押せる）
   if (e.code !== 'Space' || game.phase === 'over') return;
   e.preventDefault();
-  if (!e.repeat) game.puff();
+  if (!e.repeat) tryPuff();
 });
 window.addEventListener('contextmenu', (e) => e.preventDefault());
 document.addEventListener('visibilitychange', () => {
@@ -393,7 +404,7 @@ function introTick(dt) {
 }
 
 // 最後の一発の演出（画面全体、仕様 12 章の絵コンテ 1〜5）: 白 → 遠くの軍勢の後ろから、地平の爆発がスローでふくらみ、弾けて
-// 光の壁が街を走り軍勢とカメラを一気に飲む（R0b）→ 弾ける爆発から逃げる → 宇宙から見た光の半球と衝撃波の輪 → 横一線の光 → 無音と地鳴り（cinematic.js）
+// 光の壁が街を走り軍勢とカメラを一気に飲む（R0b）→ 弾ける爆発から逃げる → 宇宙から見た光の半球と衝撃波の輪 → 縦一線の光 → 無音と地鳴り（cinematic.js）
 // 画質の段は演出を始めるたびに読む（途中で段が下がっていれば、その段の重さで演じる）
 const cinematic = createCinematic(views, enemyView, explosionView, { renderer, scene: cityScene, sunDir: style.sunDir, tier, getTier: () => tier, lights: { sun: style.lights[0], fill: style.lights[2] }, veilBuilding: (id, on) => cityView.veilBuilding(id, on) });
 warmBoth(() => cinematic.warmup(renderer, views.cityCamera));
@@ -443,7 +454,7 @@ cinematic.on('cue', ({ name, arg }) => {
   if (name === 'silence') audio.silence();
   else if (name === 'erupt') {
     // 白が晴れて地平で爆発が始まる: 世界の音が戻り、遠い地鳴りが時刻表どおりにふくらみ（スローの間）、弾けて光の壁が届くと最大、
-    // 宇宙でこもり、横一線の光とともに消える
+    // 宇宙でこもり、縦一線の光とともに消える
     audio.unsilence();
     audio.finaleRumble(cinematic.timeline);
   } else if (name === 'burst') audio.boom(finalBlastSize, finaleBoomOpts(cinematic.timeline)); // 弾けた瞬間に爆発の音が開く
@@ -662,12 +673,27 @@ function simulate(dt) {
 function finishFrame(dt, live) {
   // 手の中の球の大きさは貯めた力。掴まれている間は、光が弱く不安定に瞬く
   const h = handInput ?? { level: game.power.level, active: game.charge.active, steady: game.grabbing > 0 ? GRABBED_STEADY : 1 };
+  const drain = updateDrain(dt);
+  hand.setDrain(drain);
   hand.update(dt, h.level, h.active, h.steady);
-  hud.update({ remaining: game.timer.remaining, power: game.power.value, max: CONFIG.power.max, canPuff: game.canPuff, alive: game.aliveCount });
+  hud.update({ remaining: game.timer.remaining, power: game.power.value, max: CONFIG.power.max, canPuff: game.canPuff, alive: game.aliveCount, drain, dt });
   // 最後の一発を放ってから結果までずっと HUD は出さない（両手が玉を握り込む間も、リプレイの間も）
   hud.setVisible(!debugCam && !cinematic.active && !replay.active && !blackhole.active);
   updateAudio(live, dt);
   updateResult(dt);
+}
+
+// 吸われている間の知らせ（遊んでいる間だけ）。左右は掴んでいる者の今の画面の位置から、吸う力の重みで（音は画面に従う）
+const _grabPans = [];
+function updateDrain(dt) {
+  const total = game.drainedTotal, drained = total - drainedSeen;
+  drainedSeen = total;
+  const live = game.phase === 'playing' && !cinematic.active && !replay.active && !blackhole.active && !debugCam;
+  _grabPans.length = 0;
+  if (live && game.enemies.drainLoad > 0) {
+    for (const e of game.enemies.list) if (e.state === 'grab') _grabPans.push({ pan: screenCue(e.x, 2, e.z).pan, w: drainMulOf(e) });
+  }
+  return drainFx.update(dt, { load: live ? game.enemies.drainLoad : 0, drained: live ? drained : 0, grabbers: _grabPans });
 }
 
 // 音: 貯めの唸り、じわじわ期の脈動、弾けた瞬間の爆発、崩落
@@ -677,6 +703,7 @@ let _transitCam = null;
 const transitToCam = (p) => { _camV.set(p.x, p.y ?? 0, p.z).applyMatrix4(_transitCam.matrixWorldInverse); _camXZ.x = _camV.x; _camXZ.z = _camV.z; return _camXZ; };
 function updateAudio(live, dt = 0) {
   audio.chargeHum(game.charge.active ? game.power.level : 0);
+  audio.drain(drainFx.state); // 吸われる音（はがれたらその場で止まる）
   // 電車と高速（S8）: 今の画面のカメラから見た一番近い車両・高速の点の距離と左右。演出・リプレイ・結末の間は鳴らさない
   if (cityView.transit && !cinematic.active && !replay.active && !blackhole.active && audio.running) {
     const cam = cityCam();

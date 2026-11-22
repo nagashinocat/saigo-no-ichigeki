@@ -79,19 +79,17 @@ export function createIntroOverlay(root = document.body, { dprMax = 2, glow = 'f
   }
 
   // ---- カード ----
-  function card(text, d, seedK) {
+  function card(text, d) {
     const chars = [...text];
     const n = chars.length;
     const S = Math.min((H * 0.8) / n, W * 0.46, 200);
     const step = S * 0.98;
     const sc = slamScale(d);
-    // 揺れ（叩きつけの瞬間に大きく、すぐ止む）
-    const a = 9 * Math.exp(-d / INTRO.card.shake * 3.2);
-    const sx = a * Math.sin(d * 91 + seedK), sy = a * Math.sin(d * 77 + 1.3 + seedK);
+    // R1b（持ち主 08:24「画面揺れなくていい」）: 叩きつけは大きめから縮んで止まる動きだけ（揺らさない）
     g.fillStyle = '#000';
     g.fillRect(0, 0, W, H);
     g.save();
-    g.translate(W / 2 + sx, H / 2 + sy);
+    g.translate(W / 2, H / 2);
     g.scale(sc, sc);
     g.fillStyle = '#fff';
     g.textAlign = 'center';
@@ -385,7 +383,7 @@ export function createIntroOverlay(root = document.body, { dprMax = 2, glow = 'f
       // カード: 真っ黒を INTRO.card.black 秒見せてから、文字が叩きつけられる（持ち主 19:04）
       if (n === 'cardA' || n === 'cardB') {
         const d = b.local - INTRO.card.black;
-        if (d < 0) { g.fillStyle = '#000'; g.fillRect(0, 0, W, H); } else card(b.beat.text, d, n === 'cardA' ? 0 : 2.1);
+        if (d < 0) { g.fillStyle = '#000'; g.fillRect(0, 0, W, H); } else card(b.beat.text, d);
       }
       else if (n === 'orb') orbRise(b.local / b.beat.dur, t);
       else if (n === 'white') { g.fillStyle = '#fff'; g.fillRect(0, 0, W, H); }

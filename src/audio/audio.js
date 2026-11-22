@@ -1,6 +1,6 @@
 // Web Audio で合成する音。素材ファイルは使わない。
 import { COLLAPSE, createCollapseGate, collapseVoice, renderCollapseVariant } from './collapse.js';
-import { comboRecipe, bossRecipe } from './cues.js';
+import { comboRecipe, bossRecipe, drainVoice, DRAIN_CUE } from './cues.js';
 // 世界の音は master を経由するので、silence で全部まとめて黙らせられる（演出の音は cine から鳴る）。
 // boom を鳴らすまでの待ち（秒）: 無音の間（silenceEnd まで）に弾けても、無音が明けてから鳴らす
 export function boomDelay(silenceEnd, now) {
@@ -98,7 +98,7 @@ export function finaleBoomOpts(tl) {
 // 最後の一発の地響き（持ち主の要望 09:59）。R0b（持ち主 22:15・22:18、音は画面に従う 13:06）: 白が晴れて地平で爆発が始まる
 // （erupt）と遠い地鳴りが地の底から湧き、スローでふくらむ間にだんだん近づき（burst までに 0.3）、弾けて光の壁が迫り軍勢を飲む
 // （engulf）と轟きになり、カメラが飲まれて追うカットへ切り替わった（snap）直後に最大、見せる期（追われる間）ずっとうなり、
-// 宇宙（chaseEnd）でこもって弱まり、横一線の光が消える（lineEnd）ときに消える。そのあとの無音 → 地鳴り（deepRumble）へつなぐ。
+// 宇宙（chaseEnd）でこもって弱まり、縦一線の光が消える（lineEnd）ときに消える。そのあとの無音 → 地鳴り（deepRumble）へつなぐ。
 // 演出の秒ごとの大きさ g（0〜1）と、低域の通し幅 f（Hz。宇宙でこもる）の折れ線
 export const RUMBLE = { gain: 0.42, slow: { rate: 0.85, depth: 0.32 }, shake: { rate: 6.5, depth: 0.12 }, grit: 0.16 };
 // 瓦礫の崩れる音の道の大きさ（ふつう・リプレイ・宇宙でこもったとき）。重くした最後の一発と地響きの上でリミッターの余裕を残す
@@ -227,6 +227,7 @@ export function createAudio({ nav = globalThis.navigator, makeMedia = (src) => n
   const collapseGate = createCollapseGate();
   let rumbleSrcs = null; // 最後の一発の地響き（鳴っている間だけ）
   let transitNodes = null; // S8: 電車と高速の音（最初に鳴らすときに作る）
+  let drainNodes = null; // R1b: 吸われる音（最初に掴まれたときに作る）
   let clatterPhase = 0;
 
   function build() {
@@ -582,6 +583,47 @@ export function createAudio({ nav = globalThis.navigator, makeMedia = (src) => n
           for (const [when, k] of [[0, 1], [0.11, 0.8]]) noiseBurst({ dur: 0.07, freq: 1100, gain: m.train.clatter * k, attack: 0.003, when, q: 1.4, dest: n.clatter });
         }
       }
+    },
+    // R1b（持ち主 08:24「吸われてる音」）: 掴まれて吸われている間ずっと鳴る音（cues.js の drainVoice）。毎フレーム呼ぶ。
+    // s: drainFx の状態（sound: 強さ 0〜1、phase: 画面の縁の脈打ちの位相、pan: 掴んでいる者の画面の左右）。null か sound 0 で、
+    // その場で止まる（はがれた瞬間に消える）。世界の音（master）を通るので、演出の無音・宇宙のこもりにも従う
+    drain(s) {
+      if (!ready()) return;
+      const k = s?.sound ?? 0, t = now();
+      if (!drainNodes) {
+        if (!(k > 0)) return;
+        const src = ctx.createBufferSource(); src.buffer = noiseBuf; src.loop = true;
+        const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = DRAIN_CUE.hiss.hi; bp.Q.value = DRAIN_CUE.hiss.q;
+        const hg = ctx.createGain(); hg.gain.value = 0;
+        const osc = ctx.createOscillator(); osc.type = 'triangle'; osc.frequency.value = DRAIN_CUE.whine.f;
+        // うねり: 唸りの高さを細かく揺らす（cent）
+        const lfo = ctx.createOscillator(); lfo.frequency.value = DRAIN_CUE.warble.rate;
+        const lg = ctx.createGain(); lg.gain.value = 1200 * Math.log2(1 + DRAIN_CUE.warble.depth);
+        lfo.connect(lg); lg.connect(osc.detune);
+        const wg = ctx.createGain(); wg.gain.value = 0;
+        const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = DRAIN_CUE.lp.open; lp.Q.value = 0.5;
+        const pan = ctx.createStereoPanner();
+        src.connect(bp); bp.connect(hg); hg.connect(lp);
+        osc.connect(wg); wg.connect(lp);
+        lp.connect(pan); pan.connect(master);
+        src.start(t, Math.random()); osc.start(t); lfo.start(t);
+        drainNodes = { bp, hg, osc, wg, lp, pan };
+      }
+      const n = drainNodes;
+      if (!(k > 0)) {
+        // はがれた: その場で止める（15 ms で消える。ぷつっと鳴らない）
+        n.hg.gain.cancelScheduledValues(t); n.wg.gain.cancelScheduledValues(t);
+        n.hg.gain.setTargetAtTime(0, t, 0.015); n.wg.gain.setTargetAtTime(0, t, 0.015);
+        return;
+      }
+      const v = drainVoice(k, s.phase ?? 0);
+      const tc = 0.025;
+      n.bp.frequency.setTargetAtTime(v.hiss.f, t, tc);
+      n.hg.gain.setTargetAtTime(v.hiss.gain, t, tc);
+      n.osc.frequency.setTargetAtTime(v.whine.f, t, tc);
+      n.wg.gain.setTargetAtTime(v.whine.gain, t, tc);
+      n.lp.frequency.setTargetAtTime(v.lp, t, 0.1);
+      n.pan.pan.setTargetAtTime(Math.max(-0.95, Math.min(0.95, s.pan ?? 0)), t, 0.05);
     },
     // 瓦礫の音の道の状態（リプレイの始まりで 'replay'、遊びに戻ったら 'open'）
     debrisMode(mode) {

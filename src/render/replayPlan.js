@@ -5,7 +5,8 @@ import { phaseTimes, frontAt } from '../game/blast.js';
 
 // リプレイの「どこから撮るか」を決める純粋な関数（描画は知らない）。放つ直前の街（壊れていないビル）から決める。
 //   street: 爆心へまっすぐ向かう通りの真ん中、両側のビルが高いところ（見上げると、谷底から光の壁が来る）
-//   side:   street と違う向きの、前線に沿って走るカメラの高さ（屋根より上、でもなるべく低く）
+//   side:   street と違う向き（az）と流れる向き（look）。R1b からカメラは sideWideView の大きな引き（height は前の、前線に沿って走る
+//           カメラの高さ。今は使わない）
 //   top:    真上のカメラの回り始めの向き
 //   hero:   主人公を斜め前から見上げる向き
 export const REPLAY_PLAN = {
@@ -138,4 +139,49 @@ export function aftermathView({ survivors, aspect, az = 0, radius = 0 }, A = AFT
   _cam.getWorldDirection(_f);
   const p = _cam.position;
   return { pos: [p.x, p.y, p.z], look: [p.x + _f.x * D, p.y + _f.y * D, p.z + _f.z * D], fov };
+}
+
+// R1b（持ち主 08:24「リプレイの爆発の横からカメラで追うところだけど、もう少し離れた状態で全体見れた方がかっこいいかな」）:
+// side のカットの大きな引きの移動撮影。ずっと引いた斜め上（仰角 elev）から、光の球（一発の半径まで）・穴の縁・その外の街の縁
+// （半径の ring 倍）を、カットの始めから終わりまで画面の内（横 fitX・縦は黒い帯の内の fitY）に収めたまま、爆心のまわりを
+// sweep ラジアン横へ流れ、dolly の割合だけゆっくり寄る。縦長でも横長でも、距離はその画面で解く
+export const SIDE_WIDE = { elev: 0.4, fov: { portrait: 58, landscape: 36 }, fitX: 0.9, fitY: 0.9, ring: 1.12, sweep: 0.5, dolly: 0.06, aimY: 0.16, n: 48 };
+// radius: 一発の半径、aspect: 画面の縦横比、bars: 黒い帯の厚さ（replayBars、上下それぞれ画面の高さの割合）。
+// 戻り値 { dist（寄りきったときの爆心からの距離）, aimY, fov, elev }
+export function sideWideView({ radius, aspect, bars = 0 }, S = SIDE_WIDE) {
+  const fov = aspect < 1 ? S.fov.portrait : S.fov.landscape;
+  const frame = radius * S.ring;
+  const aimY = S.aimY * radius;
+  const pts = [];
+  for (let k = 0; k < S.n; k++) {
+    const a = k / S.n * Math.PI * 2, c = Math.cos(a), s = Math.sin(a);
+    pts.push([c * frame, 0, s * frame], [c * radius, 0, s * radius]);
+    for (const el of [0.25, 0.6, 1.0, 1.35]) pts.push([c * Math.cos(el) * radius, Math.sin(el) * radius, s * Math.cos(el) * radius]);
+  }
+  pts.push([0, radius, 0]);
+  _cam.fov = fov; _cam.aspect = aspect; _cam.near = 1; _cam.far = 1e5; _cam.updateProjectionMatrix();
+  // 横へ流れる間の向きのずれで端の点がはみ出さないよう、少し内で合わせる
+  const fx = S.fitX - 0.015, fy = (1 - 2 * bars) * S.fitY - 0.015;
+  const fits = (dist) => {
+    _cam.position.set(Math.cos(S.elev) * dist, Math.sin(S.elev) * dist + aimY, 0);
+    _cam.up.set(0, 1, 0);
+    _cam.lookAt(_l.set(0, aimY, 0));
+    _cam.updateMatrixWorld();
+    for (const p of pts) {
+      _v.fromArray(p).project(_cam);
+      if (_v.z > 1 || Math.abs(_v.x) > fx || Math.abs(_v.y) > fy) return false;
+    }
+    return true;
+  };
+  let lo = radius, hi = radius * 60 + 200;
+  for (let i = 0; i < 40; i++) { const mid = (lo + hi) / 2; if (fits(mid)) hi = mid; else lo = mid; }
+  return { dist: hi, aimY, fov, elev: S.elev };
+}
+// カットの中の u（0〜1）のカメラ: az は始めの向き（爆心から見たカメラの方角）、look（±1）は流れる向き。戻り値 { pos, look }
+export function sideWidePose(view, { u, az, look = 1 }, S = SIDE_WIDE) {
+  const k = Math.min(1, Math.max(0, u));
+  const a = az + look * S.sweep * k;
+  const d = view.dist * (1 + S.dolly * (1 - k));
+  const h = Math.cos(view.elev) * d;
+  return { pos: [Math.cos(a) * h, Math.sin(view.elev) * d + view.aimY, Math.sin(a) * h], look: [0, view.aimY, 0] };
 }
