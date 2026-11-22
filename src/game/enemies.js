@@ -1,5 +1,6 @@
 import { CONFIG } from '../config.js';
 import { GRID } from '../world/cityGen.js';
+import { riderDist } from './centre.js';
 
 const DEAD_KEEP_SEC = 3;
 const PATROL_ID = 100000;
@@ -581,8 +582,8 @@ export function createEnemies(rng, cfg = CONFIG, { buildings = [], patrolRng = n
       const small = !!blast?.small;
       for (const e of list) {
         if (e.state === 'dead') continue;
-        const d = centre && e.x != null ? Math.hypot(e.x - centre.x, e.z - centre.z) : e.dist;
-        if (d > front) continue;
+        // R2: 距離は reach.js（届く範囲の輪・「あと N 体」）と同じ riderDist
+        if (riderDist(e, centre ?? null) > front) continue;
         if (small && blast.id != null) { if (e.lastHit === blast.id) continue; e.lastHit = blast.id; }
         hits++;
         const hp = e.hp ?? kindOf(e, E)?.hp ?? 1;

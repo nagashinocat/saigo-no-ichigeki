@@ -12,3 +12,7 @@ export function distFrom(t, c) {
   if (t.a && t.b) return segDist(c.x, c.z, t.a, t.b);
   return Math.hypot(t.x - c.x, t.z - c.z);
 }
+
+// R2: 軍勢の一人（e）の、爆心 c からの水平の距離。最後の一発・払うの前線が「倒したか」を決める距離と同じ（enemies.applyBlastFront）。
+// 位置（x, z）があれば爆心から、まだ無い者（試しの角度と距離だけの者）は主人公からの dist
+export const riderDist = (e, c) => (c && e.x != null ? Math.hypot(e.x - c.x, e.z - c.z) : e.dist);
