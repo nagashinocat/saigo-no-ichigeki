@@ -6,6 +6,7 @@ import { createCharge } from './charge.js';
 import { createTimer } from './timer.js';
 import { createScore, releaseBonus } from './score.js';
 import { nearCount } from './reach.js';
+import { rankFor } from './rank.js';
 import { createBlast } from './blast.js';
 import { createEnemies } from './enemies.js';
 import { createHeroMotion } from './hero.js';
@@ -85,6 +86,8 @@ export function createGame({ seed, cfg = CONFIG }) {
       survivors.push({ id: e.id, x: e.x, z: e.z, patrol: !!e.patrol, ...(e.kind ? { kind: e.kind } : {}) });
     }
     outcome = { clear: survivors.length === 0, total: releaseIds.size, survivors, ...releaseInfo.extra };
+    // R2: ランク（rank.js）
+    outcome.rank = rankFor({ clear: outcome.clear, timeLeft: releaseInfo.timeLeft, puffs: releaseInfo.puffsUsed, damage: releaseInfo.damage });
   }
 
   // settled: settle が一気に進めた分の命中（描く側は見た目を作らなくてよい）
@@ -119,6 +122,7 @@ export function createGame({ seed, cfg = CONFIG }) {
     const bonus = { base, ...releaseBonus(releaseInfo) };
     const added = base + score.addBonus(base * (bonus.mul - 1));
     releaseInfo.extra = { bonus, puffsUsed: releaseInfo.puffsUsed };
+    releaseInfo.damage = score.total;
     emit('shotScored', { added, total: score.total });
     judge();
     finish('released');

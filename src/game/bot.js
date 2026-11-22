@@ -5,6 +5,7 @@
 //  - 隠れる（持ち主 15:20）: 払ったあと掴まれていなければ、追っている者から見えない物陰へ（向きは追う者の反対・中心の向き・横を順に試す）
 // を足した「最善の操作」（best play = 動くボット）。centreAt: 寄る先（既定は街の中心。M2 の「中心から離れて放つ」操作は遠い点）
 import { CONFIG } from '../config.js';
+import { reachNow } from './reach.js';
 
 export const BOT = { holdDist: 45, centreSlack: 6, dodgeDist: 16, dodgeW: 1.6, coneW: 1.2, coneSlack: 8 };
 const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
@@ -65,4 +66,19 @@ export function actBot(g, st) {
     }
   }
   return null;
+}
+
+// R2（spec §15 ギリギリのボーナス・ランク）: 放つ判断（毎フレーム、update のあとに呼ぶ）。放ったら true。
+//  「今なら全滅できる」（reach.js の届かない数が 0）のあいだは、残り waitTo 秒まで待つ（終わり間際ほど被害額の倍率が上がる）。
+//  ただし掴まれたら（力が吸われて輪が縮む前に）すぐ放つ。届かないまま残り lastCall 秒になったら、足りる力があれば放つ（ブラックホールより被害額が付く）
+//  sim（scripts/rank-sim.mjs、seed 1〜30）: waitTo 0.5 が被害額も撃退成功もいちばん良い（「最善の放ち方」）
+export const RELEASE = { waitTo: 0.5, onGrab: true, lastCall: 0.1 };
+export function releaseBot(g, { R = RELEASE, cfg = CONFIG } = {}) {
+  if (g.phase !== 'playing') return false;
+  const reachLeft = reachNow(g, cfg).left;
+  const tl = g.timer.remaining;
+  const go = reachLeft === 0 ? (tl <= R.waitTo || (R.onGrab && g.grabbing >= 1)) : (tl <= R.lastCall && g.power.value >= cfg.power.minRelease);
+  if (!go) return false;
+  g.pressEnd();
+  return g.phase !== 'playing';
 }
