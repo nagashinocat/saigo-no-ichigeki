@@ -34,6 +34,8 @@ import { stickMarks } from './ui/stickMarks.js';
 import { bindPointerInput, eventMs } from './input/bindDom.js';
 import { clearThreshold } from './game/charge.js';
 import { maxEnemyReachFrom } from './game/enemies.js';
+import { reachNow } from './game/reach.js';
+import { createReachRing } from './render/reachRing.js';
 import { createHud, OUT_TEXT } from './ui/hud.js';
 import { createTimeTicks } from './ui/timeLeft.js';
 import { createResult } from './ui/result.js';
@@ -336,6 +338,8 @@ game.on('over', () => bodyPrep.finish());
 const patrolGlow = createPatrolGlow(CONFIG.enemy.patrol.count, tier, { extra: 256 });
 const survivorIds = (outcome) => new Set(outcome.survivors.map((s) => s.id));
 cityScene.add(patrolGlow.points);
+// R2（spec §15）: 届く範囲の輪（上空の画面だけ、主人公のまわりの地面。網 1 つ）
+const reachRing = createReachRing(cityScene);
 const heroAura = createHeroAura(tier); // 浮いている主人公のまわりの力のゆらぎ
 cityScene.add(heroAura.group);
 
@@ -763,7 +767,11 @@ function finishFrame(dt, live) {
   // M1: 浮かぶジョイスティック（遊んでいる間だけ）。M2: 輪の外側に近くの軍勢の向きの印（スティックが出ている間だけ数える）。
   // R1e: 印の輪は約 1.5 倍、画面の端では同じ中心のまま小さく（joystick.radius）。払うの点はその輪の印の上
   joystick.update(stickNow, stickNow ? stickMarks(game.hero, game.enemies.list, { azimuthDeg: CITY_CAMERA.azimuthDeg }) : null, { w: innerWidth, h: innerHeight });
-  hud.update({ remaining: game.timer.remaining, power: game.power.value, max: CONFIG.power.max, alive: game.aliveCount, drain, dt, hero: game.hero, line: clearLine(), puffs: game.puffsLeft, stick: stickNow, stickR: joystick.radius + 12 });
+  // R2: 届く範囲の輪と「届かない軍勢 あと N 体」（勝ち負けと同じ数え方。遊んでいる間の上空の画面だけ）
+  const playing = game.phase === 'playing' && !introFlow.blocksInput && !cinematic.active && !replay.active && !blackhole.active;
+  const reach = playing ? reachNow(game) : null;
+  const ring = reachRing.update({ hero: game.hero, radius: reach?.radius ?? 0, left: reach?.left ?? 0, visible: !!reach && (!debugCam || debugRing), dt, camera: debugCam ?? views.cityCamera, viewPx: debugCam ? views.size.h : views.layout.city.h });
+  hud.update({ remaining: game.timer.remaining, power: game.power.value, max: CONFIG.power.max, alive: game.aliveCount, drain, dt, hero: game.hero, line: clearLine(), puffs: game.puffsLeft, stick: stickNow, stickR: joystick.radius + 12, reach: reach?.left ?? null, edge: reach && !debugCam && ring.offscreen ? { on: true, pulse: ring.pulse, ready: ring.ready } : null });
   // R1e（持ち主 16:55）: LOOK OUT!（遊んでいる間だけ。危ないかの確かめは lookout.checkEvery 秒ごと）
   const lo = game.phase === 'playing' && !cinematic.active && !debugCam
     ? lookout.update(dt, { hero: game.hero, enemies: game.enemies.list, buildings: game.city.buildings, hideBlock: game.hideBlock, azimuthDeg: CITY_CAMERA.azimuthDeg })
@@ -855,6 +863,7 @@ function collapseHits(stage = null) {
 // 白の間の最初のフレームで、そのあとの画面全体の描画を温める（白から街への切り替わりで止まらない）
 let whiteWarmed = false;
 let debugCam = null; // 撮影用（?debug の __debug.look）: 画面全体を決まったカメラで描く
+let debugRing = false; // 撮影用（__debug.ringInLook）: 決まったカメラでも届く範囲の輪を描く（遠くから輪の全体を撮る）
 function draw() {
   if (introFlow.blocksInput) return; // 導入の間の絵は introTick が描く
   // mid / low: 壁と道の細かい飾りは、近いカメラ（演出の全画面・リプレイ・結末）のときだけ描く
@@ -949,6 +958,8 @@ const debugHooks = {
     debugCam.lookAt(new THREE.Vector3().fromArray(o.look));
     debugCam.updateMatrixWorld();
   },
+  // R2: 決まったカメラ（look）でも届く範囲の輪を描く（撮影用）
+  ringInLook(on) { debugRing = !!on; },
   // 手の画面の入力を固定する: { level, active, steady }（steady は光の安定 0〜1）。null で戻す
   hand(input) { handInput = input ? { level: 0, active: false, steady: 1, ...input } : null; },
   // 手の画面だけに、放つ瞬間を起こす（shot = { amount, isBig }。isBig でなければ小爆発）
@@ -990,6 +1001,7 @@ if (debugMode) {
   window.__patrolGlow = patrolGlow;
   window.__controls = controls; // M1: 撮影で指の操作を起こす（down / move / up / update）
   window.__lookout = lookout; // R1e: 撮影で LOOK OUT! の確かめた回数を見る
+  window.__reachRing = reachRing; // R2: 撮影で届く範囲の輪の状態を見る
   Object.defineProperty(window, '__firstFrameMs', { get: () => firstFrameMs });
   window.__cinematic = cinematic;
   window.__replay = replay;

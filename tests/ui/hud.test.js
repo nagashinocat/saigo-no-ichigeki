@@ -117,11 +117,11 @@ function fakeRoot() {
   const els = new Map();
   const make = () => {
     const style = { setProperty(k, v) { style[k] = v; }, getPropertyValue(k) { return style[k] ?? ''; } };
-    const cls = new Set();
+    const cls = new Set(), attrs = {};
     return {
-      style, textContent: '', offsetWidth: 0,
+      style, textContent: '', offsetWidth: 0, getAttribute: (k) => attrs[k] ?? null,
       classList: { add: (...c) => c.forEach((x) => cls.add(x)), remove: (...c) => c.forEach((x) => cls.delete(x)), toggle: (c, on) => (on ? cls.add(c) : cls.delete(c)), contains: (c) => cls.has(c) },
-      setAttribute() {}, addEventListener() {},
+      setAttribute(k, v) { attrs[k] = String(v); }, addEventListener() {},
       querySelector: (sel) => get(sel),
       querySelectorAll: (sel) => [0, 1, 2].map((i) => get(`${sel}:${i}`)), // M2: 払うの 3 つの点
     };
@@ -173,8 +173,8 @@ test('R1c: 残り時間は大きな数字と細い帯（幅が減る）。ちょ
   const hud = createHud(root, { threshold: 98.6, total: 60 });
   expect(root.innerHTML).toContain('hud-tnum');
   expect(root.innerHTML).toContain('hud-tbar');
-  // 左は空けたまま（R2 の「届かない軍勢 あと N 体」）、軍勢の数は残り時間の下（同じ右の列で、後ろ）
-  expect(root.innerHTML).toMatch(/<div class="hud-left"><\/div><div class="hud-right"><div class="hud-time"[^>]*>.*<\/div><div class="hud-army"><\/div><\/div>/);
+  // 左は R2 の「届かない軍勢 あと N 体」（hud-reach だけ）、軍勢の数は残り時間の下（同じ右の列で、後ろ）
+  expect(root.innerHTML).toMatch(/<div class="hud-left"><div class="hud-reach"[^>]*>(?:(?!hud-time).)*<\/div><\/div><div class="hud-right"><div class="hud-time"[^>]*>.*<\/div><div class="hud-army"><\/div><\/div>/);
   const num = get('.hud-tnum'), fill = get('.hud-tfill'), box = get('.hud-time');
   const base = { power: 10, max: 100, alive: 50, dt: 1 / 60 };
   hud.update({ ...base, remaining: 30 });
@@ -251,4 +251,68 @@ test('M2: 払うの点の位置（pipsPos）と「もう払えない」', async 
   const e = pipsPos(l, 844, { cx: 5, cy: 60 }, R);
   expect(e.x).toBeGreaterThanOrEqual(20);
   expect(e.y).toBeGreaterThanOrEqual(10);
+});
+
+// R2（spec §15 届く範囲の輪）: 上の帯の左に「届かない軍勢 あと N 体」。0 体になったら「今なら全滅できる」（ほのかに光る）
+test('R2: 「届かない軍勢 あと N 体」と「今なら全滅できる」の文言', async () => {
+  const { reachText, reachLines } = await import('../../src/ui/hud.js');
+  expect(reachText(12)).toBe('届かない軍勢 あと 12 体');
+  expect(reachText(1)).toBe('届かない軍勢 あと 1 体');
+  expect(reachText(0)).toBe('今なら全滅できる');
+  expect(reachLines(12)).toEqual(['届かない軍勢', 'あと 12 体']);
+  expect(reachLines(0)).toEqual(['今なら', '全滅できる']);
+});
+
+test('R2: HUD の左に N を出し、0 になったら「今なら全滅できる」へ変わって光る（.ready）。渡さなければ出さない', async () => {
+  const { createHud } = await import('../../src/ui/hud.js');
+  const { root, get } = fakeRoot();
+  const hud = createHud(root, { threshold: 98.6, total: 60 });
+  const box = get('.hud-reach'), head = get('.hud-rhead'), body = get('.hud-rbody');
+  const base = { remaining: 30, power: 50, max: 100, alive: 40, dt: 1 / 60 };
+  hud.update({ ...base, reach: 7 });
+  expect(head.textContent).toBe('届かない軍勢');
+  expect(body.textContent).toBe('あと 7 体');
+  expect(box.getAttribute('aria-label')).toBe('届かない軍勢 あと 7 体');
+  expect(box.classList.contains('ready')).toBe(false);
+  expect(box.style.display).toBe('');
+  hud.update({ ...base, reach: 0 });
+  expect(head.textContent).toBe('今なら');
+  expect(body.textContent).toBe('全滅できる');
+  expect(box.classList.contains('ready')).toBe(true);
+  hud.update({ ...base, reach: 3 });
+  expect(box.classList.contains('ready')).toBe(false);
+  hud.update({ ...base });
+  expect(box.style.display).toBe('none');
+  const { readFileSync } = await import('node:fs');
+  const css = readFileSync(new URL('../../index.html', import.meta.url), 'utf8');
+  expect(css).toMatch(/\.hud-reach\.ready[^{]*\{[^}]*text-shadow/); // ほのかな光
+});
+
+// R2: 輪が画面の外へ出たら（reachRing の offscreen）、街の画面の縁がほのかに光る（輪がそこより外にある）。軍勢をまたいだら縁も脈打つ
+test('R2: 輪が画面の外なら街の画面の縁の光（.hud-edge.on）。脈打ちで濃く、0 体で色が変わる（.ready）', async () => {
+  const { createHud, EDGE } = await import('../../src/ui/hud.js');
+  const { root, get } = fakeRoot();
+  const hud = createHud(root, { threshold: 98.6, total: 60 });
+  expect(root.innerHTML).toContain('hud-edge');
+  hud.place(layoutViews(390, 844), 844);
+  const edge = get('.hud-edge');
+  const l = layoutViews(390, 844);
+  expect(edge.style.left).toBe(l.city.x + 'px');
+  expect(edge.style.width).toBe(l.city.w + 'px');
+  expect(edge.style.height).toBe(l.city.h + 'px');
+  const base = { remaining: 30, power: 50, max: 100, alive: 40, dt: 1 / 60, reach: 4 };
+  hud.update({ ...base, edge: null });
+  expect(edge.classList.contains('on')).toBe(false);
+  hud.update({ ...base, edge: { on: true, pulse: 0, ready: false } });
+  expect(edge.classList.contains('on')).toBe(true);
+  expect(Number(edge.style.opacity)).toBeCloseTo(EDGE.base, 6);
+  hud.update({ ...base, edge: { on: true, pulse: 1, ready: false } });
+  expect(Number(edge.style.opacity)).toBeCloseTo(1, 6);
+  hud.update({ ...base, edge: { on: true, pulse: 0, ready: true } });
+  expect(edge.classList.contains('ready')).toBe(true);
+  hud.update({ ...base, edge: { on: false, pulse: 0, ready: true } });
+  expect(edge.classList.contains('on')).toBe(false);
+  const { readFileSync } = await import('node:fs');
+  const css = readFileSync(new URL('../../index.html', import.meta.url), 'utf8');
+  expect(css).toMatch(/\.hud-edge\s*\{[^}]*box-shadow:\s*inset/);
 });

@@ -19,6 +19,19 @@
     #hud { position: fixed; inset: 0; pointer-events: none; }
     .hud-strip { position: absolute; display: flex; justify-content: space-between; align-items: flex-start; box-sizing: border-box; padding: 0.6em 4vw 0; text-shadow: 0 1px 3px rgba(20, 10, 30, 0.85), 0 0 10px rgba(20, 10, 30, 0.5); }
     .hud-left { min-width: 0; }
+    /* R2（spec §15 届く範囲の輪）: 上の帯の左に「届かない軍勢 あと N 体」（小さな見出しと大きな数）。0 体で「今なら全滅できる」がほのかに光る */
+    .hud-reach { display: flex; flex-direction: column; align-items: flex-start; line-height: 1.05; white-space: nowrap; }
+    .hud-rhead { font-size: clamp(11px, 3vw, 15px); font-weight: 800; opacity: 0.95; letter-spacing: 0.04em; color: #ffd9cc; }
+    .hud-rbody { font-size: clamp(17px, 5vw, 26px); font-weight: 900; font-variant-numeric: tabular-nums; margin-top: 0.1em; color: #ffe9e2; }
+    .hud-reach.ready .hud-rhead { color: #fff3c8; opacity: 0.95; }
+    .hud-reach.ready .hud-rbody { color: #fff8e4; text-shadow: 0 0 10px rgba(255, 214, 120, 0.85), 0 0 22px rgba(255, 170, 60, 0.55), 0 1px 3px rgba(20, 10, 30, 0.85); animation: reach-glow 1.6s ease-in-out infinite; }
+    .hud-reach.ready { text-shadow: 0 0 8px rgba(255, 214, 120, 0.6); }
+    /* 輪が画面の外（もっと外まで届く）: 街の画面の縁を内側からほのかに光らせる。濃さは hud.js（軍勢をまたぐと脈打つ） */
+    .hud-edge { position: absolute; opacity: 0; box-shadow: inset 0 0 0 2px rgba(255, 158, 56, 0.85), inset 0 0 30px rgba(255, 140, 40, 0.55); }
+    .hud-edge.ready { box-shadow: inset 0 0 0 2px rgba(255, 236, 178, 0.9), inset 0 0 30px rgba(255, 214, 120, 0.55); }
+    .hud-edge:not(.on) { display: none; }
+    @keyframes reach-glow { 0%, 100% { opacity: 0.88; } 50% { opacity: 1; } }
+    @media (prefers-reduced-motion: reduce) { .hud-reach.ready .hud-rbody { animation: none; } }
     .hud-right { display: flex; flex-direction: column; align-items: flex-end; }
     /* R1c（持ち主 11:03「制限時間もわかりやすくしよう」）: 上の帯の右に大きな数字（秒）と、その下の減っていく細い帯。
        残り 10 秒（.last）から琥珀 → 赤（色は hud.js が --tcol と数字の color に入れる）、数字は 1 秒に 1 回脈打つ（transform も hud.js） */
@@ -125,22 +138,49 @@
     #result { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.4em; background: rgba(12, 8, 24, 0.72); text-align: center; }
     /* 撃退失敗: 後ろの引きの絵（生き残りの光）が読めるよう、真ん中の文字の後ろだけ暗くする */
     /* fix1: 文字は上（引きの絵の帯 fitTop より上）、ボタンは下（fitBot より下）に寄せ、真ん中の帯（生き残りの光）を空けて暗くしない */
-    #result.fail { justify-content: flex-start; padding: max(12.5vh, 60px) 0 max(4vh, 16px); box-sizing: border-box;
+    #result.fail { justify-content: flex-start; padding: max(9vh, 48px) 0 max(4vh, 16px); box-sizing: border-box; gap: 0.3em;
       background: linear-gradient(to bottom, rgba(12, 8, 24, 0.82) 0%, rgba(12, 8, 24, 0.7) 30%, rgba(12, 8, 24, 0) 40%, rgba(12, 8, 24, 0) 74%, rgba(12, 8, 24, 0.7) 82%); }
     #result.fail .result-row:not(.sub) { margin-top: auto; }
-    #result.fail .result-label { margin-top: 0.7em; }
+    #result.fail .result-label { margin-top: 0.4em; }
     /* 横画面: 生き残りの輪は画面の真ん中に大きく出るので、文字は左、ボタンは右の列へ寄せ、真ん中の列（輪）を空けて暗くしない */
     @media (min-aspect-ratio: 1/1) {
-      #result.fail { display: grid; grid-template-columns: 1fr 38vw 1fr; grid-template-rows: repeat(4, auto); align-content: center; justify-items: center; align-items: center; column-gap: 0; row-gap: 0.4em; padding: 0 2vw;
+      #result.fail { display: grid; grid-template-columns: 1fr 38vw 1fr; grid-template-rows: repeat(6, auto); align-content: center; justify-items: center; align-items: center; column-gap: 0; row-gap: 0.4em; padding: 0 2vw;
         background: linear-gradient(to right, rgba(12, 8, 24, 0.84) 0%, rgba(12, 8, 24, 0.72) 24%, rgba(12, 8, 24, 0) 33%, rgba(12, 8, 24, 0) 67%, rgba(12, 8, 24, 0.72) 76%, rgba(12, 8, 24, 0.84) 100%); }
       #result.fail .result-title { grid-area: 1 / 1; }
-      #result.fail .result-headline { grid-area: 2 / 1; font-size: clamp(24px, 4.2vw, 56px); white-space: normal; word-break: keep-all; line-height: 1.15; }
-      #result.fail .result-label { grid-area: 3 / 1; margin-top: 0.4em; }
-      #result.fail .result-amount { grid-area: 4 / 1; }
+      #result.fail .result-rank { grid-area: 2 / 1; }
+      #result.fail .result-headline { grid-area: 3 / 1; font-size: clamp(24px, 4.2vw, 56px); white-space: normal; word-break: keep-all; line-height: 1.15; }
+      #result.fail .result-label { grid-area: 4 / 1; margin-top: 0.4em; }
+      #result.fail .result-amount { grid-area: 5 / 1; }
+      #result.fail .result-breakdown { grid-area: 6 / 1; }
       #result.fail .result-row { grid-column: 3; margin: 0; flex-direction: column; align-items: stretch; gap: 0.6em; }
-      #result.fail .result-row:not(.sub) { grid-row: 1 / 4; align-self: end; }
-      #result.fail .result-row.sub { grid-row: 4; align-self: start; margin-top: 0.6em; }
+      #result.fail .result-row:not(.sub) { grid-row: 1 / 6; align-self: end; }
+      #result.fail .result-row.sub { grid-row: 6; align-self: start; margin-top: 0.6em; }
     }
+    /* R2（spec §15 評価のランク）: ランクは大きく、題字のすぐ下。被害額の下に倍率の内訳を小さな行で */
+    .result-rank { display: flex; align-items: baseline; gap: 0.35em; line-height: 1; margin-top: 0.2em; }
+    .result-rank small { font-size: clamp(12px, 3.2vw, 16px); font-weight: 700; opacity: 0.7; letter-spacing: 0.2em; }
+    .result-rank b { font-size: clamp(72px, 24vw, 140px); font-weight: 900; font-style: italic; letter-spacing: -0.02em; padding-right: 0.08em; color: #e8e2f0; text-shadow: 0 0 18px rgba(200, 190, 255, 0.35); }
+    .result-rank.rank-s b { color: #fff4c8; text-shadow: 0 0 34px rgba(255, 196, 80, 0.9), 0 0 8px rgba(255, 236, 180, 0.95); }
+    .result-rank.rank-a b { color: #ffe2b8; text-shadow: 0 0 24px rgba(255, 160, 80, 0.6); }
+    .result-rank.rank-b b { color: #dfe8ff; text-shadow: 0 0 18px rgba(150, 180, 255, 0.45); }
+    .result-rank.rank-c b { color: #b9b0c4; text-shadow: 0 0 12px rgba(120, 100, 150, 0.4); }
+    /* 撃退失敗の縦画面: 文字は上の暗い帯（約 4 割）に収める（真ん中の生き残りの光を空ける）。ランクと内訳の分だけ詰める */
+    #result.fail .result-rank b { font-size: clamp(36px, 11vw, 72px); }
+    #result.fail .result-breakdown { line-height: 1.35; }
+    /* 横画面は縦が短い: ランクの字を縦の長さで抑える */
+    @media (min-aspect-ratio: 1/1) {
+      #result .result-rank b, #result.fail .result-rank b { font-size: clamp(44px, 16vh, 120px); }
+      /* 撃退成功・ブラックホールの横画面: 縦が短いので、ランクを左の列に大きく、ほかを右の列に縦に並べる */
+      #result:not(.fail) { display: grid; grid-template-columns: auto auto; grid-auto-rows: auto; column-gap: 6vw; row-gap: 0.25em; align-content: center; justify-content: center; justify-items: center; }
+      #result:not(.fail) > * { grid-column: 2; }
+      #result:not(.fail) > .result-rank { grid-column: 1; grid-row: 1 / span 7; align-self: center; flex-direction: column; align-items: center; gap: 0.1em; }
+      #result:not(.fail) .result-rank b { font-size: clamp(64px, 34vh, 180px); }
+      #result:not(.fail) .result-headline { font-size: clamp(28px, 10vh, 60px); margin-top: 0; }
+      #result:not(.fail) .result-label { margin-top: 0.4em; }
+      #result:not(.fail) .result-row { margin-top: 0.7em; }
+      #result:not(.fail) .result-row.sub { margin-top: 0.3em; }
+    }
+    .result-breakdown { font-size: clamp(11px, 3.1vw, 15px); font-weight: 600; opacity: 0.72; line-height: 1.55; margin-top: 0.2em; font-variant-numeric: tabular-nums; }
     .result-title { font-size: clamp(13px, 3.6vw, 18px); font-weight: 700; letter-spacing: 0.5em; padding-left: 0.5em; opacity: 0.6; }
     .result-headline { font-size: clamp(36px, 11vw, 72px); font-weight: 900; letter-spacing: 0.06em; margin-top: 0.15em; white-space: nowrap; }
     #result.clear .result-headline { color: #fff6dc; text-shadow: 0 0 28px rgba(255, 200, 110, 0.75), 0 0 6px rgba(255, 230, 170, 0.8); }

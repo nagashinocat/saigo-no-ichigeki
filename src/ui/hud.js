@@ -1,4 +1,4 @@
-// 街の画面の上端に重ねる HUD（残り時間・街の軍勢・M1 の「中心まで ◯ m」と街の中心への矢印）と、手の帯の上端の力の表示（太いゲージと大きな数字）、
+// 街の画面の上端に重ねる HUD（R2 の「届かない軍勢 あと N 体」・残り時間・街の軍勢・M1 の「中心まで ◯ m」と街の中心への矢印）と、手の帯の上端の力の表示（太いゲージと大きな数字）、
 // 吸われている間の画面の縁の脈打ち。M1（持ち主 09:15）: 払うのボタンはなくした（溜めている間の 2 本目の指の短いタップ、PC は Space か右クリック）
 import { clearThreshold } from '../game/charge.js';
 import { DRAIN_FX } from './drainFx.js';
@@ -65,6 +65,14 @@ export function shortPos(layout, height, x, y) {
   return { x: Math.min(W - 40, Math.max(40, x)), y: Math.min(height - 20, Math.max(20, y - 40)) };
 }
 
+// R2（spec §15 届く範囲の輪）: 今の主人公の所で今の力を放ったら、前線の外に残る軍勢の数（reach.js の reachNow().left。勝ち負けと同じ数え方）。
+// 0 体なら「今なら全滅できる」。上の帯の左に二行（小さな見出しと、大きな「あと N 体」）
+export const reachLines = (n) => (n > 0 ? ['届かない軍勢', `あと ${n} 体`] : ['今なら', '全滅できる']);
+export const reachText = (n) => (n > 0 ? reachLines(n).join(' ') : reachLines(n).join(''));
+
+// 輪が画面の外にあるときの、街の画面の縁の光の濃さ（ふだん base、軍勢をまたいだ脈打ちで 1 へ）
+export const EDGE = { base: 0.45 };
+
 // S9: 一発で街じゅうの軍勢を全員倒せばクリア。街に生きている軍勢の数（小さく、残り時間の下に）
 export const armyText = (n) => `街の軍勢 ${n}`;
 
@@ -90,8 +98,8 @@ const mixRgb = (a, b, k) => `rgb(${a.map((v, i) => Math.round(v + (b[i] - v) * k
 export function createHud(root, { threshold = clearThreshold(), total = 60 } = {}) {
   // 上の帯: 左は空けておく（R2 の「届かない軍勢 あと N 体」の場所）、右に残り時間と街の軍勢。
   // R1c（持ち主 11:03）: 残り時間は大きな数字（秒）と、その下の減っていく細い帯（total 秒で満タン）。街の軍勢はその下
-  root.innerHTML = '<div class="hud-drain"></div>'
-    + '<div class="hud-strip"><div class="hud-left"></div><div class="hud-right"><div class="hud-time" role="timer" aria-label="残り時間"><div class="hud-tline"><b class="hud-tnum"></b><small class="hud-tunit">秒</small></div><div class="hud-tbar"><i class="hud-tfill"></i></div></div><div class="hud-army"></div></div></div>'
+  root.innerHTML = '<div class="hud-drain"></div><div class="hud-edge"></div>'
+    + '<div class="hud-strip"><div class="hud-left"><div class="hud-reach" role="status"><small class="hud-rhead"></small><b class="hud-rbody"></b></div></div><div class="hud-right"><div class="hud-time" role="timer" aria-label="残り時間"><div class="hud-tline"><b class="hud-tnum"></b><small class="hud-tunit">秒</small></div><div class="hud-tbar"><i class="hud-tfill"></i></div></div><div class="hud-army"></div></div></div>'
     + '<div class="hud-centre"><i class="hud-arrow"></i><span></span></div>'
     + '<div class="hud-gauge low" role="meter" aria-label="力" aria-valuemin="0" aria-valuemax="100"><div class="hud-track"><i class="hud-ghost"></i><i class="hud-fill"></i><i class="hud-pulse"></i></div>'
     + '<div class="hud-tick"></div><div class="hud-tick-label">撃退ライン</div><div class="hud-lost"></div></div>'
@@ -105,6 +113,10 @@ export function createHud(root, { threshold = clearThreshold(), total = 60 } = {
   const time = root.querySelector('.hud-time');
   const timeNum = root.querySelector('.hud-tnum'), timeFill = root.querySelector('.hud-tfill');
   const army = root.querySelector('.hud-army');
+  const reachEl = root.querySelector('.hud-reach'), reachHead = root.querySelector('.hud-rhead'), reachBody = root.querySelector('.hud-rbody');
+  let shownReach;
+  const edgeEl = root.querySelector('.hud-edge');
+  let shownEdge = '', shownEdgeA = '';
   const gauge = root.querySelector('.hud-gauge');
   const fill = gauge.querySelector('.hud-fill'), ghost = gauge.querySelector('.hud-ghost'), pulseEl = gauge.querySelector('.hud-pulse');
   const tick = gauge.querySelector('.hud-tick'), tickLabel = gauge.querySelector('.hud-tick-label');
@@ -135,6 +147,7 @@ export function createHud(root, { threshold = clearThreshold(), total = 60 } = {
     place(layout, height) {
       const { hud, hand, city } = layout;
       layoutNow = layout; heightNow = height;
+      Object.assign(edgeEl.style, { left: city.x + 'px', top: height - city.y - city.h + 'px', width: city.w + 'px', height: city.h + 'px' });
       Object.assign(annEl.style, { left: city.x + 'px', width: city.w + 'px', top: height - city.y - city.h + city.h * 0.24 + 'px' });
       Object.assign(strip.style, { left: hud.x + 'px', top: height - hud.y - hud.h + 'px', width: hud.w + 'px', height: hud.h + 'px' });
       const g = gaugeRect(layout, height);
@@ -185,7 +198,24 @@ export function createHud(root, { threshold = clearThreshold(), total = 60 } = {
     // alive: 街に生きている軍勢の数（省けば出さない）。drain: 吸われている間の知らせ（drainFx の状態。省けば無し）、dt: 秒
     // hero（M1）: 主人公の位置 { x, z }（「中心まで ◯ m」と矢印。省けば出さない）。line（M1）: 今の撃退ライン（力の %。省けば作ったときの値）
     // puffs（M2）: 残りの払える回数（省けば点を出さない）。stick: 浮かぶスティック（{ cx, cy } px か null）、stickR: その輪の半径 px
-    update({ remaining, power, max, alive = null, drain = null, dt = 0, hero = null, line = null, puffs = null, stick = null, stickR = 56 }) {
+    // reach（R2）: 届かない軍勢の数（reach.js の reachNow().left。省けば出さない。0 で「今なら全滅できる」）
+    // edge（R2）: 輪が画面の外のときの縁の光 { on, pulse 0〜1, ready }（reachRing の戻り値。省けば出さない）
+    update({ remaining, power, max, alive = null, drain = null, dt = 0, hero = null, line = null, puffs = null, stick = null, stickR = 56, reach = null, edge = null }) {
+      const ek = edge?.on ? (edge.ready ? 'ready' : 'on') : '';
+      if (ek !== shownEdge) { edgeEl.classList.toggle('on', !!ek); edgeEl.classList.toggle('ready', ek === 'ready'); shownEdge = ek; }
+      const ea = edge?.on ? (EDGE.base + (1 - EDGE.base) * Math.max(0, Math.min(1, edge.pulse))).toFixed(3) : '0';
+      if (ea !== shownEdgeA) { edgeEl.style.opacity = ea; shownEdgeA = ea; }
+      if (reach !== shownReach) {
+        if (reach == null) reachEl.style.display = 'none';
+        else {
+          const [h, b] = reachLines(reach);
+          reachHead.textContent = h; reachBody.textContent = b;
+          reachEl.setAttribute('aria-label', reachText(reach));
+          reachEl.classList.toggle('ready', reach === 0);
+          reachEl.style.display = '';
+        }
+        shownReach = reach;
+      }
       if (puffs == null) { if (shownPips !== 'none') { pipsEl.style.display = 'none'; shownPips = 'none'; } }
       else {
         const ps = String(puffs);
