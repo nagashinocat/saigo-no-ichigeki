@@ -43,7 +43,7 @@ import { createReachRing } from './render/reachRing.js';
 import { createHud, OUT_TEXT } from './ui/hud.js';
 import { createTimeTicks } from './ui/timeLeft.js';
 import { createResult, allowsNativeMenu, resultContent, shareText } from './ui/result.js';
-import { createClipRecorder, createClipPanel, clipSize, planClip, planBlackholeClip, clipOverlay, deliverClip, clipFileName, CLIP_NOTE } from './share/clip.js';
+import { createClipRecorder, createClipSession, createClipPanel, clipSize, planClip, planBlackholeClip, clipOverlay, deliverClip, clipFileName } from './share/clip.js';
 import { INTRO_FONT } from './ui/introOverlay.js';
 import { createAudio, finaleBoomOpts } from './audio/audio.js';
 import { createHitFeed } from './audio/hitFeed.js';
@@ -246,7 +246,7 @@ const menu = createMenu({ button: document.getElementById('menuBtn'), panel: doc
     if (kind && t - previewAt > 150) { previewAt = t; audio.preview(kind); }
   },
 });
-function leavePage() { if (clipRec.busy) clipRec.cancel(); if (menuAvailable()) { menu.setAvailable(true); menu.open(); } pause.set('tab', true); }
+function leavePage() { if (clipSession.busy) clipSession.cancel(); if (menuAvailable()) { menu.setAvailable(true); menu.open(); } pause.set('tab', true); }
 window.addEventListener('pagehide', leavePage);
 // fix1（見直し Minor 7）: iOS の一部（コントロールセンターなど）は visibilitychange が来ない。タッチの端末だけ、blur でも一時停止する（PC で誤って止めない）
 const touchDevice = (() => { try { return matchMedia('(pointer: coarse)').matches || (navigator.maxTouchPoints ?? 0) > 0; } catch { return false; } })();
@@ -268,7 +268,7 @@ window.addEventListener('keydown', (e) => {
     return;
   }
   // R4: 録画の間は Esc でやめる。ほかのキーは使わない（リプレイを飛ばさない・結果のボタンを押さない）
-  if (clipping) { if (e.code === 'Escape') { e.preventDefault(); clipRec.cancel(); } return; }
+  if (clipping) { if (e.code === 'Escape') { e.preventDefault(); clipSession.cancel(); } return; }
   // R1f: Esc でメニュー（遊んでいる間）。開いている間は Esc で閉じ、ほかのキーは使わない
   if (menu.isOpen) { if (e.code === 'Escape') { e.preventDefault(); menu.close(); } return; }
   if (e.code === 'Escape' && menuAvailable() && !(replay.active && !replay.finished)) { e.preventDefault(); menu.open(); return; }
@@ -693,11 +693,12 @@ replay.on('replayStart', () => { if (clipping) return; replayTag.hidden = false;
 // S9: 撃退失敗: リプレイの最後は生き残りの引きの絵。その絵と結果の後ろで、生き残りの光が赤と緑に脈打つ。
 // 結果（replayEnd）は、その絵が明けきって少し見せてから（replay.js の AFTERMATH_TIMING。タップで先へ飛ばせる）
 replay.on('aftermath', () => {
+  clipRestored();
   replayTag.hidden = true;
   const o = game.outcome;
   if (o && !o.clear) patrolGlow.setSurvivors(survivorIds(o));
 });
-replay.on('replayEnd', () => { replayTag.hidden = true; finaleDone = true; });
+replay.on('replayEnd', () => { clipRestored(); replayTag.hidden = true; finaleDone = true; });
 replay.on('skip', () => { replayTag.hidden = true; });
 function startReplay() {
   if (!replaySnap) return;
@@ -718,6 +719,8 @@ function skipReplay() { replay.skip(); }
 const clipPanel = createClipPanel(document.getElementById('clip'));
 const replayArgs = () => { const o = game.outcome; return { shot: replaySnap.shot, buildings: replaySnap.buildings, heroYaw: enemyView.heroYaw, survivors: o && !o.clear ? o.survivors : null }; };
 let clipKind = null, clipSparks = null, clipTap = null;
+let clipRestoring = false; // fix1（M1）: 録画のあとリプレイを最後の絵へ戻している間（瓦礫の音を黙らせる）
+function clipRestored() { if (!clipRestoring) return; clipRestoring = false; audio.debrisMode('replay'); }
 const clipHost = {
   get canvas() { return renderer.domElement; },
   begin(kind, size) {
@@ -762,23 +765,36 @@ const clipHost = {
   },
   audioStream() { clipTap = audio.tap(); return clipTap?.stream ?? null; },
   shouldStop: () => document.hidden || pause.paused,
+  // fix1（見直し I-1）: どこかが投げても、録画の旗（clipping）は必ず下ろす（ゲームの毎フレーム・入力・大きさの合わせ直しが戻る）
   end() {
-    clipTap?.release(); clipTap = null; clipSparks = null;
-    audio.rumbleStop(); audio.droneCut(); audio.silence(); audio.debrisMode('replay');
-    applyPixelRatio();
-    clipping = false; resize(); clipping = true;
-    if (clipKind === 'blackhole') blackhole.update(blackhole.timeline.end + 0.05 - blackhole.time); // 暗転のまま（結果の後ろ）
-    else { replay.play(replayArgs()); replay.skip(); } // 結果の後ろの最後の絵へ（暗くして早送り。生き残りの光も戻る）
-    bgm.quiet();
-    clipping = false; clipKind = null;
-    last = performance.now();
+    const kind = clipKind;
+    try {
+      try { clipTap?.release(); } finally { clipTap = null; clipSparks = null; }
+      audio.rumbleStop(); audio.droneCut(); audio.silence(); audio.debrisMode('replay');
+      applyPixelRatio();
+      clipping = false; resize(); clipping = true;
+      if (kind === 'blackhole') blackhole.update(blackhole.timeline.end + 0.05 - blackhole.time); // 暗転のまま（結果の後ろ）
+      else if (kind === 'blast' && replaySnap) {
+        // 結果の後ろの最後の絵へ（暗くして早送り）。fix1（M1）: 早送りの間の瓦礫の音は鳴らさない（画面に出ていない。'aftermath' か 'replayEnd' で戻す）。
+        // 撃退失敗の生き残りの光はすぐ戻す（早送りが終わるのを待たない）
+        audio.debrisMode('off');
+        clipRestoring = true;
+        replay.play(replayArgs());
+        const o = game.outcome;
+        if (o && !o.clear) patrolGlow.setSurvivors(survivorIds(o));
+        replay.skip();
+      }
+      bgm.quiet();
+    } finally {
+      clipping = false; clipKind = null;
+      last = performance.now();
+    }
   },
 };
 const clipRec = createClipRecorder(clipHost);
 // 動画にできるか: 録画できる端末で、最後の一発（リプレイの写しと演出の時刻表がある）かブラックホールの結末
 const canClip = (reason) => clipRec.supported && (reason === 'blackhole' || (!!replaySnap && !!cinematic.timeline));
 const debugClipH = debugMode ? Number.parseInt(params.get('cliph') ?? '', 10) : NaN; // 撮影用: 動画の高さを上書き
-let clipLast = null; // 撮影用: 最後に録った動画（?debug の __debug.clip）
 function downloadFile(file) {
   const url = URL.createObjectURL(file);
   const a = document.createElement('a');
@@ -787,43 +803,31 @@ function downloadFile(file) {
   setTimeout(() => URL.revokeObjectURL(url), 60_000);
   return true;
 }
-async function startClip({ total, outcome, reason, extra }) {
-  if (clipRec.busy || !canClip(reason)) return null;
-  const kind = reason === 'blackhole' ? 'blackhole' : 'blast';
-  const size = Number.isFinite(debugClipH) && debugClipH >= 160
-    ? { w: 2 * Math.floor(debugClipH * 9 / 32), h: 2 * Math.round(debugClipH / 2) }
-    : clipSize({ tier, viewW: window.innerWidth, viewH: window.innerHeight, dpr: window.devicePixelRatio || 1 });
-  const overlay = clipOverlay(resultContent(total, reason, outcome, extra));
-  // 題字は同梱の明朝（「最後の一撃」の字が入っている）。読めなければ太いシステムの字
-  let titleFont = null;
-  try { await document.fonts.load(`900 40px "${INTRO_FONT}"`, overlay.title); titleFont = document.fonts.check(`900 40px "${INTRO_FONT}"`, overlay.title) ? INTRO_FONT : null; } catch { titleFont = null; }
-  result.setBusy(true);
-  clipPanel.start({ cancel: () => clipRec.cancel() });
-  const r = await clipRec.record({ kind, size, overlay, titleFont, onProgress: (p, ph) => clipPanel.progress(p, ph), onPreview: (c) => clipPanel.preview(c) });
-  clipLast = r;
-  if (!r.blob) {
-    clipPanel.close(); result.setBusy(false);
-    if (r.error) result.notify('動画を作れませんでした（文の「共有」はそのまま使えます）');
-    return r;
-  }
-  const file = new File([r.blob], clipFileName(new Date(), r.ext), { type: r.blob.type });
-  const text = shareText(total, outcome, extra?.city ? (extra.city.link ?? null) : null, { reason, city: extra?.city ?? null, titles: extra?.titles ?? [] });
-  let canShareFile = false;
-  try { canShareFile = typeof navigator.share === 'function' && !!navigator.canShare?.({ files: [file] }); } catch { canShareFile = false; }
-  const close = () => { clipPanel.close(); result.setBusy(false); };
-  clipPanel.done({
-    blob: r.blob,
-    label: canShareFile ? '共有する' : '保存する',
-    // Web Share はボタンを押したその操作の中で呼ぶ（録画のあとでは押した操作の期限が切れている）
-    async deliver() {
-      const res = await deliverClip(file, { nav: navigator, text, download: downloadFile, framed: framedPage });
-      if (res === 'shared') close();
-      else if (CLIP_NOTE[res]) clipPanel.say(CLIP_NOTE[res]);
-    },
-    close,
-  });
-  return r;
-}
+// fix1（見直し I-2・M3・M6・M7）: 押した瞬間（書体の読み込みを待つ前）に二度目を断り、結果画面を押せなくし、知らせを開く（share/clip.js の createClipSession）
+const clipSession = createClipSession({
+  recorder: clipRec, panel: clipPanel, result, debug: debugMode,
+  canClip: (reason) => canClip(reason),
+  async prepare({ total, outcome, reason, extra }) {
+    const kind = reason === 'blackhole' ? 'blackhole' : 'blast';
+    const size = Number.isFinite(debugClipH) && debugClipH >= 160
+      ? { w: 2 * Math.floor(debugClipH * 9 / 32), h: 2 * Math.round(debugClipH / 2) }
+      : clipSize({ tier, viewW: window.innerWidth, viewH: window.innerHeight, dpr: window.devicePixelRatio || 1 });
+    const overlay = clipOverlay(resultContent(total, reason, outcome, extra));
+    // 題字は同梱の明朝（「最後の一撃」の字が入っている）。読めなければ太いシステムの字
+    let titleFont = null;
+    try { await document.fonts.load(`900 40px "${INTRO_FONT}"`, overlay.title); titleFont = document.fonts.check(`900 40px "${INTRO_FONT}"`, overlay.title) ? INTRO_FONT : null; } catch { titleFont = null; }
+    return { kind, size, overlay, titleFont };
+  },
+  share(r, { total, outcome, reason, extra }) {
+    const file = new File([r.blob], clipFileName(new Date(), r.ext), { type: r.blob.type });
+    const text = shareText(total, outcome, extra?.city ? (extra.city.link ?? null) : null, { reason, city: extra?.city ?? null, titles: extra?.titles ?? [] });
+    let canShareFile = false;
+    try { canShareFile = typeof navigator.share === 'function' && !!navigator.canShare?.({ files: [file] }); } catch { canShareFile = false; }
+    return { file, text, label: canShareFile ? '共有する' : '保存する' };
+  },
+  deliver: (file, text) => deliverClip(file, { nav: navigator, text, download: downloadFile, framed: framedPage }),
+});
+const startClip = (info) => clipSession.start(info);
 
 // 画質の自動調整。ここでは画素比だけを下げる（破片数などの他の値は後の Task が TIERS[tier] から読む）
 const governor = createFpsGovernor({ target: isMobile ? 30 : 55 });
@@ -1181,9 +1185,11 @@ const debugHooks = {
     const t0 = performance.now();
     const { total, reason, outcome, extra } = lastResult;
     const r = await startClip({ total, reason, outcome, extra });
+    if (r === null) return { ok: false, why: 'busy' };
     return { ok: !!r?.blob, why: r?.error ? String(r.error?.message ?? r.error) : r?.cancelled ? 'cancelled' : null, type: r?.blob?.type ?? null, mime: r?.mimeType ?? null, bytes: r?.blob?.size ?? 0, ms: performance.now() - t0, total: r?.plan?.total ?? null, segments: r?.plan?.segments ?? null };
   },
   async clipData() {
+    const clipLast = clipSession.last;
     if (!clipLast?.blob) return null;
     const bytes = new Uint8Array(await clipLast.blob.arrayBuffer());
     let bin = '';

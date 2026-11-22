@@ -13,6 +13,7 @@ for (let i = 0; i < argv.length; i++) {
   const a = argv[i];
   if (a === '--blackhole') opt.blackhole = true;
   else if (a === '--cancel') opt.cancel = true;
+  else if (a === '--double') opt.double = true;
   else if (a.startsWith('--')) opt[a.slice(2)] = argv[++i];
   else pos.push(a);
 }
@@ -50,7 +51,14 @@ try {
   console.log('result', JSON.stringify(info), 'steps took', ((Date.now() - t0) / 1000).toFixed(1), 's');
   if (opt.shots) await page.screenshot({ path: `${opt.shots}-result.png` });
   // 録画（実時間。録画は自分の requestAnimationFrame で描く）
-  await page.evaluate(() => { window.__clipP = window.__debug.clip(); });
+  // --double: 「動画で共有」を同じ瞬間に 2 回（二度目は断られ、録画は一つ）
+  const second = await page.evaluate(async (dbl) => {
+    window.__clipP = window.__debug.clip();
+    if (!dbl) return null;
+    const b = await window.__debug.clip();
+    return { second: b, panelOpen: !document.getElementById('clip').hidden, inert: document.getElementById('result').inert };
+  }, !!opt.double);
+  if (second) console.log('double tap', JSON.stringify(second));
   if (opt.shots) { await page.waitForTimeout(3500); await page.screenshot({ path: `${opt.shots}-recording.png` }); }
   // --cancel: 録画の途中で Esc（やめる）。結果画面と後ろの最後の絵へ戻ること
   if (opt.cancel) { await page.waitForTimeout(opt.shots ? 0 : 2500); await page.keyboard.press('Escape'); }

@@ -159,6 +159,8 @@ export const CLIP_NOTE = {
   downloaded: '動画を保存しました',
   'maybe-blocked': 'この画面では動画を保存できないことがあります。保存されないときは、正式なページで試してください（文の「共有」はそのまま使えます）',
   failed: '動画を共有・保存できませんでした（文の「共有」はそのまま使えます）',
+  empty: '動画を作れませんでした（中身が空でした。文の「共有」はそのまま使えます）',
+  error: '動画を作れませんでした（文の「共有」はそのまま使えます）',
 };
 
 // ---- 重ねる文字 ----
@@ -266,36 +268,38 @@ function roundRect(g, x, y, w, h, r) {
 //   shouldStop() → bool             一時停止・タブの切り替えで、録画を打ち切る
 //   canvas                          WebGL の canvas（描いた直後に 2D の canvas へ写す）
 // 戻り値の record(...) は { file, blob, url, mimeType, plan } か { cancelled: true } か { error } を返す約束
-export function createClipRecorder(host, { doc = document, MR = globalThis.MediaRecorder, now = () => performance.now(), raf = (f) => requestAnimationFrame(f), C = CLIP } = {}) {
+export const CLIP_MIN_BYTES = 1024; // これより小さい動画は中身がない（エンコーダの失敗など）
+export function createClipRecorder(host, { doc = document, MR = globalThis.MediaRecorder, now = () => performance.now(), raf = (f) => requestAnimationFrame(f), later = (f, ms) => setTimeout(f, ms), C = CLIP } = {}) {
   let busy = false, cancelFn = null;
   return {
     get busy() { return busy; },
     get supported() { return !!pickClipFormat(MR?.isTypeSupported?.bind(MR)) && typeof doc.createElement('canvas').captureStream === 'function'; },
+    // fix1（見直し I-1）: 待っている録画をすぐ終わらせる（次のフレームが来なくても）
     cancel() { cancelFn?.(); },
     // kind: 'blast' | 'blackhole'。size: { w, h }。overlay: clipOverlay の戻り値。onProgress(p 0〜1, phase)
+    // 戻り値は { blob, mimeType, ext, plan } | { cancelled: true } | { error }。どの道でも（描く側が投げても）最後に host.end を一度呼んで元へ戻す
     async record({ kind, size, overlay, titleFont = null, onProgress = () => {}, onPreview = () => {} }) {
       if (busy) return { error: 'busy' };
       const fmt = pickClipFormat(MR?.isTypeSupported?.bind(MR));
       if (!fmt) return { error: 'unsupported' };
       busy = true;
-      let cancelled = false, began = false;
-      cancelFn = () => { cancelled = true; };
-      const canvas = doc.createElement('canvas');
-      canvas.width = size.w; canvas.height = size.h;
-      const g = canvas.getContext('2d', { alpha: false });
-      let stream = null, audio = null, rec = null;
-      const cleanup = () => {
-        for (const tr of stream?.getTracks?.() ?? []) tr.stop();
-        for (const tr of audio?.getTracks?.() ?? []) tr.stop();
-        stream = audio = rec = null;
-        canvas.width = canvas.height = 0;
-      };
+      // 段取りの途中の待ち（フレーム・録画の止まり）は、やめる・失敗でいつでも打ち切れる（stop）
+      let stopWith = null;
+      const halted = new Promise((r) => { stopWith = r; });
+      let cancelled = false;
+      cancelFn = () => { cancelled = true; stopWith({ cancelled: true }); };
+      const fail = (error) => stopWith({ error });
+      const race = (p) => Promise.race([p, halted.then((x) => { throw x; })]);
+      let began = false, canvas = null, stream = null, audio = null, rec = null;
       try {
+        canvas = doc.createElement('canvas');
+        canvas.width = size.w; canvas.height = size.h;
+        const g = canvas.getContext('2d', { alpha: false });
         onProgress(0, 'prepare');
         // 準備の重い計算（リプレイを最初の時刻の手前まで進める）の前に、知らせを一度描かせる
-        await new Promise((r) => raf(() => r()));
-        const plan = host.begin(kind, size);
+        await race(new Promise((r) => raf(() => r())));
         began = true;
+        const plan = host.begin(kind, size);
         onPreview(canvas);
         const paint = (tau) => {
           host.frame(clipAt(plan, tau));
@@ -310,37 +314,108 @@ export function createClipRecorder(host, { doc = document, MR = globalThis.Media
         rec = new MR(stream, { mimeType: fmt.mimeType, videoBitsPerSecond: Math.round(Math.min(12e6, Math.max(2.5e6, px * 6))), audioBitsPerSecond: 128000 });
         const chunks = [];
         rec.ondataavailable = (e) => { if (e.data?.size) chunks.push(e.data); };
+        rec.onerror = (e) => fail(e?.error ?? new Error('MediaRecorder error'));
         const stopped = new Promise((r) => { rec.onstop = () => r(); });
         rec.start(250);
         const start = now();
         let prev = -Infinity;
-        await new Promise((resolve) => {
+        await race(new Promise((resolve) => {
           const tick = () => {
-            if (cancelled || host.shouldStop()) { cancelled = true; resolve(); return; }
-            const tau = Math.min(plan.total, (now() - start) / 1000);
-            for (const c of cuesBetween(plan, prev, tau)) host.cue(c.name, plan);
-            prev = tau;
-            paint(tau);
-            onProgress(tau / plan.total, 'record');
-            if (tau >= plan.total) { resolve(); return; }
-            raf(tick);
+            // fix1（I-1）: rAF の中で投げたら、外の約束を失敗で終わらせる（後始末へ）
+            try {
+              if (cancelled) return;
+              if (host.shouldStop()) { cancelFn(); return; }
+              const tau = Math.min(plan.total, (now() - start) / 1000);
+              for (const c of cuesBetween(plan, prev, tau)) host.cue(c.name, plan);
+              prev = tau;
+              paint(tau);
+              onProgress(tau / plan.total, 'record');
+              if (tau >= plan.total) { resolve(); return; }
+              raf(tick);
+            } catch (e) { fail(e); }
           };
           tick();
-        });
+        }));
         // 最後の一コマが写ってから止める
-        await new Promise((r) => raf(() => r()));
+        await race(new Promise((r) => raf(() => r())));
         rec.stop();
-        await stopped;
-        if (cancelled) return { cancelled: true };
+        await race(Promise.race([stopped, new Promise((r) => later(r, 2000))]));
         const blob = new Blob(chunks, { type: fmt.mimeType.split(';')[0] });
+        // fix1（M7）: 中身のない動画は失敗
+        if (blob.size < CLIP_MIN_BYTES) return { error: 'empty' };
         return { blob, mimeType: fmt.mimeType, ext: fmt.ext, plan };
-      } catch (error) {
-        try { rec?.state !== 'inactive' && rec?.stop(); } catch { /* 済み */ }
-        return { error };
+      } catch (x) {
+        if (x && typeof x === 'object' && ('cancelled' in x || ('error' in x && Object.keys(x).length === 1))) return x;
+        return { error: x };
       } finally {
-        cleanup();
-        if (began) host.end();
+        try { if (rec && rec.state !== 'inactive') rec.stop(); } catch { /* 済み */ }
+        for (const tr of stream?.getTracks?.() ?? []) { try { tr.stop(); } catch { /* 済み */ } }
+        for (const tr of audio?.getTracks?.() ?? []) { try { tr.stop(); } catch { /* 済み */ } }
+        if (canvas) canvas.width = canvas.height = 0;
+        stream = audio = rec = null;
+        let endError = null;
+        if (began) { try { host.end(); } catch (e) { endError = e; } }
         busy = false; cancelFn = null;
+        // 元へ戻す処理が投げた: 録画は失敗として返す（旗は下ろした）
+        if (endError) return { error: endError }; // eslint-disable-line no-unsafe-finally
+      }
+    },
+  };
+}
+
+// ---- 結果画面の「動画で共有」の段取り ----
+// fix1（見直し I-2・M3・M6・M7）: 押した瞬間（await の前）に、二度目を断り、結果画面を押せなくし、知らせを開く。準備（書体の読み込み）の間に
+// やめたら録画は始めない。失敗・中身のない動画は知らせを閉じて一言。「共有する」は一つ目が終わるまで二つ目を無視（共有と保存が両方走らない）。
+// 録った動画を覚えておく（last）のは debug のときだけ。
+// recorder: createClipRecorder の戻り値、panel: createClipPanel の戻り値、result: { setBusy, notify }、canClip(reason)、
+// prepare(info) → { kind, size, overlay, titleFont }（約束でよい）、share(r, info) → { file, text, label }、deliver(file, text) → deliverClip の答え
+export function createClipSession({ recorder, panel, result, canClip, prepare, share, deliver, debug = false }) {
+  // open: 押してから知らせを閉じるまで（できたあとの「共有する」の画面も含む）。その間は次を始めない
+  let open = false, cancelled = false, last = null;
+  return {
+    get busy() { return open || recorder.busy; },
+    get last() { return last; },
+    cancel() { cancelled = true; recorder.cancel(); },
+    async start(info) {
+      if (open || recorder.busy || !canClip(info.reason)) return null;
+      open = true; cancelled = false;
+      result.setBusy(true);
+      panel.start({ cancel: () => this.cancel() });
+      const back = () => { panel.close(); result.setBusy(false); open = false; };
+      try {
+        let opts;
+        try { opts = await prepare(info); } catch (error) { back(); result.notify(CLIP_NOTE.error); return { error }; }
+        if (cancelled) { back(); return { cancelled: true }; }
+        const r = await recorder.record({ ...opts, onProgress: (p, ph) => panel.progress(p, ph), onPreview: (c) => panel.preview(c) });
+        if (debug) last = r;
+        if (!r.blob) {
+          back();
+          if (r.error) result.notify(r.error === 'empty' ? CLIP_NOTE.empty : CLIP_NOTE.error);
+          return r;
+        }
+        const { file, text, label } = share(r, info);
+        let delivering = false;
+        panel.done({
+          blob: r.blob, label,
+          // Web Share はボタンを押したその操作の中で呼ぶ（録画のあとでは押した操作の期限が切れている）
+          async deliver() {
+            if (delivering) return null;
+            delivering = true;
+            panel.setBusy?.(true);
+            try {
+              const res = await deliver(file, text);
+              if (res === 'shared') back();
+              else if (CLIP_NOTE[res]) panel.say(CLIP_NOTE[res]);
+              return res;
+            } finally { delivering = false; panel.setBusy?.(false); }
+          },
+          close: back,
+        });
+        return r;
+      } catch (error) {
+        back();
+        result.notify(CLIP_NOTE.error);
+        return { error };
       }
     },
   };
@@ -409,6 +484,8 @@ export function createClipPanel(root, doc = document) {
       main.focus?.();
     },
     say(m) { note.textContent = m ?? ''; note.hidden = !m; },
+    // fix1（M3）: 共有・保存をしている間は「共有する」を押せない
+    setBusy(on) { main.disabled = !!on; },
     close() { clearView(); root.hidden = true; onCancel = onMain = onClose = null; },
   };
 }
