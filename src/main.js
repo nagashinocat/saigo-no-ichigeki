@@ -87,7 +87,7 @@ const cityInfo = { label: cityLabel(cityPick), share: cityLabel(cityPick).replac
 const records = createRecords((() => { try { return window.localStorage; } catch { return null; } })());
 const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || navigator.maxTouchPoints > 1 && matchMedia('(pointer: coarse)').matches;
 const tierParam = params.get('tier');
-// 導入（S6）の始め方: 'full'（最初の読み込み: TAP → 導入 → 題字 → TAP START）・'short'（リトライ: 短い題字から）・
+// 導入（S6）の始め方: 'full'（最初の読み込み: TAP → 導入 → 題字 → TAP START）・'retry'（リトライ: 導入も説明もなし、すぐ遊べる）・'short'（?intro=short 撮影用）・
 // 'bypass'（撮影の ?debug で ?intro がないとき: 今までどおりすぐ遊べる）
 const startMode = introMode({ params, storage: session });
 let tier = tierParam in TIERS ? tierParam : pickTier({ isMobile, deviceMemory: navigator.deviceMemory, cores: navigator.hardwareConcurrency });
@@ -153,7 +153,7 @@ const startHint = document.getElementById('start');
 const result = createResult(document.getElementById('result'), {
   // 壊れた街や地面のえぐれは作り直せないので、ページを読み直す。R3: 同じ街（今日の街・リンクの街・試しの種）にもう一度挑む
   onRetry() {
-    markRetry(session); // 読み直したページは導入を飛ばし、題字と TAP START から
+    markRetry(session); // 読み直したページは導入も遊び方の説明も飛ばして、すぐ遊べる（R1g）
     rememberRetryCity(session, cityPick); // fix1: 0 時をまたいでも同じ今日の街
     location.reload();
   },
@@ -468,6 +468,7 @@ if (introFlow.blocksInput) hud.setVisible(false); // HUD はゲームが始ま�
 if (introFlow.state === 'gate') overlay.showGate(true);
 if (introFlow.state === 'game') { overlay.fadeOut(0); }
 else startHint.hidden = true;
+if (startMode === 'retry') startHint.hidden = true; // R1g: リトライは遊び方の説明も飛ばして、すぐ遊べる
 // 浮き上がり: 0 から上がって（前半）ゆっくり宙の高さ 0 へ降りる。どの時刻も ≥ 0
 const heroLiftAt = (u) => HERO_LIFT.up * Math.sin(Math.PI * Math.min(1, Math.max(0, u))) ** 2;
 let overlayT = -1;

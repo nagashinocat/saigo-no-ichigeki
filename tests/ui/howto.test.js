@@ -16,3 +16,11 @@ test('R1f: はじめの説明で、隠れる操作は「LOOK OUT! の矢印を�
   const uses = text.match(/払[うっえいわ]/g) ?? [];
   expect(uses.length).toBe(2);
 });
+
+// R1g（持ち主 00:47「リプレイボタン押したら説明がでてる」）: リトライの読み直しでは、遊び方の説明（#start）を出さない
+test('R1g: main.js はリトライ（mode retry）のとき遊び方の説明を隠す。通常の読み込みは導入の終わりで出す', () => {
+  const src = readFileSync(new URL('../../src/main.js', import.meta.url), 'utf8');
+  expect(src).toMatch(/startMode === 'retry'|introFlow\.mode === 'retry'/);
+  expect(src).toMatch(/startHint\.hidden = true/);
+  expect(src).toMatch(/onStart\(\)[\s\S]*startHint\.hidden = false/);
+});

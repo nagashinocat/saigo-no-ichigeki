@@ -100,7 +100,27 @@ test('TAP START はゲームを一度だけ始める（二度押しても一度�
   expect(game.timer.remaining).toBeCloseTo(CONFIG.roundSeconds - 1, 5);
 });
 
-test('リトライ: 導入を飛ばして短い題字から（TAP の画面もなし）', () => {
+test('R1g: リトライ（mode retry）は導入も題字も TAP START もなく、すぐ遊べる。最初のタップがそのまま溜めになる', () => {
+  const { flow, game, events, down, tick } = rig('retry');
+  expect(flow.state).toBe('game');
+  expect(flow.blocksInput).toBe(false);
+  expect(flow.started).toBe(true);
+  expect(flow.buttonVisible).toBe(false);
+  expect(events.begin).toBe(0);
+  down();
+  tick(0.3);
+  expect(game.charge.active).toBe(true);
+  expect(game.phase).toBe('playing');
+});
+
+test('通常の読み込み（mode full）は TAP の画面から導入・題字を通り、最初のタップは溜めにならない', () => {
+  const { flow, game, down } = rig('full');
+  expect(flow.state).toBe('gate');
+  down();
+  expect(game.charge.active).toBe(false);
+});
+
+test('?intro=short の撮影用の短い題字は今までどおり（リトライとは別）', () => {
   const { flow, events, tick } = rig('short');
   expect(flow.state).toBe('intro');
   expect(flow.timeline.short).toBe(true);
@@ -110,13 +130,14 @@ test('リトライ: 導入を飛ばして短い題字から（TAP の画面も�
   expect(flow.start()).toBe(true);
 });
 
-test('introMode: リトライの印があれば短い題字（印は一度で消える）、撮影の ?debug は ?intro がなければ今までどおり', () => {
+test('introMode: リトライの印があれば retry（導入も説明もなし。印は一度で消える）、撮影の ?debug は ?intro がなければ今までどおり', () => {
   const store = new Map();
   const ss = { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => store.set(k, v), removeItem: (k) => store.delete(k) };
   expect(introMode({ params: new URLSearchParams(''), storage: ss })).toBe('full');
   ss.setItem(RETRY_KEY, '1');
-  expect(introMode({ params: new URLSearchParams(''), storage: ss })).toBe('short');
+  expect(introMode({ params: new URLSearchParams(''), storage: ss })).toBe('retry');
   expect(store.has(RETRY_KEY)).toBe(false);
+  expect(introMode({ params: new URLSearchParams(''), storage: ss })).toBe('full'); // 一度だけ
   expect(introMode({ params: new URLSearchParams('debug'), storage: ss })).toBe('bypass');
   expect(introMode({ params: new URLSearchParams('debug&intro'), storage: ss })).toBe('full');
   expect(introMode({ params: new URLSearchParams('intro=short'), storage: ss })).toBe('short');

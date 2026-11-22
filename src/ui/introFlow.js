@@ -4,7 +4,7 @@ import { createIntroTimeline } from '../render/introTimeline.js';
 // 'title'（「最後の一撃」と TAP START）→ 'game'。
 // 画面のタップは、ゲームが始まるまで導入が受け取る（consumePointer）: gate では離したとき（release）に導入を始め、導入の途中では題字の終わりへ飛ばす。
 // 長押しの押下にはならないので、貯めることも放つこともない。ゲームを始めるのは TAP START（start）だけで、一度きり。
-// mode: 'full'（最初の読み込み）・'short'（リトライ。TAP の画面も導入もなく、短い題字から）・'bypass'（撮影の ?debug。今までどおりすぐ遊べる）
+// mode: 'full'（最初の読み込み）・'short'（?intro=short の撮影用。短い題字から）・'retry'（R1g リトライ: 導入も題字も説明もなく、すぐ遊べる）・'bypass'（撮影の ?debug。今までどおりすぐ遊べる）
 export const RETRY_KEY = 'saigo-no-ichigeki:retry';
 
 // URL と sessionStorage から始め方を決める。リトライの印は一度読んだら消す（そのあとの読み直しは最初から）
@@ -17,7 +17,7 @@ export function introMode({ params, storage }) {
     retry = storage?.getItem(RETRY_KEY) === '1';
     if (retry) storage.removeItem(RETRY_KEY);
   } catch { /* 保存できない環境では毎回最初から */ }
-  return retry ? 'short' : 'full';
+  return retry ? 'retry' : 'full';
 }
 
 // リトライの直前に呼ぶ（読み直したページが導入を飛ばす）
@@ -27,8 +27,9 @@ export function markRetry(storage) {
 
 export function createIntroFlow({ mode = 'full', onBegin = () => {}, onSkip = () => {}, onTitle = () => {}, onStart = () => {} } = {}) {
   const timeline = createIntroTimeline({ short: mode === 'short' });
-  let state = mode === 'bypass' ? 'game' : mode === 'short' ? 'intro' : 'gate';
-  let time = 0, started = mode === 'bypass';
+  const direct = mode === 'bypass' || mode === 'retry';
+  let state = direct ? 'game' : mode === 'short' ? 'intro' : 'gate';
+  let time = 0, started = direct;
   // TAP の直後の準備（onBegin。同期で走るので、その間に押したタップはあとから届く）が終わった時刻。
   // 導入の間、これより前の timeStamp の入力は飛ばしに使わない
   let readyAt = -Infinity;
