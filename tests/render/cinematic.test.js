@@ -767,3 +767,40 @@ for (const size of [{ w: 390, h: 844 }, { w: 1280, h: 720 }]) {
     expect(line.visible && line.material.uniforms.uI.value > 0.001).toBe(false);
   });
 }
+
+// M2（持ち主 15:20「光の柱は画面うえまで突き抜けて」）: ドームが変わってできた縦の光は、細くなって消える前に、画面の上の端より先まで伸びる
+// （光る部分の先が画面の外へ突き抜ける。途中で止まって見えない）。R1d の見直しの持ち越し: 細りきる前に太さが止まる間（minThick の板で約 0.3 秒）
+// をなくし、見える太さ（板の太さ × LINE_FRAG の芯の幅 mix(0.22, 0.012, uThin)）は、線が見えている間ずっと細り続ける
+for (const size of [{ w: 390, h: 844 }, { w: 1280, h: 720 }]) {
+  test(`M2: 宇宙の縦の光は画面の上の端を突き抜けてから、止まらずに細って消える（${size.w}×${size.h}）`, () => {
+    const { cin, plan, shot } = makeCinematic(size);
+    cin.play(plan, shot);
+    const tl = cin.timeline;
+    advance(cin, tl.flatten - 0.02 - cin.time);
+    const scene = cin.renderScene;
+    const line = scene.children.find((o) => o.isMesh && o.material.uniforms?.uThin);
+    const up = new THREE.Vector3(), tip = new THREE.Vector3();
+    let pierced = null, prevVis = Infinity, flatRun = 0, maxFlat = 0, firstVis = null;
+    while (cin.time < tl.lineEnd + 0.05) {
+      cin.update(1 / 60);
+      const u = line.material.uniforms;
+      if (!(line.visible && u.uI.value > 0.02)) continue;
+      // 光る部分の先（板の下から 0.72。LINE_FRAG の along が半分になる所）
+      up.set(0, 1, 0).applyQuaternion(line.quaternion);
+      tip.copy(line.position).addScaledVector(up, 0.22 * line.scale.y);
+      const cam = cin.camera; cam.updateMatrixWorld();
+      const ndc = tip.clone().project(cam);
+      if (pierced == null && ndc.y > 1.0) pierced = { t: cin.time, I: u.uI.value };
+      const vis = line.scale.x * (0.22 + (0.012 - 0.22) * u.uThin.value);
+      if (firstVis == null) firstVis = vis;
+      expect(vis, `t=${cin.time.toFixed(3)}`).toBeLessThanOrEqual(prevVis + 1e-9); // 細るだけ
+      if (prevVis < Infinity && prevVis - vis < 0.004 * firstVis) flatRun += 1 / 60; else flatRun = 0;
+      maxFlat = Math.max(maxFlat, flatRun);
+      prevVis = vis;
+    }
+    expect(pierced, '光の先が画面の上の端を越えない').not.toBeNull();
+    expect(pierced.I).toBeGreaterThan(0.5); // 消えかける前に突き抜ける
+    expect(pierced.t).toBeLessThan(tl.lineEnd - 0.15);
+    expect(maxFlat).toBeLessThan(0.1); // 太さが止まる間がない
+  });
+}

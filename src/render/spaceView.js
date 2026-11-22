@@ -377,6 +377,18 @@ export function createSpaceView(tier = 'high') {
     },
     // 縦一線の光（R1b）: 長さ len、太さ thick（単位）、細くなる thin 0〜1、明るさ I。画面にまっすぐ立つよう、カメラの傾きを戻した
     // 縦向きに置き、下の端を街（の少し下）に当てて上へ伸ばす
+    // M2: 線の板の向き（画面に向けて、カメラの傾きの分だけ戻した上向き）に沿って、原点からどこまで伸ばせば画面の縦 ndc に届くか（単位。二分法）
+    lineReach(ndc) {
+      camera.updateMatrixWorld();
+      const q = new THREE.Quaternion().copy(camera.quaternion).multiply(_qz.setFromAxisAngle(_z, -camRoll));
+      const up = new THREE.Vector3(0, 1, 0).applyQuaternion(q), p = new THREE.Vector3();
+      const at = (h) => p.copy(up).multiplyScalar(h).project(camera);
+      if (at(0).y >= ndc) return 0;
+      let lo = 0, hi = 1;
+      while (hi < 1e6 && at(hi).y < ndc && p.z < 1) { lo = hi; hi *= 2; }
+      for (let i = 0; i < 30; i++) { const m = (lo + hi) / 2; if (at(m).y < ndc && p.z < 1) lo = m; else hi = m; }
+      return hi;
+    },
     setLine(len, thick, thin, I) {
       line.visible = I > 0.001;
       lineU.uI.value = I;

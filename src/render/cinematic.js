@@ -93,7 +93,13 @@ const DOME0 = 0.4;
 // R1d（持ち主 14:13）: 押しつぶされる半球から縦一本の線へ引き継ぐところ。from: 押しつぶし（easeInOut、半球の幅は 1 − flat）がここを
 // 越えてから（幅が始めの 30% より細くなってから）線が見え始め、span で半球と入れ替わる。glowFrac: 線の板のうち光る部分の割合
 // （spaceView の LINE_FRAG の along。下からおよそ 0.7 まで）。minThick: 細りきった線の板の太さの下限（半球の半径に対して）
-export const LINE_HANDOFF = { from: 0.72, span: 0.2, glowFrac: 0.7, minThick: 0.3, topNdc: 0.7 };
+// M2（持ち主 15:20「光の柱は画面うえまで突き抜けて」）: pierceNdc: 線へ変わったあと、光る部分の先（板の下から tipFrac）が画面の縦 pierceNdc
+// （1 より上 = 画面の外）まで突き抜けて伸びる。伸びる進み = easeOut(pierceHand·引き継ぎ + pierceThin·細る進み)
+export const LINE_HANDOFF = { from: 0.72, span: 0.2, glowFrac: 0.7, minThick: 0.3, topNdc: 0.7, pierceNdc: 1.2, tipFrac: 0.69, pierceHand: 0.4, pierceThin: 1.6 };
+// M2（R1d の見直しの持ち越し）: 押しつぶしで半球の幅（2·(1 − flat)）が minThick まで細った時刻（flatten からの、押しつぶしの進み f）。
+// そこから先は板の太さを止め、芯の幅（LINE_FRAG の uThin）を lineEnd まで一定の速さで細らせる（太さが止まる間をなくす）
+const easeInOutF = (x) => { const t = Math.min(1, Math.max(0, x)); return t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2; };
+export const LINE_FLOOR_F = (() => { let lo = 0, hi = 1; for (let i = 0; i < 40; i++) { const m = (lo + hi) / 2; if (2 * (1 - easeInOutF(m)) > LINE_HANDOFF.minThick) lo = m; else hi = m; } return (lo + hi) / 2; })();
 // 街（宇宙の原点）から真上へ、どの高さまでなら画面の縦 topNdc（NDC）より下に映るか（単位。二分法）
 const _sky = new THREE.Vector3();
 export function skyRoom(cam, topNdc) {
@@ -451,10 +457,19 @@ export function createCinematic(views, enemyView, explosionView, { renderer, sce
     // （spaceView.setDome の r·(1 + 2.5·flat)）に合い、太さは半球の今の幅（細りきっても見える下限 minThick·r）。
     // 押しつぶしが終わると細くなりながら少し上へ伸びて消える
     const domeH = r * (1 + stretch * flat);
-    const len = (domeH / LINE_HANDOFF.glowFrac) * (1 + 0.12 * th);
-    const thick = Math.max(2 * r * Math.max(0.002, 1 - flat), LINE_HANDOFF.minThick * r);
+    const baseLen = (domeH / LINE_HANDOFF.glowFrac) * (1 + 0.12 * th);
+    // M2: 線へ変わると、光る部分の先が画面の上の端を突き抜けるまで伸びる
+    const pierceLen = (space.lineReach ? space.lineReach(LINE_HANDOFF.pierceNdc) : skyRoom(space.camera, LINE_HANDOFF.pierceNdc)) / LINE_HANDOFF.tipFrac;
+    const pr = easeOut(LINE_HANDOFF.pierceHand * hand + LINE_HANDOFF.pierceThin * th);
+    const len = baseLen + Math.max(0, pierceLen - baseLen) * pr;
+    // M2: 太さは半球の幅のまま細り、minThick に届いたら（LINE_FLOOR_F）板の太さはそこで止め、芯の幅を lineEnd まで細らせ続ける
+    const tFloor = tl.flatten + LINE_FLOOR_F * FINALE.flattenSec;
+    const rFloor = rMax * (DOME0 + (1 - DOME0) * tl.domeAt(tFloor));
+    const floored = t >= tFloor;
+    const thick = floored ? LINE_HANDOFF.minThick * rFloor : 2 * r * Math.max(0.002, 1 - flat);
+    const thin = floored ? clamp01((t - tFloor) / Math.max(1e-6, tl.lineEnd - tFloor)) : 0;
     const lineI = hand * (1 - smooth((th - 0.25) / 0.75)) * 1.6;
-    space.setLine(len, thick, th, lineI);
+    space.setLine(len, thick, thin, lineI);
     // 街を見回る軍勢: 生きている者は緑の点、宇宙の光の半球の縁が届いた瞬間に火花（宇宙の座標へ縮める: 半径 radius m → rMax）
     if (getEnemies) {
       const k = rMax / Math.max(1, shot.radius);
