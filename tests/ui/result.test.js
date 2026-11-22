@@ -1,5 +1,6 @@
 import { test, expect } from 'vitest';
-import { shareText, headlineText, resultContent, breakdownLines, GAME_TITLE, AMOUNT_LABEL } from '../../src/ui/result.js';
+import { shareText, shareOrCopy, SHARE_NOTE, headlineText, resultContent, breakdownLines, bestLine, GAME_TITLE, AMOUNT_LABEL } from '../../src/ui/result.js';
+import { budgetLine } from '../../src/ui/format.js';
 
 const CLEAR = { clear: true, total: 95, survivors: [] };
 const FAIL = { clear: false, total: 80, survivors: [{ id: 1, x: 0, z: 600, patrol: true }, { id: 2, x: 610, z: 0, patrol: true }, { id: 3, x: -30, z: 5, patrol: false }] };
@@ -14,10 +15,11 @@ test('見出し: 撃退成功 / 撃退失敗　残り N 体 / 時間切れはブ
   expect(headlineText('blackhole', null)).toBe('ブラックホールになった');
 });
 
-test('結果の中身: 最後の一発は勝ち負けの見出しと被害額。ブラックホールは被害額を出さない（共有もしない）', () => {
-  expect(resultContent(3.2e8, 'released', CLEAR)).toEqual({ title: '最後の一撃', headline: '撃退成功', clear: true, amount: '¥3.2億', share: true });
-  expect(resultContent(1.5e7, 'released', FAIL)).toEqual({ title: '最後の一撃', headline: '撃退失敗　残り 3 体', clear: false, amount: '¥1,500万', share: true });
-  expect(resultContent(0, 'blackhole', null)).toEqual({ title: '最後の一撃', headline: 'ブラックホールになった', clear: null, amount: null, share: false, rank: 'C' }); // R2: 時間切れは C
+// R3: 被害額のたとえ（compare）を添える。ブラックホールも称号を共有できるので share は true
+test('結果の中身: 最後の一発は勝ち負けの見出しと被害額。ブラックホールは被害額を出さない', () => {
+  expect(resultContent(3.2e8, 'released', CLEAR)).toEqual({ title: '最後の一撃', headline: '撃退成功', clear: true, amount: '¥3.2億', compare: budgetLine(3.2e8), share: true });
+  expect(resultContent(1.5e7, 'released', FAIL)).toEqual({ title: '最後の一撃', headline: '撃退失敗　残り 3 体', clear: false, amount: '¥1,500万', compare: budgetLine(1.5e7), share: true });
+  expect(resultContent(0, 'blackhole', null)).toEqual({ title: '最後の一撃', headline: 'ブラックホールになった', clear: null, amount: null, compare: null, share: true, rank: 'C' }); // R2: 時間切れは C
 });
 
 test('共有の文言: タイトル「最後の一撃」、勝ち負け、破壊額、遊ぶ場所の URL', () => {
@@ -67,4 +69,78 @@ test('R2: 共有の文言にランク', () => {
   const t = shareText(2.7e12, CLEAR_R, 'https://example.com/');
   expect(t).toContain('ランク S');
   expect(t).toContain('被害額 ¥2.7兆');
+});
+
+// R3（spec §15 今日の街・被害額のたとえ・称号・共有）
+const CITY = { label: '今日の街 11/21', share: '今日の街 11/21', link: 'https://example.com/g/?city=20261121' };
+const LINK_CITY = { label: '11/20の街（リンク）', share: '11/20の街', link: 'https://example.com/g/?city=20261120' };
+const TITLES_NEW = [{ id: 'closeCall', name: 'ギリギリの英雄', isNew: true }, { id: 'noPuff', name: '払わぬ者', isNew: false }];
+
+test('R3: 結果の中身に街の名前・たとえ・称号のバッジ（初めては NEW）・自己ベスト', () => {
+  const c = resultContent(2.7e12, 'released', CLEAR_R, { city: CITY, titles: TITLES_NEW, best: { best: { rank: 'S', damage: 2.7e12 }, isNew: true } });
+  expect(c.city).toBe('今日の街 11/21');
+  expect(c.compare).toBe('国家予算（一般会計 約112兆円）の約8.8日分');
+  expect(c.titles).toEqual(TITLES_NEW);
+  expect(c.best).toEqual({ text: '自己ベスト S ¥2.7兆', isNew: true });
+  const f = resultContent(2.1e12, 'released', { ...FAIL, bonus: BONUS, puffsUsed: 3, rank: 'C' }, { city: LINK_CITY, titles: [], best: { best: { rank: 'A', damage: 2.4e12 }, isNew: false } });
+  expect(f.city).toBe('11/20の街（リンク）');
+  expect(f.titles).toEqual([]);
+  expect(f.best).toEqual({ text: '自己ベスト A ¥2.4兆', isNew: false });
+  // ブラックホールは被害額もたとえも無いが、称号と前の自己ベストは出す
+  const b = resultContent(0, 'blackhole', null, { city: CITY, titles: [{ id: 'blackhole', name: 'すべてを飲み込んだ者', isNew: true }], best: { best: null, isNew: false } });
+  expect(b.compare).toBe(null);
+  expect(b.titles.map((t) => t.name)).toEqual(['すべてを飲み込んだ者']);
+  expect(b.best).toBe(null);
+  // 付けるものが無ければ前と同じ
+  expect(resultContent(2.7e12, 'released', CLEAR_R).city).toBeUndefined();
+});
+
+test('R3: 自己ベストの行', () => {
+  expect(bestLine({ best: { rank: 'B', damage: 1.86e12 }, isNew: false })).toEqual({ text: '自己ベスト B ¥1.9兆', isNew: false });
+  expect(bestLine({ best: null, isNew: false })).toBe(null);
+  expect(bestLine(null)).toBe(null);
+});
+
+test('R3: 共有の文: 題字・ランク・勝ち負け・被害額とたとえ・称号・?city= のリンク・#最後の一撃', () => {
+  const t = shareText(2.7e12, CLEAR_R, CITY.link, { reason: 'released', city: CITY, titles: TITLES_NEW });
+  expect(t).toBe([
+    '「最後の一撃」撃退成功！ ランク S',
+    '被害額 ¥2.7兆（国家予算（一般会計 約112兆円）の約8.8日分）',
+    '称号「ギリギリの英雄」「払わぬ者」',
+    '今日の街 11/21 に挑戦 → https://example.com/g/?city=20261121',
+    '#最後の一撃',
+  ].join('\n'));
+  const f = shareText(2.1e12, { ...FAIL, rank: 'C' }, LINK_CITY.link, { reason: 'released', city: LINK_CITY, titles: [] });
+  expect(f).toBe([
+    '「最後の一撃」撃退失敗…残り 3 体。 ランク C',
+    '被害額 ¥2.1兆（国家予算（一般会計 約112兆円）の約6.8日分）',
+    '11/20の街 に挑戦 → https://example.com/g/?city=20261120',
+    '#最後の一撃',
+  ].join('\n'));
+  const b = shareText(0, null, CITY.link, { reason: 'blackhole', city: CITY, titles: [{ id: 'blackhole', name: 'すべてを飲み込んだ者', isNew: true }] });
+  expect(b).toBe([
+    '「最後の一撃」ブラックホールになった… ランク C',
+    '称号「すべてを飲み込んだ者」',
+    '今日の街 11/21 に挑戦 → https://example.com/g/?city=20261121',
+    '#最後の一撃',
+  ].join('\n'));
+  expect(b).not.toContain('被害額');
+});
+
+test('R3: 共有は Web Share、無ければクリップボードへ写して「コピーしました」', async () => {
+  const got = [];
+  expect(await shareOrCopy('T', { nav: { share: async (d) => got.push(['share', d]) } })).toBe('shared');
+  expect(got).toEqual([['share', { text: 'T' }]]);
+  // 取り消しは何も出さない
+  expect(await shareOrCopy('T', { nav: { share: async () => { const e = new Error('x'); e.name = 'AbortError'; throw e; } } })).toBe('cancel');
+  // Web Share が無い・失敗した → クリップボード
+  expect(await shareOrCopy('T', { nav: { clipboard: { writeText: async (t) => got.push(['copy', t]) } } })).toBe('copied');
+  expect(await shareOrCopy('T', { nav: { share: async () => { throw new Error('NotAllowed'); }, clipboard: { writeText: async (t) => got.push(['copy', t]) } } })).toBe('copied');
+  expect(got.slice(1)).toEqual([['copy', 'T'], ['copy', 'T']]);
+  // クリップボードも使えない → 古い execCommand、それも駄目なら failed
+  const doc = (ok) => ({ body: { append() {} }, createElement: () => ({ setAttribute() {}, style: {}, select() {}, remove() {} }), execCommand: () => ok });
+  expect(await shareOrCopy('T', { nav: {}, doc: doc(true) })).toBe('copied');
+  expect(await shareOrCopy('T', { nav: {}, doc: doc(false) })).toBe('failed');
+  expect(await shareOrCopy('T', { nav: null, doc: null })).toBe('failed');
+  expect(SHARE_NOTE.copied).toBe('コピーしました');
 });

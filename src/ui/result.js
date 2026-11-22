@@ -1,4 +1,4 @@
-import { formatYen } from './format.js';
+import { formatYen, budgetLine } from './format.js';
 
 // ゲームのタイトル（持ち主 2026-11-21 15:57。仮題「街破壊」から変更）
 export const GAME_TITLE = '最後の一撃';
@@ -14,10 +14,27 @@ export function headlineText(reason, outcome) {
   return outcome.clear ? '撃退成功' : `撃退失敗　残り ${outcome.survivors.length} 体`;
 }
 
-export function shareText(total, outcome, url = pageUrl()) {
-  const head = outcome?.clear ? '撃退成功！' : `撃退失敗…残り ${outcome?.survivors.length ?? 0} 体。`;
-  const rank = outcome?.rank ? ` ランク ${outcome.rank}` : '';
-  return `「${GAME_TITLE}」${head}${rank} ${AMOUNT_LABEL} ${formatYen(total)} #最後の一撃 ${url}`.trim();
+// R3（spec §15 共有）: 題字・勝ち負け・ランク / 被害額とたとえ / 称号 / 街のリンク（?city=）/ #最後の一撃 を行に分ける。
+// opts: { reason, city: { share（街の名前）, link }, titles: [{ name }] }。url: 街のリンク（無ければ今のページ）
+export function shareText(total, outcome, url = pageUrl(), { reason = outcome ? 'released' : 'blackhole', city = null, titles = [] } = {}) {
+  const released = reason !== 'blackhole' && !!outcome;
+  const head = !released ? 'ブラックホールになった…' : outcome.clear ? '撃退成功！' : `撃退失敗…残り ${outcome.survivors.length} 体。`;
+  const rank = released ? outcome.rank : 'C';
+  const lines = [`「${GAME_TITLE}」${head}${rank ? ` ランク ${rank}` : ''}`];
+  if (released) {
+    const cmp = budgetLine(total);
+    lines.push(`${AMOUNT_LABEL} ${formatYen(total)}${cmp ? `（${cmp}）` : ''}`);
+  }
+  if (titles.length) lines.push('称号' + titles.map((t) => `「${t.name}」`).join(''));
+  lines.push(city ? `${city.share} に挑戦 → ${url}` : url);
+  lines.push('#最後の一撃');
+  return lines.filter(Boolean).join('\n');
+}
+
+// R3: 自己ベストの行（{ best: { rank, damage }, isNew }。ベストが無ければ null）
+export function bestLine(b) {
+  if (!b?.best) return null;
+  return { text: `自己ベスト ${b.best.rank} ${formatYen(b.best.damage)}`, isNew: !!b.isNew };
 }
 
 // R2（spec §15 ギリギリのボーナス）: 被害額にかかった倍率の内訳（結果画面の小さな行）。bonus: outcome.bonus（game.js）
@@ -28,15 +45,23 @@ export function breakdownLines(bonus) {
 }
 
 // 結果画面に出すもの。見出しが主、被害額は見出しより小さく。ブラックホールは被害額をつけない
-export function resultContent(total, reason, outcome) {
+// R3: 被害額のたとえ（compare）。extra: { city: { label }, titles: [{ id, name, isNew }], best: records.submitBest の答え } があれば
+// 街の名前・称号のバッジ・自己ベストも。ブラックホールも称号を共有できる（share は常に true）
+export function resultContent(total, reason, outcome, extra = null) {
   const released = reason !== 'blackhole' && !!outcome;
   const c = {
     title: GAME_TITLE,
     headline: headlineText(reason, outcome),
     clear: released ? outcome.clear : null,
     amount: released ? formatYen(total) : null,
-    share: released,
+    compare: released ? budgetLine(total) : null,
+    share: true,
   };
+  if (extra) {
+    if (extra.city) c.city = extra.city.label;
+    c.titles = extra.titles ?? [];
+    c.best = bestLine(extra.best);
+  }
   // R2（spec §15 評価のランク）: ランク（game.js の outcome.rank。時間切れは C）と倍率の内訳
   const rank = released ? outcome.rank : 'C';
   if (rank) c.rank = rank;
@@ -51,10 +76,34 @@ function el(tag, cls, text) {
   return e;
 }
 
+// R3: 共有。Web Share が使えればそれ、無ければクリップボードへ写して「コピーしました」（サーバーは持たない）
+export async function shareOrCopy(text, { nav = typeof navigator === 'undefined' ? null : navigator, doc = typeof document === 'undefined' ? null : document } = {}) {
+  if (nav?.share) {
+    try { await nav.share({ text }); return 'shared'; } catch (e) { if (e?.name === 'AbortError') return 'cancel'; /* 共有できなければ写す */ }
+  }
+  try { await nav.clipboard.writeText(text); return 'copied'; } catch { /* クリップボードが使えない（iframe の許可など） */ }
+  try {
+    const ta = doc.createElement('textarea');
+    ta.value = text; ta.setAttribute('readonly', ''); ta.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0';
+    doc.body.append(ta); ta.select();
+    const ok = doc.execCommand('copy');
+    ta.remove();
+    if (ok) return 'copied';
+  } catch { /* 写せない */ }
+  return 'failed';
+}
+export const SHARE_NOTE = { copied: 'コピーしました', failed: 'コピーできませんでした' };
+
 // 結果画面。「もう一度」は onRetry、「リプレイ」は onReplay（最後の一発をもう一度見る）、
-// 「共有」は Web Share か、使えなければ X の投稿画面を開く
-export function createResult(root, { onRetry, onReplay = null }) {
+// 「共有」は Web Share か、使えなければクリップボードへ写す（R3）。getShare: () => ({ url, city, titles })（街のリンクと称号）
+export function createResult(root, { onRetry, onReplay = null, share: shareFn = shareOrCopy }) {
   const title = el('div', 'result-title', GAME_TITLE);
+  // R3: 街の名前（題字の下）・称号のバッジ（見出しの下）・被害額のたとえ（被害額の下）・自己ベスト（内訳の下）・共有の知らせ
+  const cityEl = el('div', 'result-city');
+  const titlesEl = el('div', 'result-titles');
+  const compare = el('div', 'result-compare');
+  const bestEl = el('div', 'result-best');
+  const note = el('div', 'result-note');
   const headline = el('div', 'result-headline');
   const amount = el('div', 'result-amount');
   const label = el('div', 'result-label', AMOUNT_LABEL);
@@ -70,28 +119,46 @@ export function createResult(root, { onRetry, onReplay = null }) {
   row.append(retry, share);
   const row2 = el('div', 'result-row sub');
   row2.append(replay);
-  root.append(title, rankEl, headline, label, amount, breakdown, row, row2);
+  root.append(title, cityEl, rankEl, headline, titlesEl, label, amount, compare, breakdown, bestEl, row, row2, note);
   root.hidden = true;
-  let total = 0, outcome = null;
+  let total = 0, outcome = null, reason = null, extra = null, noteTimer = 0;
   retry.addEventListener('click', () => onRetry());
   replay.addEventListener('click', () => onReplay?.());
   share.addEventListener('click', async () => {
-    const text = shareText(total, outcome);
-    if (navigator.share) {
-      try { await navigator.share({ text }); } catch { /* 取り消し */ }
-    } else {
-      window.open('https://twitter.com/intent/tweet?text=' + encodeURIComponent(text), '_blank', 'noopener');
+    const text = shareText(total, outcome, extra?.city?.link ?? pageUrl(), { reason, city: extra?.city ?? null, titles: extra?.titles ?? [] });
+    const r = await shareFn(text);
+    if (SHARE_NOTE[r]) {
+      note.textContent = SHARE_NOTE[r];
+      note.hidden = false;
+      clearTimeout(noteTimer);
+      noteTimer = setTimeout(() => { note.hidden = true; }, 2200);
     }
   });
   return {
-    // o: game.outcome（時間切れは null）。opts.replay: 「リプレイ」を出す（最後の一発を見せ直せるとき）
-    show(t, why, o = null, { replay: canReplay = false } = {}) {
-      total = t; outcome = o;
-      const c = resultContent(t, why, o);
-      headline.textContent = c.headline;
+    // o: game.outcome（時間切れは null）。opts.replay: 「リプレイ」を出す（最後の一発を見せ直せるとき）。
+    // opts.extra（R3）: { city: { label, share, link }, titles: [{ id, name, isNew }], best: records.submitBest の答え }
+    show(t, why, o = null, { replay: canReplay = false, extra: ex = null } = {}) {
+      total = t; outcome = o; reason = why; extra = ex;
+      const c = resultContent(t, why, o, ex);
+      cityEl.textContent = c.city ?? '';
+      cityEl.hidden = !c.city;
+      titlesEl.replaceChildren(...(c.titles ?? []).map((tt) => {
+        const b = el('span', 'result-badge' + (tt.isNew ? ' new' : ''), tt.name);
+        if (tt.isNew) b.append(el('i', null, 'NEW'));
+        return b;
+      }));
+      titlesEl.hidden = !c.titles?.length;
+      compare.textContent = c.compare ?? '';
+      compare.hidden = !c.compare;
+      bestEl.replaceChildren(...(c.best ? [document.createTextNode(c.best.text), ...(c.best.isNew ? [el('b', null, 'NEW!')] : [])] : []));
+      bestEl.hidden = !c.best;
+      note.hidden = true;
+      // R3: 折り返すときは全角の間で（「撃退失敗」「残り N 体」をそれぞれ切らない）。文字は同じ
+      headline.replaceChildren(...c.headline.split('　').flatMap((part, i) => [...(i ? [document.createTextNode('　')] : []), el('span', 'nobr', part)]));
       // 勝ち負けで色を変える（撃退成功は明るく、失敗は生き残りの光と同じ赤緑の気配）
       root.classList.toggle('clear', c.clear === true);
       root.classList.toggle('fail', c.clear === false);
+      root.classList.toggle('blackhole', why === 'blackhole'); // R3: 長い見出しを画面の幅に収める
       amount.textContent = c.amount ?? '';
       rankLetter.textContent = c.rank ?? '';
       rankEl.hidden = !c.rank;

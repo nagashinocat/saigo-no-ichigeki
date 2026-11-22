@@ -52,6 +52,9 @@ import { createIntroFlow, introMode, markRetry } from './ui/introFlow.js';
 import { scheduleIntroSfx, renderIntroAudio } from './audio/introSfx.js';
 import { prepareIntroMusic, introMusicPlan } from './audio/introMusic.js';
 import { createIntroClock } from './audio/introClock.js';
+import { pickCity, cityLabel, cityLink } from './game/daily.js';
+import { earnedTitles, titleName } from './game/titles.js';
+import { createRecords } from './game/records.js';
 import { createIntroGesture } from './ui/introGesture.js';
 import { createDrainFx } from './ui/drainFx.js';
 import { drainMulOf } from './game/enemies.js';
@@ -63,8 +66,13 @@ const GRABBED_STEADY = 0.15; // 掴まれている間の手の画面の光の安
 const params = new URLSearchParams(location.search);
 // 撮影・計測用のフック（window.__debug など）は URL に ?debug があるときだけ公開する
 const debugMode = params.has('debug');
-const seedParam = Number.parseInt(params.get('seed') ?? '', 10);
-const seed = Number.isFinite(seedParam) ? seedParam : Math.floor(Math.random() * 2 ** 31);
+// R3（spec §15 今日の街）: 種は ?seed=（撮影・試し）> ?city=YYYYMMDD（友達のリンク）> 今日の街（日本時間の日付）。
+// 街の作り・軍勢の乱数・種類・見回り・演出の乱数のすべてがこの種から（game.js・下の各部品）
+const cityPick = pickCity({ params });
+const seed = cityPick.seed;
+const cityInfo = { label: cityLabel(cityPick), share: cityLabel(cityPick).replace('（リンク）', ''), link: cityLink(cityPick) };
+// 自己ベストと称号は端末に（localStorage。使えなければ、そのページの間だけ）
+const records = createRecords((() => { try { return window.localStorage; } catch { return null; } })());
 const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || navigator.maxTouchPoints > 1 && matchMedia('(pointer: coarse)').matches;
 const tierParam = params.get('tier');
 // 導入（S6）の始め方: 'full'（最初の読み込み: TAP → 導入 → 題字 → TAP START）・'short'（リトライ: 短い題字から）・
@@ -129,12 +137,10 @@ const drainFx = createDrainFx();
 let drainedSeen = 0;
 const startHint = document.getElementById('start');
 const result = createResult(document.getElementById('result'), {
-  // 壊れた街や地面のえぐれは作り直せないので、新しい種でページを読み直す
+  // 壊れた街や地面のえぐれは作り直せないので、ページを読み直す。R3: 同じ街（今日の街・リンクの街・試しの種）にもう一度挑む
   onRetry() {
     markRetry(session); // 読み直したページは導入を飛ばし、題字と TAP START から
-    const q = new URLSearchParams(location.search);
-    q.set('seed', String(Math.floor(Math.random() * 2 ** 31)));
-    location.search = q.toString();
+    location.reload();
   },
   // 最後の一発をもう一度見る（放つ直前の街へ戻して起こし直す。何度でも同じリプレイ）
   onReplay() { startReplay(); },
@@ -230,7 +236,14 @@ let finaleDone = false;
 // S9: outcome は最後の一発の勝ち負け（撃退成功／撃退失敗と生き残り。時間切れは無い）
 game.on('over', ({ reason, total, outcome = null }) => {
   audio.chargeHum(0); audio.rumble(0);
-  pendingResult = { reason, total, outcome, wait: RESULT_DELAY };
+  // R3: 称号（初めては NEW）と、この街の自己ベスト（放った一発だけを出す。ブラックホールは前のベストを見せる）
+  const ids = earnedTitles({ reason, outcome, stats: { maxCombo: game.maxCombo } });
+  const fresh = new Set(records.addTitles(ids));
+  const titles = ids.map((id) => ({ id, name: titleName(id), isNew: fresh.has(id) }));
+  const best = reason === 'released' && outcome
+    ? records.submitBest(cityPick.key, { rank: outcome.rank, damage: total })
+    : { best: records.best(cityPick.key), isNew: false };
+  pendingResult = { reason, total, outcome, wait: RESULT_DELAY, extra: { city: cityInfo, titles, best } };
   // リプレイが無いとき（ふつうは無い）は、終わった街の上空で生き残りの光を脈打たせる
   if (outcome && !outcome.clear && !replaySnap) patrolGlow.setSurvivors(survivorIds(outcome));
   // 時間切れ: 主人公がブラックホールになり、すべてを飲み込む（BGM と唸りの段取りは演出の cue）
@@ -240,7 +253,7 @@ function updateResult(dt) {
   if (!pendingResult || (!finaleDone && (cinematic.active || replay.active || blackhole.active))) return;
   pendingResult.wait -= dt;
   if (pendingResult.wait > 0) return;
-  result.show(pendingResult.total, pendingResult.reason, pendingResult.outcome, { replay: !!replaySnap });
+  result.show(pendingResult.total, pendingResult.reason, pendingResult.outcome, { replay: !!replaySnap, extra: pendingResult.extra });
   lastResult = pendingResult;
   pendingResult = null;
 }
@@ -990,6 +1003,7 @@ const debugHooks = {
 if (debugMode) {
   window.__debug = debugHooks;
   window.__game = game;
+  window.__city = { ...cityPick, ...cityInfo }; // R3: どの街か（撮影で確かめる）
   window.__tier = tier;
   window.__cityView = cityView;
   window.__renderer = renderer; // 描画の回数・三角形の数を測る（renderer.info）
