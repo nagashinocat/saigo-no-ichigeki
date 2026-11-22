@@ -63,7 +63,9 @@ export const CONFIG = {
     // （spotDist m まで、半分の角 spotHalfAngle rad）。ごく近く（spotNear m）だけは向きによらない（enemies.js seesHero）
     // M2: 前の「気配」（探して alertAfter 秒たつか毎秒 alertRate の確率で、主人公の今の位置へ寄っていく）はやめた（ライトで見つからなければ
     // 来ない。見つかれば知らせで集まる）。12 / 0.05 / 0.1 → Infinity / 0 / 0
-    spotDist: 36, spotHalfAngle: 0.8, spotNear: 5, spotEvery: 0.15, sightMargin: 0.8, alertAfter: Infinity, alertRate: 0, alertAtSpawn: 0,
+    // R1f（持ち主 18:14）: sightMargin 0.8 → 0（壁に触れて立つ主人公への、角をかすめる見通しが、見えているのにさえぎられていた。
+    // 壁のそばの格子で見えている 3454 件のうち 522 件。tests/game/wallSpot.test.js）
+    spotDist: 36, spotHalfAngle: 0.8, spotNear: 5, spotEvery: 0.15, sightMargin: 0, alertAfter: Infinity, alertRate: 0, alertAtSpawn: 0,
     // M2（「見つかったらどんどん集まってくる」）: 見つけた者は光り、radius m の内の探す者・見回る者へ知らせる。知らされた者は relayDelay 秒で
     // 次へ伝える（hops 段まで）。主人公が見えている追う者・掴む者は callEvery 秒ごとに知らせ直す（最後に見えた所が今の主人公へ）。
     // 知らされただけの者は最後に見えた所へ向かい、そこから sweepDist m の内を探し回る（自分で見つけたら今の主人公を追う）
@@ -109,7 +111,8 @@ export const CONFIG = {
   // step m 刻み、向きのずれ 1 rad ごとに offW m 遠いのと同じに数える）へ dashSec 秒でシュッと滑り込む。そこから leaveDist m 離れるまで見つからない。
   // 次の隠れるまで cooldown 秒。掴まれている間はできない
   // 物陰では、ライトが真正面から seeDist m の内を照らさない限り見つからない。同じ物陰にいられるのは holdSec 秒まで（ずっと隠れたままにしない）
-  hide: { holdSec: 12, seeDist: 4, dashSec: 0.3, cooldown: 3, range: 26, minDist: 3, step: 1.5, wallDist: 1.6, offW: 6, leaveDist: 3 },
+  // R1f（持ち主 18:14「ビルの横にいるだけで素通り」）: seeDist（4）はやめた。物陰の印では見えなくならず、見つかるかは見通しとライトだけ（enemies.js seesHero）
+  hide: { holdSec: 12, dashSec: 0.3, cooldown: 3, range: 26, minDist: 3, step: 1.5, wallDist: 1.6, offW: 6, leaveDist: 3 },
   // M1 の操作（持ち主 09:15、制作側の判断）: 溜めているあいだの 2 本目の指は、longPressSec 秒以上で浮かぶジョイスティック（押した所に出て、
   // 指を離すと消える。stickRadiusPx の輪いっぱいで全速、deadPx より内は止まる）、それより短く tapMovePx px 未満の動きで離せば払う
   // M2（持ち主 15:20）: PC の隠れる操作。向きのキーを同じ向きに素早く 2 回押す（keyTwice: mag より深く・window 秒の内・向きのずれ angleDeg° 以内、

@@ -95,18 +95,13 @@ export function lineOfSight(x, z, buildings, margin = 0, px = 0, pz = 0) {
 // M2（持ち主 09:11「敵の前方ライトを少し広くして」、spec §16）: 前を照らすライトに主人公が入ったか。ライトは進む向き（heading）の前の扇
 // （半分の角 spotHalfAngle、spotDist m まで）。ごく近く（spotNear m の内）は向きによらない（気配）。どちらも建物にさえぎられない所だけ。
 // H: 主人公の位置 { x, z }。buildings: 見通しを確かめる建物
+// R1f（持ち主 18:14「たまにビルの横にいるだけで素通りする」）: 物陰の印（H.hidden）では見えなくならない。見つかるかは見通しとライトの扇だけ
+// （本当の物陰 = 軍勢との間にビルがある所）。M2 の「物陰ではライトが真正面から seeDist m の内を照らさない限り見つからない」が、
+// 隠れた所から 3 m の内に最大 12 秒、壁のそばに立つ主人公を誰からも見えなくしていた。物陰へ跳ぶ間（H.dashing）だけは見えない（隠れるの動き）
 export function seesHero(e, H, buildings, cfg = CONFIG) {
   const E = cfg.enemy;
+  if (H.dashing != null) return false;
   const rx = H.x - e.x, rz = H.z - e.z, d = Math.hypot(rx, rz);
-  // M2（持ち主 15:20）: 物陰に隠れている間は、ライトが真正面から近く（hide.seeDist m の内）を照らさない限り見つからない
-  // （隠れたまま動かなければ一生見つからない、にしない。見失った者が最後に見た所のまわりを探すと、近くに隠れた主人公を照らしうる）
-  const hidden = !!H.hidden;
-  const reach = hidden ? (cfg.hide?.seeDist ?? 0) : E.spotDist;
-  if (d > reach) return false;
-  if (hidden) {
-    const off = Math.abs(wrap(Math.atan2(rz, rx) - (e.heading ?? 0)));
-    return off <= (E.spotHalfAngle ?? Math.PI) && lineOfSight(e.x, e.z, buildings, E.sightMargin, H.x, H.z);
-  }
   if (d > E.spotDist) return false;
   if (d > (E.spotNear ?? 0)) {
     const off = Math.abs(wrap(Math.atan2(rz, rx) - (e.heading ?? 0)));
