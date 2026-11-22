@@ -30,7 +30,9 @@ export const CAPACITY = HUNT_CAPACITY + CONFIG.enemy.patrol.count;
 
 const hash = (n) => { const x = Math.sin(n * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
 
-// 大きく描く: 遠くで小さすぎる者は boost 倍。中心は自分の足元だが、主人公の横に寄った者（aPose.x → 1）は主人公（原点）を中心にする
+// 大きく描く: 遠くで小さすぎる者は boost 倍。中心は自分の足元だが、主人公の横に寄った者（aPose.x → 1）は主人公（uHero: 今の主人公の位置）を中心にする
+// R1d（持ち主 14:14「ジョイスティックのところに溜まってる」）: 前はこの中心が網の原点（街の中心）のままで、主人公が中心から離れると、
+// 掴む者・群がる者が主人公ではなく（街の中心から見て主人公の先の）boost 倍の所に描かれていた
 // （主人公も同じだけ大きく描かれるので、並びが崩れず、主人公にめり込まない）
 const BOOST_GLSL = /* glsl */`
 float boostFor(vec3 base) {
@@ -49,6 +51,7 @@ attribute vec2 aMove; // x: 速さ（探す速さを 1）, y: 尾の曲がり（
 attribute float aOnly; // R1: 部品の出る種類（hoverBike の ONLY。0 どの者にも, 1 装甲の者だけ, 2 大物だけ）
 attribute vec2 aKind;  // R1: x 種類（KIND_CODE。0 ふつう, 1 重い者, 2 吸う者, 3 大物）, y 払いが当たった光（よろめき 1 → 0）
 uniform float uTime, uPx, uMinPx, uMaxBoost, uHeight;
+uniform vec3 uHero;
 varying vec3 vN, vW, vCol;
 varying float vPart, vFar, vThrust, vKind, vHit;
 vec3 rotX(vec3 v, float a) { float c = cos(a), s = sin(a); return vec3(v.x, v.y * c - v.z * s, v.y * s + v.z * c); }
@@ -87,7 +90,7 @@ void main() {
   vFar = smoothstep(uMinPx * 4.0, uMinPx * 1.5, px);
   p *= aAnim.z * boost * aAnim.w;
   vec4 wp = modelMatrix * instanceMatrix * vec4(p, 1.0);
-  vec3 anchor = mix(origin, (modelMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz, aPose.x);
+  vec3 anchor = mix(origin, uHero, aPose.x);
   wp.xyz += (origin - anchor) * (boost - 1.0);
   vW = wp.xyz;
   vN = normalize(mat3(modelMatrix) * mat3(instanceMatrix) * n);
@@ -141,6 +144,7 @@ attribute vec4 aShadow; // x: 地面からの高さ, y: 大きく描く中心を
 attribute vec2 aMove;
 attribute vec2 aKind;
 uniform float uPx, uMinPx, uMaxBoost, uHeight;
+uniform vec3 uHero;
 varying vec2 vUv;
 varying vec3 vS;
 varying float vBack, vTrail, vKind;
@@ -156,7 +160,7 @@ void main() {
   vec3 q = position;
   if (q.z < 0.0) q.z *= 1.0 + 1.6 * vTrail;
   vec4 wp = modelMatrix * instanceMatrix * vec4(q * boost * spread * aShadow.w, 1.0);
-  vec3 anchor = mix(origin, vec3(0.0, origin.y, 0.0), aShadow.y);
+  vec3 anchor = mix(origin, vec3(uHero.x, origin.y, uHero.z), aShadow.y);
   wp.xyz += (origin - anchor) * (boost - 1.0);
   vS = aShadow.xyz;
   vKind = aKind.x;
@@ -296,6 +300,7 @@ attribute vec3 aPose;
 attribute vec2 aMove;
 attribute vec2 aKind;
 uniform float uTime, uPx, uMinPx, uMaxBoost, uHeight;
+uniform vec3 uHero;
 varying float vT, vSide, vKind, vA, vSort;
 ${BOOST_GLSL}
 void main() {
@@ -327,7 +332,7 @@ void main() {
   }
   vT = t; vSide = side; vKind = kind; vSort = aKind.x;
   vec4 wp = modelMatrix * instanceMatrix * vec4(p, 1.0);
-  vec3 anchor = mix(origin, (modelMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz, aPose.x);
+  vec3 anchor = mix(origin, uHero, aPose.x);
   wp.xyz += (origin - anchor) * (boost - 1.0);
   vA *= aAnim.w * clamp(aPose.y, 0.0, 1.5);
   gl_Position = projectionMatrix * viewMatrix * wp;
@@ -385,6 +390,7 @@ function figureUniforms(sunDir) {
   return {
     uTime: { value: 0 }, uPx: { value: 500 }, uMinPx: { value: ENEMY_LOOK.minPx }, uMaxBoost: { value: ENEMY_LOOK.maxBoost },
     uHeight: { value: ENEMY_LOOK.height }, uGlow: { value: 0 },
+    uHero: { value: new THREE.Vector3() }, // R1d: 今の主人公の位置（大きく描く中心。sync の heroPos）
     uSunDir: { value: sunDir.clone() },
     uSun: { value: new THREE.Color(1.0, 0.66, 0.4) }, uSky: { value: new THREE.Color(0.46, 0.54, 1.0) },
     uGround: { value: new THREE.Color(0.55, 0.4, 0.42) }, uBlast: { value: new THREE.Color(1.0, 0.78, 0.5) },
@@ -570,6 +576,7 @@ export function createEnemyView(scene, tier, { sunDir = new THREE.Vector3(0.8, 0
       uniforms.uPx.value = pointScale;
       uniforms.uMinPx.value = ENEMY_LOOK.minPx * pixelRatio; // pointScale は画素の px なので、基準も CSS の px から直す
       uniforms.uGlow.value = glow;
+      uniforms.uHero.value.set(heroPos.x, 0, heroPos.z);
       let n = 0;
       const a = anim.array, po = pose.array, sh = shadowAttr.array, mo = move.array, ki = kindAttr.array, mk = markerKind.array;
       // kind: 種類（e.kind）、hit: 払いが当たった光（0〜1）
