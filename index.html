@@ -97,7 +97,29 @@
     #stick .mark.heavy { background: #ffb347; box-shadow: 0 0 0 1px rgba(20, 10, 30, 0.85), 0 0 0 3px #ffb347, 0 0 0 4px rgba(20, 10, 30, 0.85); }
     #stick .mark.drainer { background: #ff2f8a; border-radius: 50%; box-shadow: 0 0 0 1px rgba(20, 10, 30, 0.85), 0 0 8px rgba(255, 40, 140, 0.9); }
     #stick .mark.boss { width: 14px; height: 14px; margin: -7px 0 0 -7px; transform-origin: 7px 7px; background: #ffd27a; box-shadow: 0 0 0 2px rgba(20, 10, 30, 0.9), 0 0 12px rgba(255, 200, 90, 1); }
-    #stick .knob { position: absolute; border-radius: 50%; background: radial-gradient(circle at 45% 40%, rgba(255, 246, 225, 0.95), rgba(255, 190, 110, 0.85)); box-shadow: 0 0 10px rgba(255, 190, 100, 0.7); transform: translate(-50%, -50%); }
+    /* R1e: 印の輪の目安の薄い丸（印は joystick.js が輪の半径に置く）。つまみはいつも印より上（印がつまみを覆わない） */
+    #stick .radar { position: absolute; border-radius: 50%; border: 1.5px dashed rgba(255, 236, 200, 0.28); transform: translate(-50%, -50%); }
+    #stick .mark { z-index: 1; }
+    /* R1e（持ち主 16:45）: シュッの知らせの光の筋（払った所から払った向きへ、一度だけ流れて消える。flickStreak.js） */
+    #flick { position: fixed; left: 0; top: 0; height: 8px; margin-top: -4px; transform-origin: 0 50%; pointer-events: none; opacity: 0; border-radius: 4px;
+      background: linear-gradient(90deg, rgba(255, 240, 210, 0), rgba(255, 236, 190, 0.95) 70%, #fff); box-shadow: 0 0 10px rgba(255, 190, 100, 0.8); }
+    #flick.on { animation: flickStreak 0.34s ease-out forwards; }
+    @keyframes flickStreak { 0% { opacity: 1; clip-path: inset(0 100% 0 0); } 35% { opacity: 1; clip-path: inset(0 0 0 0); } 100% { opacity: 0; clip-path: inset(0 0 0 60%); } }
+    /* R1e（持ち主 16:55）: 見つかりそうなときの「LOOK OUT!」と、シュッで入れる物陰の向きの矢印（lookoutView.js）。新しい字体は読み込まず、
+       太いシステムの字に縁取り・傾き・弾む出方でポップに。矢印は主人公のまわり、物陰の向き */
+    #lookout { position: fixed; left: 0; top: 0; width: 0; height: 0; pointer-events: none; z-index: 5; }
+    #lookout .lo-text { position: absolute; left: 0; top: -64px; transform: translate(-50%, -50%) rotate(-8deg); white-space: nowrap;
+      font: italic 900 30px/1 system-ui, -apple-system, "Arial Black", "Helvetica Neue", sans-serif; letter-spacing: 0.02em; color: #ffe14a;
+      -webkit-text-stroke: 6px #2a0f3a; paint-order: stroke fill; text-shadow: 0 4px 0 #2a0f3a, 0 0 14px rgba(255, 120, 60, 0.85); }
+    #lookout.pop .lo-text { animation: lookoutPop 0.42s cubic-bezier(0.2, 1.6, 0.4, 1) both; }
+    @keyframes lookoutPop { 0% { transform: translate(-50%, -50%) rotate(-18deg) scale(0.2); opacity: 0; } 55% { transform: translate(-50%, -50%) rotate(-5deg) scale(1.22); opacity: 1; }
+      80% { transform: translate(-50%, -50%) rotate(-10deg) scale(0.92); } 100% { transform: translate(-50%, -50%) rotate(-8deg) scale(1); } }
+    #lookout .lo-arrow { position: absolute; left: 0; top: -21px; width: 56px; height: 42px; transform-origin: 0 50%; }
+    #lookout .lo-arrow i { position: absolute; inset: 0; background: #ffe14a; clip-path: polygon(0 32%, 52% 32%, 52% 0, 100% 50%, 52% 100%, 52% 68%, 0 68%);
+      animation: lookoutNudge 0.5s ease-in-out infinite alternate; }
+    #lookout .lo-arrow b { position: absolute; inset: -4px; background: #2a0f3a; clip-path: polygon(0 28%, 50% 28%, 50% -6%, 104% 50%, 50% 106%, 50% 72%, 0 72%); animation: lookoutNudge 0.5s ease-in-out infinite alternate; }
+    @keyframes lookoutNudge { from { translate: 0 0; } to { translate: 9px 0; } }
+    #stick .knob { z-index: 2; position: absolute; border-radius: 50%; background: radial-gradient(circle at 45% 40%, rgba(255, 246, 225, 0.95), rgba(255, 190, 110, 0.85)); box-shadow: 0 0 10px rgba(255, 190, 100, 0.7); transform: translate(-50%, -50%); }
     #start { position: fixed; left: 0; right: 0; top: 30%; text-align: center; pointer-events: none; font-size: clamp(16px, 4.6vw, 26px); font-weight: 700; text-shadow: 0 1px 4px rgba(20, 10, 30, 0.9), 0 0 14px rgba(20, 10, 30, 0.6); }
     #start[hidden], #result[hidden], #result [hidden] { display: none; }
     #result { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.4em; background: rgba(12, 8, 24, 0.72); text-align: center; }
@@ -157,7 +179,9 @@
   <canvas id="game"></canvas>
   <div id="hud"></div>
   <div id="stick"><div class="ring"></div><div class="knob"></div></div>
-  <div id="start">長押しで力を貯め、離して最後の一撃<br><small>貯めながら、もう一本の指を長押しで動く・短くタップで払う（3 回まで）・同じ向きに 2 回倒すと物陰に隠れる<br>払うは まわりの者を はがす（重い者・大物は倒れず よろめく）</small></div>
+  <div id="flick"></div>
+  <div id="lookout" hidden><div class="lo-arrow"><b></b><i></i></div><div class="lo-text"></div></div>
+  <div id="start">長押しで力を貯め、離して最後の一撃<br><small>貯めながら、もう一本の指を長押しで動く・短くタップで払う（3 回まで）・すばやく払うと その向きの物陰に隠れる<br>払うは まわりの者を はがす（重い者・大物は倒れず よろめく）</small></div>
   <div id="replay" hidden><span class="replay-tag">リプレイ</span><span class="replay-hint">タップでとばす</span></div>
   <div id="result" hidden></div>
   <script type="module" src="./src/main.js"></script>

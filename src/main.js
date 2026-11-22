@@ -23,9 +23,12 @@ import { createReplay } from './render/replay.js';
 import { createBlackhole } from './render/blackhole.js';
 import { createReplaySim, replayTargets } from './game/replaySim.js';
 import { createRng } from './rng.js';
-import { createControls, keyVector, MOVE_KEYS } from './input/controls.js';
+import { createControls, keyVector, MOVE_KEYS, screenToWorld } from './input/controls.js';
 import { createJoystickView } from './ui/joystick.js';
-import { createFlick } from './input/flick.js';
+import { createKeyTwice } from './input/keyTwice.js';
+import { createFlickStreak } from './ui/flickStreak.js';
+import { createLookout } from './game/lookout.js';
+import { createLookoutView } from './ui/lookoutView.js';
 import { createDashStreak } from './render/dashStreak.js';
 import { stickMarks } from './ui/stickMarks.js';
 import { bindPointerInput, eventMs } from './input/bindDom.js';
@@ -142,21 +145,28 @@ const controls = createControls({
   onChargeEnd() { game.pressEnd(); },
   onChargeCancel() { game.pressCancel(); },
   onPuff(x, y) { tryPuff(x, y); },
-  onHide(d) { tryHide(d); },
+  // R1e（持ち主 16:45）: 2 本目の指のシュッ。払った線に短い光の筋（隠れられなくても、シュッと受け取ったことは見せる）
+  onHide(d, s) { flickStreak.show(s); tryHide(d); },
 });
-// M2（持ち主 15:20）: 隠れる（スティックを同じ向きに 2 回倒す。PC は向きのキーの 2 回押し）。画面の右 = 世界の +x、下 = +z。
+const flickStreak = createFlickStreak(document.getElementById('flick'));
+// R1e（持ち主 16:55）: 見つかりそうなときの「LOOK OUT!」と、シュッで入れる物陰の向きの矢印（音は出さない）
+const lookout = createLookout();
+const lookoutView = createLookoutView(document.getElementById('lookout'));
+// M2（持ち主 15:20）: 隠れる。R1e（持ち主 16:45）から指は 2 本目のシュッ（スティックを 2 回倒すはやめた）、PC は向きのキーの 2 回押し。
+// d は画面の向き。上空カメラの向きで街の向きへ直す（screenToWorld。スティックの動く向きと同じ写し）。
 // 掴まれている間・次まで待つ間・物陰がない向きは、主人公の上に短い知らせ
 const HIDE_TEXT = { grabbed: '掴まれていて隠れられない', cooldown: 'まだ隠れられない', nocover: '隠れる物陰がない' };
 function tryHide(d) {
   if (!controls.charging || game.phase !== 'playing') return false;
   const why = game.hideBlock;
-  if (game.hide(d.x, d.y)) return true;
+  const w = screenToWorld(d.x, d.y, CITY_CAMERA.azimuthDeg);
+  if (game.hide(w.x, w.z)) return true;
   const c = screenCue(game.hero.x, 2.5, game.hero.z);
   const reason = why ?? 'nocover';
   if (HIDE_TEXT[reason]) hud.short(c.sx, c.sy, HIDE_TEXT[reason]);
   return false;
 }
-const keyFlick = createFlick();
+const keyFlick = createKeyTwice();
 const joystick = createJoystickView(document.getElementById('stick'));
 // R1c（M1 の見直し Minor 1・2）: 指・マウスの配線は input/bindDom.js（入力の時刻も毎フレームの update も performance.now() の一つの時計。
 // 溜めの指の離す操作は、どのボタンでも放つ）。PC の右クリックは溜めている間の払う
@@ -721,7 +731,8 @@ function simulate(dt) {
   // ゲームは溜めている間だけ動かす
   controls.update(nowSec());
   const stick = controls.stick ? controls.dir : keyVector(keysDown);
-  game.setMove(stick.x, stick.y);
+  const mv = screenToWorld(stick.x, stick.y, CITY_CAMERA.azimuthDeg);
+  game.setMove(mv.x, mv.z);
   if (cdt === null) game.update(dt); else stepGame(cdt);
   syncHero();
   syncHide(dt);
@@ -749,9 +760,15 @@ function finishFrame(dt, live) {
   hand.setDrain(drain);
   hand.update(dt, h.level, h.active, h.steady);
   const stickNow = game.phase === 'playing' && !cinematic.active ? controls.stick : null;
-  hud.update({ remaining: game.timer.remaining, power: game.power.value, max: CONFIG.power.max, alive: game.aliveCount, drain, dt, hero: game.hero, line: clearLine(), puffs: game.puffsLeft, stick: stickNow, stickR: CONFIG.controls.stickRadiusPx });
-  // M1: 浮かぶジョイスティック（遊んでいる間だけ）。M2: 輪の外側に近くの軍勢の向きの印（スティックが出ている間だけ数える）
-  joystick.update(stickNow, stickNow ? stickMarks(game.hero, game.enemies.list, { azimuthDeg: CITY_CAMERA.azimuthDeg }) : null);
+  // M1: 浮かぶジョイスティック（遊んでいる間だけ）。M2: 輪の外側に近くの軍勢の向きの印（スティックが出ている間だけ数える）。
+  // R1e: 印の輪は約 1.5 倍、画面の端では同じ中心のまま小さく（joystick.radius）。払うの点はその輪の印の上
+  joystick.update(stickNow, stickNow ? stickMarks(game.hero, game.enemies.list, { azimuthDeg: CITY_CAMERA.azimuthDeg }) : null, { w: innerWidth, h: innerHeight });
+  hud.update({ remaining: game.timer.remaining, power: game.power.value, max: CONFIG.power.max, alive: game.aliveCount, drain, dt, hero: game.hero, line: clearLine(), puffs: game.puffsLeft, stick: stickNow, stickR: joystick.radius + 12 });
+  // R1e（持ち主 16:55）: LOOK OUT!（遊んでいる間だけ。危ないかの確かめは lookout.checkEvery 秒ごと）
+  const lo = game.phase === 'playing' && !cinematic.active && !debugCam
+    ? lookout.update(dt, { hero: game.hero, enemies: game.enemies.list, buildings: game.city.buildings, hideBlock: game.hideBlock, azimuthDeg: CITY_CAMERA.azimuthDeg })
+    : null;
+  lookoutView.update(lo, lo?.show ? screenCue(game.hero.x, 1.2, game.hero.z) : null);
   // 最後の一発を放ってから結果までずっと HUD は出さない（両手が玉を握り込む間も、リプレイの間も）
   hud.setVisible(!debugCam && !cinematic.active && !replay.active && !blackhole.active);
   updateAudio(live, dt);
@@ -972,6 +989,7 @@ if (debugMode) {
   window.__enemyView = enemyView;
   window.__patrolGlow = patrolGlow;
   window.__controls = controls; // M1: 撮影で指の操作を起こす（down / move / up / update）
+  window.__lookout = lookout; // R1e: 撮影で LOOK OUT! の確かめた回数を見る
   Object.defineProperty(window, '__firstFrameMs', { get: () => firstFrameMs });
   window.__cinematic = cinematic;
   window.__replay = replay;

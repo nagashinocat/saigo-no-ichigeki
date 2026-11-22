@@ -1,10 +1,10 @@
 import { test, expect } from 'vitest';
-import { createFlick } from '../../src/input/flick.js';
-import { createControls } from '../../src/input/controls.js';
+import { createKeyTwice as createFlick } from '../../src/input/keyTwice.js';
 import { CONFIG } from '../../src/config.js';
 
-// M2（持ち主 15:20「ジョイスティックを同じ向きに2回入力で隠れる」）: スティックを同じ向きに素早く 2 回倒す（flick）
-const F = CONFIG.controls.flick;
+// M2（持ち主 15:20「ジョイスティックを同じ向きに2回入力で隠れる」）: 同じ向きに素早く 2 回倒す。R1e（持ち主 16:45）からは PC の向きのキーの
+// 2 回押しだけ（keyVector の向きを渡す）。スティックを 2 回倒して隠れるはやめた（そのテストは消し、指のシュッは flickHide.test.js）
+const F = CONFIG.controls.keyTwice;
 
 test('M2: 2 回倒す の値は config にある（約 70% より深く・約 0.35 秒の内・向きのずれ約 30° 以内）', () => {
   expect(F.mag).toBeCloseTo(0.7, 1);
@@ -38,19 +38,4 @@ test('M2: 2 回倒すにならない: 遅い・向きが違う・戻さない・
   expect(f.push(1, 0, 0.1)).not.toBe(null);
   f.push(0, 0, 0.15);
   expect(f.push(1, 0, 0.2)).toBe(null);
-});
-
-test('M2: 浮かぶスティックで 2 回倒すと onHide（画面の向き）。スティックは消えず、払うにもならない', () => {
-  const hides = [], puffs = [];
-  const c = createControls({ onHide: (d) => hides.push(d), onPuff: () => puffs.push(1) });
-  const R = CONFIG.controls.stickRadiusPx;
-  c.down(1, 300, 600, 0); // 溜め
-  c.down(2, 100, 600, 0.1);
-  c.move(2, 100, 600 - R, 0.12); // 上へ 1 回目（スティックが出る）
-  c.move(2, 100, 600, 0.18);
-  c.move(2, 100, 600 - R, 0.26); // 2 回目
-  expect(hides).toHaveLength(1);
-  expect(hides[0].y).toBeLessThan(-0.99);
-  expect(c.stick).not.toBe(null);
-  expect(puffs).toHaveLength(0);
 });

@@ -66,15 +66,24 @@ test('M1: 2 本目の長押し（0.18 秒以上）は、押した所に浮かぶ
   expect(c.charging).toBe(true);
 });
 
-test('M1: 2 本目が 10 px 以上動いたら、0.18 秒を待たずにスティックになる（タップにはならない）', () => {
+// R1e（持ち主 16:45）: 10 px 以上動いても 0.18 秒まではスティックにしない（40 px のシュッになりうるので）。0.18 秒で、押した所を中心に
+// スティックになり、つまみはそのときの指の所。それより前に 10〜40 px だけ動かして離すと、払うでもシュッでもない（何もしない）
+test('R1e: 2 本目が 10 px 以上・40 px 未満動いても、0.18 秒まではスティックにならない。0.18 秒でスティック（押した所が中心）。その前に離すと何もしない', () => {
   const { c, log } = rig();
   c.down(1, 300, 200, 0);
   c.down(2, 100, 600, 1);
   c.move(2, 100 + C.tapMovePx + 1, 600, 1.05);
-  expect(c.stick).toMatchObject({ cx: 100, cy: 600 });
+  expect(c.stick).toBe(null);
+  c.move(2, 100 + 30, 600, 1 + C.longPressSec + 0.01);
+  expect(c.stick).toMatchObject({ cx: 100, cy: 600, kx: 130, ky: 600 });
   expect(c.dir.x).toBeGreaterThan(0);
-  c.up(2, 111, 600, 1.08);
+  c.up(2, 130, 600, 1.3);
   expect(log).toEqual(['start']);
+  c.down(3, 100, 600, 2);
+  c.move(3, 120, 600, 2.05);
+  c.up(3, 125, 600, 2.1);
+  expect(log).toEqual(['start']);
+  expect(c.stick).toBe(null);
 });
 
 test('M1: スティックを動かしている間に溜めの指を離すと、放ち、スティックは消える', () => {
