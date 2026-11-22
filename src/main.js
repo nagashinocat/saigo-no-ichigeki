@@ -85,7 +85,9 @@ const seed = cityPick.seed;
 const framedPage = (() => { try { return window.self !== window.top; } catch { return true; } })();
 const cityInfo = { label: cityLabel(cityPick), share: cityLabel(cityPick).replace('（リンク）', ''), link: cityLink(cityPick, { loc: location, framed: framedPage, canonical: SHARE_BASE_URL }) };
 // 自己ベストと称号は端末に（localStorage。使えなければ、そのページの間だけ）
-const records = createRecords((() => { try { return window.localStorage; } catch { return null; } })());
+// 端末の保存（localStorage）。使えない環境（プライベートモード・iframe の制限）では null。自己ベスト・称号と音量の両方が使う
+const local = (() => { try { return window.localStorage; } catch { return null; } })();
+const records = createRecords(local);
 const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || navigator.maxTouchPoints > 1 && matchMedia('(pointer: coarse)').matches;
 // タッチの端末（指の操作がある）。リトライの TAP（最終レビュー C1）と、blur の一時停止で使う
 const touchDevice = (() => { try { return matchMedia('(pointer: coarse)').matches || (navigator.maxTouchPoints ?? 0) > 0; } catch { return false; } })();
@@ -233,12 +235,12 @@ window.addEventListener('blur', () => { controls.reset(); keysDown.clear(); });
 // メニューを出せるのは遊んでいる間と演出・リプレイの間（導入・題字・結果では出さない）。開くと一時停止、つづけるで戻る。
 // タブ・アプリを切り替えたら一時停止して（音は約 30 ms で 0 へ落としてから止め）、戻ったらメニューを出して待つ
 // fix2: 演出・リプレイ・ブラックホールの間（遊びの外）は、メニューでも AudioContext を止める（ui/pause.js）
-const pause = createPause({ game, controls, audio, bgm, keys: keysDown, cinematic: () => game.phase !== 'playing' || cinematic.active || replay.active || blackhole.active });
+const pause = createPause({ game, controls, audio, bgm, keys: keysDown, cinematic: () => !inPlay() });
 let previewAt = -1e9;
 // 結果を出したあと（lastResult）は出さない。結果を待っている間（演出・リプレイ）は出してよい
 const menuAvailable = () => !introFlow.blocksInput && !lastResult;
 const menu = createMenu({ button: document.getElementById('menuBtn'), panel: document.getElementById('menu') }, {
-  storage: (() => { try { return window.localStorage; } catch { return null; } })(),
+  storage: local,
   onOpen() { pause.set('menu', true); },
   onClose() { pause.set('menu', false); },
   // R1f（R3 の見直しの持ち越し）: 同じ街（0 時をまたいでも）で、導入を飛ばしてすぐ遊び直す
@@ -972,6 +974,11 @@ function simulate(dt) {
   finishFrame(dt, live);
 }
 
+// 最終レビュー Minor 2: 「遊んでいる間か」の判定を一つに（場面が増えたときの抜けを防ぐ）。
+// 全画面の演出（最後の一発の演出・リプレイ・時間切れの結末）の外か
+function finaleOff() { return !cinematic.active && !replay.active && !blackhole.active; }
+// 遊んでいる間: ゲームが 'playing' で、導入（リトライの TAP も）の間でも、全画面の演出の間でもない
+function inPlay() { return game.phase === 'playing' && !introFlow.blocksInput && finaleOff(); }
 // 手の画面・HUD・音・結果（毎フレーム）
 function finishFrame(dt, live) {
   // 手の中の球の大きさは貯めた力。掴まれている間は、光が弱く不安定に瞬く
@@ -979,28 +986,27 @@ function finishFrame(dt, live) {
   const drain = updateDrain(dt);
   hand.setDrain(drain);
   hand.update(dt, h.level, h.active, h.steady);
-  const stickNow = game.phase === 'playing' && !cinematic.active ? controls.stick : null;
+  const stickNow = inPlay() ? controls.stick : null;
   // M1: 浮かぶジョイスティック（遊んでいる間だけ）。M2: 輪の外側に近くの軍勢の向きの印（スティックが出ている間だけ数える）。
   // R1e: 印の輪は約 1.5 倍、画面の端では同じ中心のまま小さく（joystick.radius）。払うの点はその輪の印の上
   joystick.update(stickNow, stickNow ? stickMarks(game.hero, game.enemies.list, { azimuthDeg: CITY_CAMERA.azimuthDeg }) : null, { w: innerWidth, h: innerHeight });
   // R2: 届く範囲の輪と「届かない軍勢 あと N 体」（勝ち負けと同じ数え方。遊んでいる間の上空の画面だけ）
-  const playing = game.phase === 'playing' && !introFlow.blocksInput && !cinematic.active && !replay.active && !blackhole.active;
-  const reach = playing ? reachNow(game) : null;
+  const reach = inPlay() ? reachNow(game) : null;
   const ring = reachRing.update({ hero: game.hero, radius: reach?.radius ?? 0, left: reach?.left ?? 0, visible: !!reach && (!debugCam || debugRing), dt, camera: debugCam ?? views.cityCamera, viewPx: debugCam ? views.size.h : views.layout.city.h });
   hud.update({ remaining: game.timer.remaining, power: game.power.value, max: CONFIG.power.max, alive: game.aliveCount, drain, dt, hero: game.hero, line: clearLine(), puffs: game.puffsLeft, stick: stickNow, stickR: joystick.radius + 12, reach: reach?.left ?? null, edge: reach && !debugCam && ring.offscreen ? { on: true, pulse: ring.pulse, ready: ring.ready } : null });
   // R1f: 覚えておいた払う（前の払うが広がり終わったら）
   if (game.phase === 'playing' && controls.charging) { if (puffBuffer.take(nowSec(), game.canPuff)) game.puff(); } else puffBuffer.clear();
   // R1e（持ち主 16:55）: LOOK OUT!（遊んでいる間だけ。危ないかの確かめは lookout.checkEvery 秒ごと）
-  const lo = game.phase === 'playing' && !cinematic.active && !debugCam
+  const lo = inPlay() && !debugCam
     ? lookout.update(dt, { hero: game.hero, enemies: game.enemies.list, buildings: game.city.buildings, hideBlock: game.hideBlock, azimuthDeg: CITY_CAMERA.azimuthDeg })
     : null;
   lookoutNow = lo?.show ? { show: true, spot: lo.spot ? { ...lo.spot } : null, deg: lo.deg } : null;
   lookoutView.update(lo, lo?.show ? screenCue(game.hero.x, 1.2, game.hero.z) : null);
   // R1f fix1: 物陰にいる間の「かくれ中」と残りの輪
-  const hm = game.phase === 'playing' && !cinematic.active && !debugCam ? hideMarkState({ hero: game.hero, hideLeft: game.hideLeft, holdSec: CONFIG.hide.holdSec }) : { show: false, p: 0 };
+  const hm = inPlay() && !debugCam ? hideMarkState({ hero: game.hero, hideLeft: game.hideLeft, holdSec: CONFIG.hide.holdSec }) : { show: false, p: 0 };
   hideMark.update(hm, hm.show ? screenCue(game.hero.x, 1.2, game.hero.z) : null);
   // 最後の一発を放ってから結果までずっと HUD は出さない（両手が玉を握り込む間も、リプレイの間も）
-  hud.setVisible(!debugCam && !introFlow.blocksInput && !cinematic.active && !replay.active && !blackhole.active); // C1: リトライの TAP の間も出さない
+  hud.setVisible(!debugCam && !introFlow.blocksInput && finaleOff()); // C1: リトライの TAP の間も出さない
   updateAudio(live, dt);
   updateResult(dt);
 }
@@ -1017,7 +1023,7 @@ const _grabPans = [];
 function updateDrain(dt) {
   const total = game.drainedTotal, drained = total - drainedSeen;
   drainedSeen = total;
-  const live = game.phase === 'playing' && !cinematic.active && !replay.active && !blackhole.active && !debugCam;
+  const live = inPlay() && !debugCam;
   _grabPans.length = 0;
   if (live && game.enemies.drainLoad > 0) {
     for (const e of game.enemies.list) if (e.state === 'grab') _grabPans.push({ pan: screenCue(e.x, 2, e.z).pan, w: drainMulOf(e) });
@@ -1034,7 +1040,7 @@ function updateAudio(live, dt = 0) {
   audio.chargeHum(game.charge.active ? game.power.level : 0);
   audio.drain(drainFx.state); // 吸われる音（はがれたらその場で止まる）
   // 電車と高速（S8）: 今の画面のカメラから見た一番近い車両・高速の点の距離と左右。演出・リプレイ・結末の間は鳴らさない
-  if (cityView.transit && !cinematic.active && !replay.active && !blackhole.active && audio.running) {
+  if (cityView.transit && finaleOff() && audio.running) {
     const cam = cityCam();
     cam.updateMatrixWorld();
     const src = cityView.transit.sources(cam.position);
@@ -1045,7 +1051,7 @@ function updateAudio(live, dt = 0) {
   if (bgm.state === 'off') bgm.prepare();
   if (game.phase === 'playing' && audio.running) bgm.start();
   bgm.update({ elapsed: CONFIG.roundSeconds - game.timer.remaining, power: game.power.level, holding: game.charge.active });
-  for (const n of timeTicks.update(game.timer.remaining, game.phase === 'playing' && !introFlow.blocksInput && !cinematic.active && !replay.active && !blackhole.active)) audio.timeTick(n);
+  for (const n of timeTicks.update(game.timer.remaining, inPlay())) audio.timeTick(n);
   // リプレイの間は世界の音を鳴らさない（瓦礫の崩れる音だけは、同じ崩落に合わせて鳴らす）
   if (replay.active) {
     audio.rumble(0);
