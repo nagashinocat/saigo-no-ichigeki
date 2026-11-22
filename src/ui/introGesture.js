@@ -13,13 +13,14 @@ export function createIntroGesture({ audio, flow }) {
   const unlock = () => { if (!audio.running || audio.sessionPending) audio.unlock(); };
   let pressed = null; // TAP の画面を主ボタンで押した指（pointerId）
   const press = (e) => {
-    if (flow.state !== 'gate') return;
+    if (!flow.awaitsTap) return;
     if (pressed == null && (e?.button ?? 0) === 0) pressed = e?.pointerId ?? null; // 先に押した指（二本目の指では置き換えない）
   };
   const cancel = (e) => { if (e?.pointerId === pressed) pressed = null; };
   // 画面の pointerup・click: TAP の画面なら、unlock してから導入を始める（同じ操作で音も絵も始まる）。e を省けば確かめない
+  // 最終レビュー C1: タッチのリトライの TAP（'tap'）も同じ道（unlock してから遊び始める）
   const release = (e) => {
-    if (flow.state !== 'gate') return false;
+    if (!flow.awaitsTap) return false;
     if (e && (e.button ?? 0) !== 0) return false;
     if (e?.type === 'pointerup') {
       if (pressed == null || e.pointerId !== pressed) return false;
@@ -31,11 +32,11 @@ export function createIntroGesture({ audio, flow }) {
   return {
     unlock,
     release,
-    // 導入の間の Space / Enter（画面のタップと同じ）: TAP START が出ていれば始め、TAP の画面なら導入を始め、導入の途中なら飛ばす
+    // 導入の間の Space / Enter（画面のタップと同じ）: TAP START が出ていれば始め、TAP の画面なら導入を始め（リトライの TAP なら遊び始め）、導入の途中なら飛ばす
     key(timeStamp) {
       unlock();
       if (flow.start()) return;
-      if (flow.state === 'gate') flow.release();
+      if (flow.awaitsTap) flow.release();
       else flow.consumePointer(timeStamp);
     },
     // win: 鳴らせるまで、どの操作でも unlock（キャプチャで、ほかの処理より先に）。target: TAP の画面を離した操作で導入を始める

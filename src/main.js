@@ -86,6 +86,8 @@ const cityInfo = { label: cityLabel(cityPick), share: cityLabel(cityPick).replac
 // 自己ベストと称号は端末に（localStorage。使えなければ、そのページの間だけ）
 const records = createRecords((() => { try { return window.localStorage; } catch { return null; } })());
 const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || navigator.maxTouchPoints > 1 && matchMedia('(pointer: coarse)').matches;
+// タッチの端末（指の操作がある）。リトライの TAP（最終レビュー C1）と、blur の一時停止で使う
+const touchDevice = (() => { try { return matchMedia('(pointer: coarse)').matches || (navigator.maxTouchPoints ?? 0) > 0; } catch { return false; } })();
 const tierParam = params.get('tier');
 // 導入（S6）の始め方: 'full'（最初の読み込み: TAP → 導入 → 題字 → TAP START）・'retry'（リトライ: 導入も説明もなし、すぐ遊べる）・'short'（?intro=short 撮影用）・
 // 'bypass'（撮影の ?debug で ?intro がないとき: 今までどおりすぐ遊べる）
@@ -212,7 +214,8 @@ const pointerInput = bindPointerInput(canvas, {
   puff: (x, y) => tryPuff(x, y),
   intercept(e, ms) {
     // 導入（S6）: ゲームが始まるまで、画面のタップは導入のもの（飛ばす。TAP の画面は受け取るだけで、始めるのは離したとき）。長押しにはならない
-    if (introFlow.consumePointer(ms)) return true;
+    // C1: タッチのリトライの TAP（遊ぶ画面の上）も受け取るだけ。マウスで押したら、そのまま溜め
+    if (introFlow.consumePointer(ms, e.pointerType)) return true;
     // R1f: メニューが開いている（一時停止）間の画面のタップは何もしない（溜めにならない）
     if (menu.isOpen || pause.paused) return true;
     if (clipping) return true; // R4: 録画の間の画面のタップは何もしない（リプレイを飛ばさない）
@@ -250,7 +253,6 @@ function leavePage() { clipRestored(); if (clipSession.busy) clipSession.cancel(
  if (menuAvailable()) { menu.setAvailable(true); menu.open(); } pause.set('tab', true); }
 window.addEventListener('pagehide', leavePage);
 // fix1（見直し Minor 7）: iOS の一部（コントロールセンターなど）は visibilitychange が来ない。タッチの端末だけ、blur でも一時停止する（PC で誤って止めない）
-const touchDevice = (() => { try { return matchMedia('(pointer: coarse)').matches || (navigator.maxTouchPoints ?? 0) > 0; } catch { return false; } })();
 if (touchDevice) {
   window.addEventListener('blur', leavePage);
   window.addEventListener('focus', () => { if (!document.hidden) pause.set('tab', false); });
@@ -402,15 +404,15 @@ game.on('bossArrive', ({ x, z }) => {
 const enemyView = createEnemyView(cityScene, tier, { sunDir: style.sunDir, heroBody });
 // 軍勢・主人公の陰影と推進の光を、暗めの夕方の光に合わせる（材質どうしで共有している uniform の値を書き換える）
 style.tintFigures(enemyView.mesh.material.uniforms);
-// 細かい主人公の体と演出の一人の体の組み立て（bodyPrep.js）: 最初のフレームのあとの手の空いた時間と TAP を待つ画面で少しずつ、
-// TAP の直後（画面は黒）に残りを一度に。導入の再生中は手の空いた時間の組み立てを止める（音の時計に合わせた絵が飛ばない）。
+// 細かい主人公の体と演出の一人の体の組み立て（bodyPrep.js）: 最初のフレームのあとの手の空いた時間と TAP を待つ画面（タッチのリトライの TAP も）で少しずつ、
+// TAP の直後（画面は黒。リトライは TAP を離したとき）に残りを一度に。導入の再生中は手の空いた時間の組み立てを止める（音の時計に合わせた絵が飛ばない）。
 // 導入のバイクの拍の近いバイクも、演出・リプレイ・時間切れの結末で近くに映る主人公も、かならず画質の段の体になる
 const bodyPrep = createBodyPrep({
   heroBuilder, riderBuilder, enemyView,
   idle: (fn) => (window.requestIdleCallback ? window.requestIdleCallback(fn, { timeout: 500 }) : setTimeout(fn, 16)),
   paused: () => introFlow.state === 'intro',
 });
-// リトライ（短い題字から）のように TAP の画面を通らないときも、遅くとも最後の一発を放つとき（と時間切れのとき）までに
+// PC のリトライ（TAP の画面を通らず、すぐ遊ぶ）は手の空いた時間に組み、遅くとも最後の一発を放つとき（と時間切れのとき）までに
 game.on('shot', () => bodyPrep.finish());
 game.on('over', () => bodyPrep.finish());
 // 街を見回る軍勢の光の点と、光の壁に飲まれた瞬間の火花（fix1。遠くの地区の軍勢も読める）
@@ -435,6 +437,7 @@ let liftT = 0, introWarmed = false;
 const HERO_LIFT = { up: 0.45, sec: 0.9 };
 const introFlow = createIntroFlow({
   mode: startMode,
+  touch: touchDevice,
   onBegin() {
     overlay.showGate(false);
     // 楽器の音がまだ全部できていなければ、ここで作り終えてから導入の 0 秒を決める（最初の拍を過去の時刻に予約しない）
@@ -459,6 +462,13 @@ const introFlow = createIntroFlow({
     liftT = HERO_LIFT.sec;
     resize();
   },
+  // C1: タッチのリトライの TAP を離した（unlock は introGesture が先に済ませる）: TAP を消して遊ぶ。体の組み立ての残りはここで
+  // （遊んでいる間や放つ瞬間に止まらない）。次の押下が溜め
+  onPlay() {
+    bodyPrep.finish();
+    overlay.showGate(false);
+    overlay.gate.classList.remove('retry');
+  },
 });
 overlay.button.addEventListener('click', () => introFlow.start());
 // 音を鳴らせるようにする操作と、TAP の画面を離した操作で導入を始めること（introGesture.js。持ち主 22:15）
@@ -466,14 +476,17 @@ const introGesture = createIntroGesture({ audio, flow: introFlow });
 introGesture.attach(window, canvas);
 if (introFlow.blocksInput) hud.setVisible(false); // HUD はゲームが始まってから
 if (introFlow.state === 'gate') overlay.showGate(true);
-if (introFlow.state === 'game') { overlay.fadeOut(0); }
-else startHint.hidden = true;
+// C1: タッチのリトライは、遊ぶ画面の上に大きな「TAP」を一つ（導入・題字・遊び方の説明は出さない）
+if (introFlow.state === 'tap') { overlay.gate.classList.add('retry', 'ready'); overlay.showGate(true); }
+if (!introFlow.playsIntro) overlay.fadeOut(0);
+if (introFlow.state !== 'game') startHint.hidden = true;
 if (startMode === 'retry') startHint.hidden = true; // R1g: リトライは遊び方の説明も飛ばして、すぐ遊べる
 // 浮き上がり: 0 から上がって（前半）ゆっくり宙の高さ 0 へ降りる。どの時刻も ≥ 0
 const heroLiftAt = (u) => HERO_LIFT.up * Math.sin(Math.PI * Math.min(1, Math.max(0, u))) ** 2;
 let overlayT = -1;
 // 導入の音の時計（introClock.js）: running になってから 0 秒を決める。鳴らせないあいだは絵を dt で進め、
-// あとで鳴らせるようになったら次の拍の頭から入る。リトライの短い題字は TAP を通らない（begin しない）ので、はじめから dt
+// あとで鳴らせるようになったら次の拍の頭から入る。?intro=short の撮影用の短い題字は TAP を通らない（begin しない）ので、はじめから dt。
+// リトライは導入を通らない（タッチの端末は遊ぶ画面の上の TAP で unlock する。onPlay）
 const introMusicGrid = (() => { const p = introMusicPlan(introFlow.timeline); return p ? { start: p.start, beatSec: 60 / p.tempo } : { start: 0, beatSec: 60 / 116 }; })();
 const introClock = createIntroClock({
   getOutput: () => audio.introOutput,
@@ -524,6 +537,8 @@ function warmIntro() {
   gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(4));
 }
 function introTick(dt) {
+  // C1: タッチのリトライの TAP を待つ間は、体の組み立てを少しずつ（遊ぶ画面は simulate と draw が描く）
+  if (introFlow.state === 'tap') { if (!bodyPrep.done) bodyPrep.step(); return; }
   // TAP を待つ間に、主人公の導入の体と、導入の音楽の楽器の音を少しずつ作っておく。両方できたら、画質の段の主人公の体と
   // 乗り手の体を区切り 1 つずつ、最後に導入の材質を前もって作る
   // （TAP が先に来ても、残りは TAP の直後、音の時計を決める前に作り終える）
@@ -923,7 +938,7 @@ function stepWorld(wdt, live, enemies, cam, focus, glowScale = 1) {
 }
 
 function simulate(dt) {
-  if (introFlow.blocksInput) return; // 導入の間はゲームを進めない（描くのは introTick）
+  if (introFlow.playsIntro) return; // 導入の間はゲームを進めない（描くのは introTick）。リトライの TAP の間は遊ぶ画面を描く（ゲームは 'ready' のまま）
   // TAP START のあと: 主人公が下から浮き上がる
   if (liftT > 0) { liftT = Math.max(0, liftT - dt); enemyView.setHeroLift(heroLiftAt(1 - liftT / HERO_LIFT.sec)); }
   if (replay.active) {
@@ -992,7 +1007,7 @@ function finishFrame(dt, live) {
   const hm = game.phase === 'playing' && !cinematic.active && !debugCam ? hideMarkState({ hero: game.hero, hideLeft: game.hideLeft, holdSec: CONFIG.hide.holdSec }) : { show: false, p: 0 };
   hideMark.update(hm, hm.show ? screenCue(game.hero.x, 1.2, game.hero.z) : null);
   // 最後の一発を放ってから結果までずっと HUD は出さない（両手が玉を握り込む間も、リプレイの間も）
-  hud.setVisible(!debugCam && !cinematic.active && !replay.active && !blackhole.active);
+  hud.setVisible(!debugCam && !introFlow.blocksInput && !cinematic.active && !replay.active && !blackhole.active); // C1: リトライの TAP の間も出さない
   updateAudio(live, dt);
   updateResult(dt);
 }
@@ -1079,7 +1094,7 @@ let whiteWarmed = false;
 let debugCam = null; // 撮影用（?debug の __debug.look）: 画面全体を決まったカメラで描く
 let debugRing = false; // 撮影用（__debug.ringInLook）: 決まったカメラでも届く範囲の輪を描く（遠くから輪の全体を撮る）
 function draw() {
-  if (introFlow.blocksInput) return; // 導入の間の絵は introTick が描く
+  if (introFlow.playsIntro) return; // 導入の間の絵は introTick が描く
   // mid / low: 壁と道の細かい飾りは、近いカメラ（演出の全画面・リプレイ・結末）のときだけ描く
   cityView.setCloseView(!!debugCam || blackhole.active || replay.active || cinematic.white || cinematic.fullscreen);
   if (!cinematic.white) whiteWarmed = false;
@@ -1135,7 +1150,7 @@ const debugHooks = {
   draw,
   // 導入（S6）: 時刻 t（導入の秒）の絵を描く（撮影・録画。音は鳴らさない）。gate なら導入へ進める
   introSeek(t) {
-    if (introFlow.state === 'game') return null;
+    if (!introFlow.playsIntro) return null;
     if (introFlow.state === 'gate') overlay.showGate(false);
     introFlow.seek(t);
     const b = renderIntroAt(introFlow.time, { force: true, alive: t });

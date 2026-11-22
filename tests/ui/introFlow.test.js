@@ -1,4 +1,5 @@
 import { test, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { createIntroFlow, introMode, RETRY_KEY } from '../../src/ui/introFlow.js';
 import { createGame } from '../../src/game/game.js';
 import { createControls } from '../../src/input/controls.js';
@@ -11,27 +12,30 @@ import { CONFIG } from '../../src/config.js';
 // createControls へ。pointerdown は、導入が受け取る間は導入へ（intercept。長押しにならない）、ゲームが始まってからは溜めへ。
 // TAP の画面を離した操作（pointerup）で導入を始めるのは introGesture（main.js と同じく、配線のあとにつなぐ）
 // prep: TAP の直後の準備（onBegin）にかかる秒（その間は時計だけ進み、終わりに markReady。main.js と同じ）
-function rig(mode = 'full', { prep = 0 } = {}) {
+function rig(mode = 'full', { prep = 0, touch = false } = {}) {
   const game = createGame({ seed: 3 });
-  const events = { shot: 0, fizzle: 0, start: 0, skip: 0, begin: 0 };
+  const events = { shot: 0, fizzle: 0, start: 0, skip: 0, begin: 0, play: 0, unlock: 0 };
   game.on('shot', () => events.shot++);
   game.on('fizzle', () => events.fizzle++);
   const dom = fakeDom();
   const controls = createControls({ onChargeStart: () => game.pressStart(), onChargeEnd: () => game.pressEnd(), onChargeCancel: () => game.pressCancel(), onPuff: () => game.puff() });
   const flow = createIntroFlow({
-    mode,
+    mode, touch,
+    onPlay: () => events.play++,
     onBegin: () => { events.begin++; dom.advance(prep); flow.markReady(dom.perf.now()); },
     onSkip: () => events.skip++,
     onStart: () => { events.start++; game.begin(); },
   });
-  const bind = bindPointerInput(dom.target, { controls, puff: () => {}, perf: dom.perf, intercept: (e, ms) => flow.consumePointer(ms) });
-  const gesture = createIntroGesture({ audio: { running: true, sessionPending: false, unlock() {} }, flow });
+  const bind = bindPointerInput(dom.target, { controls, puff: () => {}, perf: dom.perf, intercept: (e, ms) => flow.consumePointer(ms, e.pointerType) });
+  // 音: リトライのタッチの TAP を確かめるため、鳴らせるまでは running = false（unlock で鳴らせるようになる）
+  const audio = { running: mode !== 'retry', sessionPending: false, unlock() { events.unlock++; audio.running = true; } };
+  const gesture = createIntroGesture({ audio, flow });
   gesture.attach({ addEventListener() {} }, dom.target);
-  // stamp: その入力の timeStamp（省けば今。準備の間に押してあとから届く入力は、前の時刻）
-  const down = (id = 1, stamp) => dom.fire('pointerdown', { pointerId: id, timeStamp: stamp ?? dom.ms });
-  const up = (id = 1) => dom.fire('pointerup', { pointerId: id });
+  // stamp: その入力の timeStamp（省けば今。準備の間に押してあとから届く入力は、前の時刻）。type: pointerType（省けば指）
+  const down = (id = 1, stamp, type = 'touch') => dom.fire('pointerdown', { pointerId: id, timeStamp: stamp ?? dom.ms, pointerType: type });
+  const up = (id = 1, type = 'touch') => dom.fire('pointerup', { pointerId: id, pointerType: type });
   const tick = (sec, dt = 1 / 60) => { for (let t = 0; t < sec - 1e-9; t += dt) { dom.advance(dt); controls.update(bind.now()); flow.update(dt); game.update(dt); } };
-  return { game, flow, controls, events, down, up, tick, dom };
+  return { game, flow, controls, events, down, up, tick, dom, audio, gesture };
 }
 
 test('最初の読み込み: 小さな TAP の画面 → タップで導入が始まる（音を鳴らせるようになる操作）。押しただけでは始めず、離したときに始める', () => {
@@ -111,6 +115,79 @@ test('R1g: リトライ（mode retry）は導入も題字も TAP START もなく
   tick(0.3);
   expect(game.charge.active).toBe(true);
   expect(game.phase).toBe('playing');
+});
+
+// 最終レビュー C1: タッチの pointerdown は音を鳴らせるようにする操作に数えられず、読み直しでユーザーの操作の記録は消える。
+// リトライがすぐ溜めになると、最初の操作らしい操作は溜めの指を離す最後の一撃で、60 秒の間ずっと無音になる。
+// タッチの端末のリトライだけ、遊ぶ画面の上に大きな「TAP」を一つ出し、離した操作で unlock してから遊べるようにする
+test('C1: リトライ（mode retry）のタッチの端末: 最初の pointerdown は溜めにならず、pointerup で unlock してから遊べる。次の pointerdown が溜め', () => {
+  const { flow, game, events, down, up, tick, controls } = rig('retry', { touch: true });
+  expect(flow.state).toBe('tap');
+  expect(flow.blocksInput).toBe(true);
+  expect(flow.playsIntro).toBe(false); // 導入・題字は出さない（遊ぶ画面の上の TAP だけ）
+  expect(flow.started).toBe(false);
+  down();
+  tick(0.3);
+  expect(game.charge.active).toBe(false);
+  expect(controls.charging).toBe(false);
+  expect(events.unlock).toBe(0);
+  expect(events.play).toBe(0);
+  up();
+  expect(events.unlock).toBe(1); // 離した操作の中で unlock
+  expect(events.play).toBe(1);
+  expect(flow.state).toBe('game');
+  expect(flow.started).toBe(true);
+  expect(flow.blocksInput).toBe(false);
+  expect(game.charge.active).toBe(false);
+  expect(events.begin + events.start + events.shot + events.fizzle).toBe(0); // 導入も TAP START もなく、放ちもしない
+  down(2);
+  tick(0.3);
+  expect(game.charge.active).toBe(true);
+  expect(game.phase).toBe('playing');
+});
+
+test('C1: リトライの TAP で 2 本目の指を離しても始めない（押した指と同じ指）。キー（Space / Enter）でも始められる', () => {
+  const a = rig('retry', { touch: true });
+  a.down(1);
+  a.up(2);
+  expect(a.flow.state).toBe('tap');
+  a.up(1);
+  expect(a.flow.state).toBe('game');
+  const b = rig('retry', { touch: true });
+  b.gesture.key(b.dom.ms);
+  expect(b.events.unlock).toBe(1);
+  expect(b.flow.state).toBe('game');
+  expect(b.events.play).toBe(1);
+});
+
+test('C1: リトライの TAP の画面でもマウスの pointerdown は音を鳴らせる操作なので、そのまま溜めになる（タッチとマウスの両方の端末）', () => {
+  const { flow, game, events, down, tick } = rig('retry', { touch: true });
+  down(1, undefined, 'mouse');
+  tick(0.3);
+  expect(flow.state).toBe('game');
+  expect(events.play).toBe(1);
+  expect(game.charge.active).toBe(true);
+});
+
+test('C1: PC（タッチでない端末）のリトライは今までどおり TAP なしで、最初のマウスの pointerdown がそのまま溜め', () => {
+  const { flow, game, events, down, tick } = rig('retry', { touch: false });
+  expect(flow.state).toBe('game');
+  down(1, undefined, 'mouse');
+  tick(0.3);
+  expect(game.charge.active).toBe(true);
+  expect(events.play).toBe(0);
+});
+
+test('C1: タッチの端末でも、通常の読み込み（mode full）は今までどおり小さな TAP の画面から導入', () => {
+  const { flow, game, down, up, events } = rig('full', { touch: true });
+  expect(flow.state).toBe('gate');
+  expect(flow.playsIntro).toBe(true);
+  down();
+  expect(game.charge.active).toBe(false);
+  up();
+  expect(flow.state).toBe('intro');
+  expect(events.begin).toBe(1);
+  expect(events.play).toBe(0);
 });
 
 test('通常の読み込み（mode full）は TAP の画面から導入・題字を通り、最初のタップは溜めにならない', () => {
@@ -212,4 +289,14 @@ test('R1c: 本番の経路: 古い WebKit（timeStamp がエポックの ms）�
   expect(game.charge.active).toBe(true);
   up(4);
   expect(controls.charging).toBe(false);
+});
+
+test('C1: main.js はタッチの端末かを渡し、画面の押下の種類（pointerType）を導入へ渡す。TAP の間は遊ぶ画面を描き、離したら体の組み立ての残りを済ませる', () => {
+  const src = readFileSync(new URL('../../src/main.js', import.meta.url), 'utf8');
+  expect(src).toMatch(/createIntroFlow\(\{\s*mode: startMode,\s*touch: touchDevice,/);
+  expect(src).toMatch(/introFlow\.consumePointer\(ms, e\.pointerType\)/);
+  expect(src).toMatch(/onPlay\(\) \{\s*bodyPrep\.finish\(\);/);
+  expect(src).toMatch(/introFlow\.state === 'tap'\) \{ if \(!bodyPrep\.done\) bodyPrep\.step\(\)/);
+  expect(src).toMatch(/function simulate\(dt\) \{\s*if \(introFlow\.playsIntro\) return;/);
+  expect(src).toMatch(/function draw\(\) \{\s*if \(introFlow\.playsIntro\) return;/);
 });

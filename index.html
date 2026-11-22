@@ -321,6 +321,9 @@
     #intro-gate.on { display: flex; }
     #intro-gate span { font-family: "SaigoMincho", serif; font-weight: 900; font-size: clamp(15px, 4vw, 20px); letter-spacing: 0.6em; padding-left: 0.6em; color: #fff; opacity: 0.25; transition: opacity 0.4s; }
     #intro-gate.ready span { opacity: 1; animation: intro-pulse 1.5s ease-in-out infinite; }
+    /* 最終レビュー C1: タッチのリトライは、遊ぶ画面の上に大きな「TAP」を一つ（このタップで音を鳴らせるようになる） */
+    #intro-gate.retry { background: rgba(0, 0, 0, 0.38); }
+    #intro-gate.retry span { font-size: clamp(56px, 20vw, 120px); letter-spacing: 0.3em; padding-left: 0.3em; text-shadow: 0 0 24px rgba(0, 0, 0, 0.6); }
     #intro-start { position: fixed; left: 50%; bottom: max(8.5vh, 44px); transform: translateX(-50%); margin: 0; padding: 0.85em 2.1em 0.85em 2.55em; font-family: "SaigoMincho", serif; font-weight: 900; font-size: clamp(15px, 4.2vw, 20px); letter-spacing: 0.45em; white-space: nowrap; color: #0a080c; background: rgba(255, 255, 255, 0.55); border: 1px solid rgba(10, 8, 12, 0.8); border-radius: 2px; opacity: 0; pointer-events: none; cursor: pointer; touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
     #intro-start.on { pointer-events: auto; }
     #intro-start.pulse { animation: intro-btn 2.2s ease-in-out infinite; }
