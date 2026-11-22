@@ -118,7 +118,17 @@ export function createGame({ seed, cfg = CONFIG }) {
   }
 
   // 前の小爆発が広がり終わるまでは次を押せない（連打で力を無駄にせず、画面も跳ばない）
-  const canPuff = () => !hidden && phase === 'playing' && power.canSpend(cfg.puff.cost) && !blasts.some((b) => b.shot.small);
+  // M2（持ち主 09:11、spec §16）: 払うは 1 回のゲームで puff.uses 回まで。払えない理由: 'out'（使い切った）・'short'（力が足りない）・
+  // 'busy'（前の払うが広がっている間）。遊んでいる最中でなければ 'off'。払えるなら null
+  let puffsLeft = cfg.puff.uses ?? Infinity;
+  const puffBlock = () => {
+    if (hidden || phase !== 'playing') return 'off';
+    if (puffsLeft <= 0) return 'out';
+    if (!power.canSpend(cfg.puff.cost)) return 'short';
+    if (blasts.some((b) => b.shot.small)) return 'busy';
+    return null;
+  };
+  const canPuff = () => puffBlock() === null;
 
   return {
     city, enemies, power, charge, timer, score,
@@ -137,6 +147,9 @@ export function createGame({ seed, cfg = CONFIG }) {
     get outcome() { return outcome; },
     // 小爆発のボタンを押せるか（力が足りる・遊んでいる最中・前の小爆発が広がり終わった）
     get canPuff() { return canPuff(); },
+    // M2: 残りの払える回数（HUD の 3 つの点）と、今払えない理由（'out' / 'short' / 'busy' / 'off'。払えるなら null）
+    get puffsLeft() { return puffsLeft; },
+    get puffBlock() { return puffBlock(); },
     // 進行中の一発の読み取り専用の写し（描画が一発ごとに球を描くため）。小爆発は shot.small
     get blasts() {
       return Object.freeze(blasts.map((b) => Object.freeze({ id: b.id, shot: b.shot, front: b.blast.front })));
@@ -190,6 +203,7 @@ export function createGame({ seed, cfg = CONFIG }) {
     puff() {
       if (!canPuff()) return false;
       power.spend(cfg.puff.cost);
+      puffsLeft--;
       const shot = { amount: cfg.puff.cost, radius: cfg.puff.radius, isBig: false, small: true, centre: { x: hero.x, z: hero.z } };
       startBlast(shot);
       emit('puff', shot);

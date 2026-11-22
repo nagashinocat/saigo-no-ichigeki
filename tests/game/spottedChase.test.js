@@ -29,8 +29,10 @@ function reacquired(e, H) {
   return Math.abs(wrap(e.heading - toHero)) < Math.PI / 4;
 }
 
+// M2: 払うは 3 回までになったが、ここはよろめきからの立ち直りも確かめたいので回数の制限を外す（見失わないことは回数によらない）
+const UNLIMITED = { ...CONFIG, puff: { ...CONFIG.puff, uses: Infinity } };
 function run(seed, sec = 45) {
-  const g = createGame({ seed });
+  const g = createGame({ seed, cfg: UNLIMITED });
   g.begin(); g.pressStart();
   expect(CONFIG.hero.speed).toBe(22);
   const rec = new Map(); // id → { back, growSec, maxGrowSec, staggerEnd }

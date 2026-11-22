@@ -397,9 +397,12 @@ test('届くまでの秒の分布: 前（2026-11-21 fix1: 平均 6.9 秒・中�
 });
 
 // ---- S8: 広い街を見回る者と、最大溜めの一発が届く距離 ----
-test('fix1: 見回る者は始めから count 人、探す者の外（patrolBand の内端）から街の端まで、どの方角・どの距離にもいて、主人公を探さず掴みにも来ない', () => {
+// M2: 見回る者も知らせ（alert）を受ければ狩りに加わる（spec §16「見つかると周りの軍勢へ知らせが広がり」）。ここでは知らせを止めて、
+// 見回る者が自分からは主人公を探しに来ないこと（帯の中を見回るだけ）を確かめる。知らせで加わるのは tests/game/headlight.test.js
+const NO_ALERT = { ...CONFIG, enemy: { ...CONFIG.enemy, alert: null } };
+test('fix1: 見回る者は始めから count 人、探す者の外（patrolBand の内端）から街の端まで、どの方角・どの距離にもいて、主人公を探さず掴みにも来ない（知らせがなければ）', () => {
   const city = generateCity(7);
-  const E = createEnemies(createRng(2), CONFIG, { buildings: city.buildings, patrolRng: createRng(9) });
+  const E = createEnemies(createRng(2), NO_ALERT, { buildings: city.buildings, patrolRng: createRng(9) });
   const [lo, hi] = patrolBand(CONFIG);
   // 帯は式で決まる: 内は探す者の動ける範囲の外、外は街の端
   expect(lo).toBeCloseTo(CONFIG.enemy.roamDist + GRID.PITCH / 2);
@@ -426,10 +429,10 @@ test('fix1: 見回る者は始めから count 人、探す者の外（patrolBand
   expect(moved).toBeGreaterThan(pats().length * 0.7);
 });
 
-test('S8: 見回る者がいても、狩りに加わるまでは、探して掴みに来る者の湧き方・動きは同じ', () => {
+test('S8: 見回る者がいても、狩りに加わるまでは、探して掴みに来る者の湧き方・動きは同じ（M2: 知らせで加わる分を除くため知らせを止める）', () => {
   const city = generateCity(3);
-  const a = createEnemies(createRng(4), CONFIG, { buildings: city.buildings });
-  const b = createEnemies(createRng(4), CONFIG, { buildings: city.buildings, patrolRng: createRng(77) });
+  const a = createEnemies(createRng(4), NO_ALERT, { buildings: city.buildings });
+  const b = createEnemies(createRng(4), NO_ALERT, { buildings: city.buildings, patrolRng: createRng(77) });
   // 見回る者が狩りに加わる（R0、patrol.joinAt）までは同じ。加わったあとは掴む枠を取り合うので変わってよい
   for (let i = 0; i < CONFIG.enemy.patrol.joinAt * 30 - 1; i++) { a.update(1 / 30); b.update(1 / 30); }
   const hunt = (E) => E.list.filter((e) => !e.patrol).map((e) => [e.id, e.state, +e.x.toFixed(6), +e.z.toFixed(6)]);
@@ -496,8 +499,10 @@ test('R0: 残り 20 秒（patrol.joinAt）になると、広場の近く（patro
 // 速さは e.speed と、実際に動いた距離 / dt の両方で確かめる
 test('R0: 主人公から 25 m 以内の軍勢は、どのフレームでも 6 m/s 以上で動く（掴んでいる者・群がる者も）', () => {
   let frames = 0, grabFrames = 0, clingFrames = 0, heavyOrbit = 0, heavyStagger = 0, bossFrames = 0;
+  // M2: 払うは 3 回までになったが、ここは動きの下限を確かめるテスト（よろめく重い者のフレームも数えたい）なので、回数の制限を外す
+  const cfg = { ...CONFIG, puff: { ...CONFIG.puff, uses: Infinity } };
   for (const seed of [1, 2, 3]) for (const puff of [false, true]) {
-    const g = createGame({ seed });
+    const g = createGame({ seed, cfg });
     g.pressStart();
     const DT = 1 / 30;
     const prev = new Map();

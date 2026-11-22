@@ -91,6 +91,20 @@ export function lineOfSight(x, z, buildings, margin = 0, px = 0, pz = 0) {
   return true;
 }
 
+// M2（持ち主 09:11「敵の前方ライトを少し広くして」、spec §16）: 前を照らすライトに主人公が入ったか。ライトは進む向き（heading）の前の扇
+// （半分の角 spotHalfAngle、spotDist m まで）。ごく近く（spotNear m の内）は向きによらない（気配）。どちらも建物にさえぎられない所だけ。
+// H: 主人公の位置 { x, z }。buildings: 見通しを確かめる建物
+export function seesHero(e, H, buildings, cfg = CONFIG) {
+  const E = cfg.enemy;
+  const rx = H.x - e.x, rz = H.z - e.z, d = Math.hypot(rx, rz);
+  if (d > E.spotDist) return false;
+  if (d > (E.spotNear ?? 0)) {
+    const off = Math.abs(wrap(Math.atan2(rz, rx) - (e.heading ?? 0)));
+    if (off > (E.spotHalfAngle ?? Math.PI)) return false;
+  }
+  return lineOfSight(e.x, e.z, buildings, E.sightMargin, H.x, H.z);
+}
+
 // 軍勢。浮遊バイクで街の道路（26m 間隔の街区の間の道）をビュンビュン飛んで主人公を探し回り（search）、
 // 交差点で曲がる。主人公から spotDist m の内側で建物にさえぎられずに見えたら見つけて（chase）、止まらずにそのまま
 // 一直線に全速で突っ込み（R0: 見つけた一拍のにらみはやめた）、最後の slowDist m（0.5 m ほど）だけ減速して掴む（grab）。
@@ -120,6 +134,9 @@ export function createEnemies(rng, cfg = CONFIG, { buildings = [], patrolRng = n
   let bossBorn = false, drainLoad = 0;
   const arrivals = [];
   const H = heroPos;
+  // 探す者が行ける交差点の、街の中心からの一番遠い距離（m）
+  const EDGE = cfg.cityRadius - P / 2;
+  const AL = E.alert ?? null;
   // 見通しを確かめる建物: 主人公のそば（spotDist + NEAR_SLACK の内）だけ。主人公が NEAR_SLACK m 動いたら選び直す
   // （線分は主人公から spotDist の内なので、選んだ所から NEAR_SLACK 内にいる間は、選んだ建物で足りる）
   const NEAR_SLACK = 10;
@@ -142,17 +159,23 @@ export function createEnemies(rng, cfg = CONFIG, { buildings = [], patrolRng = n
 
   // 交差点で次に進む向きを選ぶ（戻らない。主人公に近づく向きを選びやすい。気配を感じた者は近づく向きだけ。roamDist の外へは出ない）。
   // 主人公から同じ距離の交差点へ進む（広場を囲む道を回る）のも近づく向きに数える（広場の角で行き止まりにして引き返さない）
+  // M2: 知らされただけの者（e.heard）は、主人公ではなく知らされた位置（最後に見えた所）へ近づき、そこから alert.sweepDist m の内を探し回る。
+  // 街の端（cityRadius − 半区画）より外の交差点へは行かない（M1 の見直しの持ち越し: 外の畑の道へ出ない）
   function chooseNext(e, rand = rng) {
+    const T = e.heard ?? H;
     const [cx, cz] = roadNode(e.ni, e.nj);
-    const here = Math.hypot(cx - H.x, cz - H.z);
+    const here = Math.hypot(cx - T.x, cz - T.z);
+    const sweeping = !!e.heard && here <= (E.alert?.sweepDist ?? 0);
+    const roam = e.heard ? E.alert.sweepDist : E.roamDist;
     const opts = [];
     for (const [di, dj] of DIRS) {
       if (di === -e.di && dj === -e.dj) continue;
       const [nx, nz] = roadNode(e.ni + di, e.nj + dj);
-      const d = Math.hypot(nx - H.x, nz - H.z);
+      if (!e.patrol && Math.hypot(nx, nz) > EDGE) continue;
+      const d = Math.hypot(nx - T.x, nz - T.z);
       const inward = d < here + 1e-6;
-      if (d > E.roamDist && !inward) continue;
-      if (e.alert && !inward) continue;
+      if (d > roam && !inward) continue;
+      if (e.alert && !inward && !sweeping) continue;
       opts.push({ di, dj, w: inward ? E.inwardBias : 1 });
     }
     if (!opts.length) opts.push({ di: -e.di, dj: -e.dj, w: 1 });
@@ -171,8 +194,14 @@ export function createEnemies(rng, cfg = CONFIG, { buildings = [], patrolRng = n
     return null;
   }
   function spawn(rand = rng, kind = pickKind()) {
-    const a = rand() * Math.PI * 2;
+    let a = rand() * Math.PI * 2;
     const r = E.spawnDist[0] + rand() * (E.spawnDist[1] - E.spawnDist[0]);
+    // M2（M1 の見直しの持ち越し）: 主人公が街の端のそばにいると、湧く所が街の外（畑の道）になる。そのときは向きを街の中心の方へ寄せる
+    // （乱数は使わない。湧き方の並びは街の中では前と同じ）
+    if (Math.hypot(H.x + Math.cos(a) * r, H.z + Math.sin(a) * r) > EDGE - P) {
+      const c = Math.atan2(-H.z, -H.x), off = wrap(a - c);
+      for (const k of [0.6, 0.3, 0]) { a = c + off * k; if (Math.hypot(H.x + Math.cos(a) * r, H.z + Math.sin(a) * r) <= EDGE - P) break; }
+    }
     const lane = [(rand() - 0.5) * 2 * E.laneSpread, (rand() - 0.5) * 2 * E.laneSpread];
     const fwd = rand(), alertRoll = rand();
     const e = { id: nextId++, x: H.x + Math.cos(a) * r, z: H.z + Math.sin(a) * r, state: 'search', speed: E.searchSpeed, turn: 0, searchTime: 0, alert: alertRoll < E.alertAtSpawn, lane };
@@ -274,10 +303,57 @@ export function createEnemies(rng, cfg = CONFIG, { buildings = [], patrolRng = n
     e.z += Math.sin(e.heading) * e.speed * dt;
     place(e);
     // 見つける: spotDist の内側で、建物にさえぎられずに主人公が見えたら（spotEvery 秒ごとに確かめる）
+    trySpot(e, dt);
+  }
+  // 見つける（M2: 前を照らすライトの中か、ごく近く。spotEvery 秒ごとに確かめる）。見つけたら chase へ、まわりへ知らせる
+  function trySpot(e, dt) {
     e.spotClock = (e.spotClock ?? (e.id * 0.37) % E.spotEvery) - dt;
-    if (e.spotClock <= 0) {
-      e.spotClock += E.spotEvery;
-      if (e.dist <= E.spotDist && lineOfSight(e.x, e.z, nearBuildings(), E.sightMargin, H.x, H.z)) { e.state = 'chase'; e.spotT = 0; }
+    if (e.spotClock > 0) return;
+    e.spotClock += E.spotEvery;
+    if (e.dist <= E.spotDist && seesHero(e, H, nearBuildings(), cfg)) {
+      e.state = 'chase'; e.spotT = 0;
+      if (e.patrol) { e.hunting = true; e.alert = true; }
+      delete e.heard; e.relayAt = null;
+      e.recall = AL?.callEvery ?? Infinity;
+      call(e, 0);
+    }
+  }
+
+  // ---- M2: 知らせ（spec §16「見つかると周りの軍勢へ知らせが広がり、どんどん集まってくる」）----
+  // from が alert.radius m の内の探す者（見回る者も）へ、主人公の今の位置（最後に見えた所）を知らせる。hops は from の段（見つけた者は 0）。
+  // 知らされた者は heard を覚え（もっと新しい知らせなら書き換える）、hops + 1 < alert.hops なら relayDelay 秒あとに次へ伝える。
+  // chase・掴む・群がる・よろめく者は変わらない（自分で見つけた者は今の主人公を追い続ける。持ち主 13:36）
+  function call(from, hops) {
+    if (!AL) return;
+    from.callT = 0;
+    const known = { x: H.x, z: H.z, t: time };
+    const R2 = AL.radius * AL.radius;
+    for (const o of list) {
+      if (o === from || o.state !== 'search') continue;
+      if (o.heard && o.heard.t >= known.t) continue;
+      const dx = o.x - from.x, dz = o.z - from.z;
+      if (dx * dx + dz * dz > R2) continue;
+      hear(o, known, hops + 1);
+    }
+  }
+  function hear(o, known, hops) {
+    o.heard = { x: known.x, z: known.z, t: known.t };
+    o.hops = hops;
+    o.alert = true;
+    if (o.patrol) o.hunting = true;
+    o.relayAt = hops < AL.hops ? time + AL.relayDelay : null;
+  }
+  // 知らされた者が次へ伝える（覚えた位置のまま）
+  function relay(o) {
+    o.relayAt = null;
+    o.callT = 0;
+    const R2 = AL.radius * AL.radius;
+    for (const p of list) {
+      if (p === o || p.state !== 'search') continue;
+      if (p.heard && p.heard.t >= o.heard.t) continue;
+      const dx = p.x - o.x, dz = p.z - o.z;
+      if (dx * dx + dz * dz > R2) continue;
+      hear(p, o.heard, o.hops + 1);
     }
   }
 
@@ -377,6 +453,20 @@ export function createEnemies(rng, cfg = CONFIG, { buildings = [], patrolRng = n
       if (PJ?.joinAt != null && time >= PJ.joinAt) {
         for (const e of list) if (e.patrol && !e.hunting && e.state === 'search' && e.dist <= PJ.joinDist) { e.hunting = true; e.alert = true; e.searchTime = 0; }
       }
+      // M2: 知らせ。光る間合い（callT）を進め、伝える時刻の来た者は次へ伝え、主人公が見えている追う者は callEvery 秒ごとに知らせ直す
+      if (AL) {
+        for (const e of list) {
+          if (e.callT != null) e.callT += dt;
+          if (e.state === 'dead') continue;
+          if (e.state === 'search') { if (e.relayAt != null && time >= e.relayAt) relay(e); continue; }
+          if (e.state !== 'chase' && e.state !== 'grab' && e.state !== 'cling') continue;
+          e.recall = (e.recall ?? AL.callEvery) - dt;
+          if (e.recall > 0) continue;
+          e.recall += AL.callEvery;
+          const sees = e.state !== 'chase' || (e.dist <= E.spotDist && e.x != null && lineOfSight(e.x, e.z, nearBuildings(), E.sightMargin, H.x, H.z));
+          if (sees) call(e, 0);
+        }
+      }
       for (const e of list) {
         if (e.state === 'dead') continue;
         if (e.state === 'stagger') { staggerStep(e, dt); e.lean = (e.lean ?? e.turn) + (e.turn - (e.lean ?? e.turn)) * (1 - Math.exp(-dt / LEAN_SEC)); continue; }
@@ -394,7 +484,7 @@ export function createEnemies(rng, cfg = CONFIG, { buildings = [], patrolRng = n
         e.heading ??= e.angle + Math.PI;
         e.speed ??= approachSpeed(e.dist, cfg);
         e.turn ??= 0;
-        if (e.patrol && !e.hunting) { patrolStep(e, dt); e.lean = (e.lean ?? e.turn) + (e.turn - (e.lean ?? e.turn)) * (1 - Math.exp(-dt / LEAN_SEC)); continue; }
+        if (e.patrol && !e.hunting) { patrolStep(e, dt); if (e.dist <= E.spotDist) trySpot(e, dt); e.lean = (e.lean ?? e.turn) + (e.turn - (e.lean ?? e.turn)) * (1 - Math.exp(-dt / LEAN_SEC)); continue; }
         if (e.state === 'search') searchStep(e, dt);
         let arrived = false;
         const free = grabbing < E.maxGrabbing;
