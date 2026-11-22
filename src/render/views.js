@@ -31,6 +31,8 @@ export const CITY_CAMERA = {
   elevationDeg: 62, azimuthDeg: 0, minHFovDeg: 52, vFovDeg: 46,
   frameHalf: 35, frameTop: 22,
   marginX: 0.92, ndcTop: 0.7, ndcBottom: -0.94, plazaNdc: -0.1,
+  // R1g（持ち主 00:47「カメラをもう少し近くしたい」）: 枠が収まる一番近い距離に掛ける（0.8 = 約 0.8 倍まで寄る。角度・主人公の画面の位置はそのまま）
+  distScale: 0.8,
 };
 
 export function createCityCamera(opts = CITY_CAMERA) {
@@ -88,7 +90,7 @@ export function fitCityCamera(cam, aspect) {
     place(cam, opts, mid, tilt);
     if (fits(cam, opts, pts)) hi = mid; else lo = mid;
   }
-  place(cam, opts, hi, tilt);
+  place(cam, opts, hi * (opts.distScale ?? 1), tilt);
   // 爆発に合わせて下がる・揺れるときの基準の姿勢
   cam.userData.basePos = cam.position.clone();
   cam.userData.baseQuat = cam.quaternion.clone();

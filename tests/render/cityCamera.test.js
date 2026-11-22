@@ -1,6 +1,6 @@
 import { test, expect } from 'vitest';
 import * as THREE from 'three';
-import { createCityCamera, fitCityCamera, layoutViews } from '../../src/render/views.js';
+import { createCityCamera, fitCityCamera, layoutViews, CITY_CAMERA } from '../../src/render/views.js';
 import { generateCity, GRID } from '../../src/world/cityGen.js';
 import { CONFIG } from '../../src/config.js';
 
@@ -86,10 +86,13 @@ test('調べる点: 広場 8、最初の一周の正方形 8、湧く輪 24。�
 });
 
 for (const [w, h] of [[390, 844], [1280, 720]]) {
-  test(`${w}x${h}: 広場と最初の一周の 8 つの街区（地面と、どの建物の屋上も）が画角の中、HUD より下`, () => {
+  // R1g: 距離を 0.8 倍に寄せたので、最初の一周の外の端（35m）までは入りきらない。広場と、その 0.8 倍（28m）の正方形・
+  // その内側の街区の建物の屋上（高さは 35m の枠より内の分）が、画角の中・HUD より下
+  test(`${w}x${h}: 広場と最初の一周の 0.8 倍の正方形（地面と、その内側の建物の屋上）が画角の中、HUD より下`, () => {
     const { frustum, ndc, hudBottom } = cameraFor(w, h);
-    const pts = [...plazaPoints(), ...innerSquare()];
-    for (const s of SEEDS) for (const b of firstRing(s)) pts.push(...corners(b));
+    const R = CITY_CAMERA.distScale;
+    const pts = [...plazaPoints(), ...innerSquare().map((p) => p.multiplyScalar(R))];
+    for (const s of SEEDS) for (const b of firstRing(s)) pts.push(...corners(b).filter((p) => Math.max(Math.abs(p.x), Math.abs(p.z)) <= INNER * R));
     for (const p of pts) {
       expect(frustum.containsPoint(p)).toBe(true);
       const q = ndc(p);
@@ -107,20 +110,21 @@ for (const [w, h] of [[390, 844], [1280, 720]]) {
     }
   });
 
-  test(`${w}x${h}: 軍勢はどの向きから来ても、最初の一周の外の端（35m）までに画角に入る`, () => {
+  test(`${w}x${h}: 軍勢はどの向きから来ても、28m（最初の一周の外の端 35m の 0.8 倍）までに画角に入る`, () => {
     const { frustum } = cameraFor(w, h);
     for (let i = 0; i < 72; i++) {
       const a = (i / 72) * Math.PI * 2;
-      expect(frustum.containsPoint(new THREE.Vector3(Math.cos(a) * INNER, 1, Math.sin(a) * INNER)), `angle ${i * 5}`).toBe(true);
+      const r = INNER * CITY_CAMERA.distScale;
+      expect(frustum.containsPoint(new THREE.Vector3(Math.cos(a) * r, 1, Math.sin(a) * r)), `angle ${i * 5}`).toBe(true);
     }
   });
 
-  test(`${w}x${h}: 湧く輪の上の道路の点の 40% 以上は、画角の中で建物に隠れない（下限の確認）`, () => {
+  test(`${w}x${h}: 湧く輪の上の道路の点の 20% 以上は、画角の中で建物に隠れない（下限の確認。R1g: 寄せたので 20%）`, () => {
     const { frustum, occluded } = cameraFor(w, h);
     const boxes = boxesOf(1);
     const pts = spawnRoadPoints();
     const visible = pts.filter((p) => frustum.containsPoint(p) && !occluded(p, boxes)).length;
-    expect(visible / pts.length).toBeGreaterThanOrEqual(0.4);
+    expect(visible / pts.length).toBeGreaterThanOrEqual(0.2); // R1g: 寄せたので 0.4 → 0.2（寄せた後の実測は縦 0.33・横 0.25。外から歩いて入る間はレーダーが知らせる）
   });
 
   test(`${w}x${h}: 主人公（1.8m）の見かけの大きさは、大きく描く前で 6px 以上（前の遠いカメラの 3 倍ほど）`, () => {
@@ -148,3 +152,34 @@ test('390x844: 寄っている: 最初の一周が画面の横幅の大半を占
     expect(frustum.containsPoint(new THREE.Vector3(Math.cos(a) * r, 1, Math.sin(a) * r)), `angle ${i * 5}`).toBe(true);
   }
 });
+
+// R1g（持ち主 00:47「カメラをもう少し近くしたい」）: 主人公からの距離は今の約 0.8 倍。角度（仰角・向き）と主人公の画面の位置は同じ
+for (const [w, h] of [[390, 844], [1280, 720]]) {
+  test(`R1g ${w}x${h}: 主人公からの距離は distScale 1 のときの 0.8 倍。向き・主人公の画面の位置は変わらない`, () => {
+    const { city } = layoutViews(w, h);
+    const aspect = city.w / city.h;
+    const far = createCityCamera({ ...CITY_CAMERA, distScale: 1 });
+    fitCityCamera(far, aspect);
+    const near = createCityCamera();
+    fitCityCamera(near, aspect);
+    expect(CITY_CAMERA.distScale).toBe(0.8);
+    const o = new THREE.Vector3(0, 0, 0);
+    expect(near.position.distanceTo(o) / far.position.distanceTo(o)).toBeCloseTo(0.8, 6);
+    const dir = (c) => new THREE.Vector3(0, 0, -1).applyQuaternion(c.quaternion);
+    expect(dir(near).angleTo(dir(far))).toBeLessThan(1e-9);
+    expect(near.position.clone().normalize().angleTo(far.position.clone().normalize())).toBeLessThan(1e-9);
+    far.updateMatrixWorld(); near.updateMatrixWorld();
+    const hero = new THREE.Vector3(0, 0.9, 0);
+    const a = hero.clone().project(far), b = hero.clone().project(near);
+    expect(b.x).toBeCloseTo(a.x, 2);
+    expect(b.y).toBeCloseTo(a.y, 2);
+  });
+
+  test(`R1g ${w}x${h}: 近づいても広場は画角に入り、湧く者は画面のすぐ外から入ってくる（広場の 8 点が収まる）`, () => {
+    const { frustum, ndc, hudBottom } = cameraFor(w, h);
+    for (const p of plazaPoints()) {
+      expect(frustum.containsPoint(p)).toBe(true);
+      expect(ndc(p).y).toBeLessThan(hudBottom);
+    }
+  });
+}

@@ -54,7 +54,7 @@ function simulate(shots, seconds, { dt = 1 / 60, hold = () => false } = {}) {
 }
 
 test('pullbackDistance: 十分遠ければ 0、近ければ視線と逆へ下がって中心から minDist ちょうどになる', () => {
-  expect(pullbackDistance(view.pos, view.dir, 100)).toBe(0);
+  expect(pullbackDistance(view.pos, view.dir, 80)).toBe(0); // R1g: 主人公までの距離が約 92m（0.8 倍）になったので 100 → 80
   const t = pullbackDistance(view.pos, view.dir, 600);
   expect(t).toBeGreaterThan(0);
   expect(distAt(t)).toBeCloseTo(600, 6);
