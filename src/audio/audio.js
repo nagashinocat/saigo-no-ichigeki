@@ -1,6 +1,6 @@
 // Web Audio で合成する音。素材ファイルは使わない。
 import { COLLAPSE, createCollapseGate, collapseVoice, renderCollapseVariant } from './collapse.js';
-import { comboRecipe, bossRecipe, drainVoice, DRAIN_CUE, timeTickRecipe, hideRecipe } from './cues.js';
+import { comboRecipe, bossRecipe, drainVoice, DRAIN_CUE, timeTickRecipe, hideRecipe, guardRecipe } from './cues.js';
 // 世界の音は master を経由するので、silence で全部まとめて黙らせられる（演出の音は cine から鳴る）。
 // boom を鳴らすまでの待ち（秒）: 無音の間（silenceEnd まで）に弾けても、無音が明けてから鳴らす
 export function boomDelay(silenceEnd, now) {
@@ -459,6 +459,18 @@ export function createAudio({ nav = globalThis.navigator, makeMedia = (src) => n
         o.connect(g); g.connect(master); o.start(t); o.stop(t + tn.dur + 0.05);
       }
       noiseBurst({ ...r.sparkle, attack: 0.001 });
+    },
+    // Fix round 1: 払うの守りで弾いた音（柔らかい短い「キン」と風）。pan: 弾いた者の画面の左右
+    guardCue(pan = 0) {
+      if (!ready()) return;
+      const r = guardRecipe(), t0 = now(), bus = panner(pan);
+      for (const tn of r.tones) {
+        const t = t0 + (tn.when ?? 0);
+        const o = ctx.createOscillator(); o.type = 'sine'; o.frequency.setValueAtTime(tn.f, t);
+        const g = ctx.createGain(); env(g.gain, t, 0.004, tn.gain, tn.dur);
+        o.connect(g); g.connect(bus); o.start(t); o.stop(t + tn.dur + 0.05);
+      }
+      noiseBurst({ ...r.air, dest: bus });
     },
     // R1: 大物が来た知らせの音（遠い警笛の二度のうなりと、探照灯の点く音）。pan: 大物の画面の左右、near: 近さ 0〜1
     bossArrive(pan = 0, near = 0.5) {

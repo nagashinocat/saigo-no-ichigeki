@@ -66,6 +66,16 @@ export function hideRecipe(kind, C = HIDE_CUE) {
   return kind === 'land' ? { thud: { ...C.thud }, grit: { ...C.grit } } : { whoosh: C.whoosh.map((w) => ({ ...w })) };
 }
 
+// Fix round 1（見直し Important 5「払うの守りが見えない・聞こえない」）: 守りで弾いた音。柔らかい短い「キン」（高い 2 つの正弦波が
+// 少しずれて鳴り、すぐ消える）と、ごく短い風（帯域ノイズ）。世界の音（master）を通る
+export const GUARD_CUE = {
+  tones: [{ f: 1480, dur: 0.18, gain: 0.07, when: 0 }, { f: 2220, dur: 0.14, gain: 0.04, when: 0.02 }],
+  air: { dur: 0.08, freq: 4200, gain: 0.05, q: 1.1, attack: 0.004 },
+};
+export function guardRecipe(C = GUARD_CUE) {
+  return { tones: C.tones.map((t) => ({ ...t })), air: { ...C.air } };
+}
+
 // 一つのレシピが同時に鳴らす声の大きさの合計（天井の確かめ用。和音・重なりの足し算の上限）
 export function recipePeak(r) {
   if (r.tones) return r.tones.reduce((a, t) => a + t.gain, 0) + r.sparkle.gain;

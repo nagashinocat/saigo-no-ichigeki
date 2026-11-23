@@ -10,7 +10,7 @@ import { pathToFileURL } from 'node:url';
 const root = path.resolve(process.argv[2] ?? path.join(path.dirname(new URL(import.meta.url).pathname), '..'));
 const imp = (p) => import(pathToFileURL(path.join(root, p)).href);
 const { createGame } = await imp('src/game/game.js');
-const { steerBot, actBot } = await imp('src/game/bot.js');
+const { steerBot, actBot, POLICY } = await imp('src/game/bot.js');
 const { CONFIG: BASE } = await imp('src/config.js');
 const { createLookout, isSpotted } = await imp('src/game/lookout.js');
 const { citySeed } = await imp('src/game/daily.js');
@@ -19,17 +19,18 @@ const DT = 1 / 30;
 const dayKeys = (from, n) => Array.from({ length: n }, (_, i) => { const d = new Date(Date.UTC(+from.slice(0, 4), +from.slice(4, 6) - 1, +from.slice(6, 8)) + i * 864e5); return `${d.getUTCFullYear()}${String(d.getUTCMonth() + 1).padStart(2, '0')}${String(d.getUTCDate()).padStart(2, '0')}`; });
 const FROMS = (process.env.FROMS ?? '20260701,20261101,20270301').split(',');
 const SEEDS = FROMS.flatMap((f) => dayKeys(f, Number(process.env.DAYS ?? 40)).map(citySeed));
-const ST = { grab: 2, trigger: 0, crowd: Infinity, hide: false };
+// Fix round 1: 遊び方は最善（POLICY.best）の払い方で、隠れない（見つかる瞬間を数えるため）
+const ST = { ...(POLICY?.best ?? { grab: 2, trigger: 0, crowd: Infinity }), hide: false, lookout: false };
 const q = (xs, p) => { const s = [...xs].sort((a, b) => a - b); return s.length ? s[Math.min(s.length - 1, Math.floor(p * s.length))] : NaN; };
 
-const leads = [], fresh = []; // fresh: その前の FRESH 秒、見つかっていなかった回（追われた直後・払った直後の見つかり直しを除く）
+const leads = [], fresh = [], freshLock = [], freshFree = []; // fresh: その前の FRESH 秒、見つかっていなかった回（追われた直後・払った直後の見つかり直しを除く）
 const FRESH = 1.5;
 let graceShown = 0, graceArrow = 0, checkMs = 0, checks = 0, frames = 0;
 for (const seed of SEEDS) {
   const g = createGame({ seed, cfg: CONFIG });
   const lo = createLookout(CONFIG);
   g.begin(); g.pressStart();
-  let t = 0, lastSpotted = -Infinity, prev = false, prevT = 0, prevShow = false, graceUntil = -1, graceSeen = false, graceArrowSeen = false;
+  let t = 0, lastSpotted = -Infinity, prevLock = false, prev = false, prevT = 0, prevShow = false, graceUntil = -1, graceSeen = false, graceArrowSeen = false;
   while (g.phase === 'playing' && t < CONFIG.roundSeconds - DT / 2) {
     steerBot(g, { cfg: CONFIG });
     actBot(g, ST, CONFIG);
@@ -41,12 +42,13 @@ for (const seed of SEEDS) {
     const sp = isSpotted(g.enemies.list);
     if (sp && !prev && !g.hero.hidden && g.grabbing === 0) {
       leads.push(prevShow ? prevT : 0);
-      if (t - lastSpotted > FRESH) fresh.push(prevShow ? prevT : 0);
+      if (t - lastSpotted > FRESH) { const v = prevShow ? prevT : 0; fresh.push(v); (prevLock ? freshLock : freshFree).push(v); }
       graceUntil = t + (CONFIG.lookout.graceSec ?? 0); graceSeen = false; graceArrowSeen = false;
     }
     if (sp && t <= graceUntil) { if (out.show) graceSeen = true; if (out.show && out.spot) graceArrowSeen = true; }
     if (graceUntil > 0 && t > graceUntil) { if (graceSeen) graceShown++; if (graceArrowSeen) graceArrow++; graceUntil = -1; }
     if (sp) lastSpotted = t;
+    prevLock = g.hideBlock === 'cooldown';
     prev = sp; prevShow = out.show; prevT = out.t;
   }
 }
@@ -59,5 +61,7 @@ console.log(`  lead（出ていた回だけ） p25=${q(warned, 0.25).toFixed(2)}
 console.log(`  lead（全部、出ていなければ 0） p25=${q(leads, 0.25).toFixed(2)} p50=${q(leads, 0.5).toFixed(2)} p75=${q(leads, 0.75).toFixed(2)} 秒  1.0 秒以上 ${leads.filter((x) => x >= 1 - 1e-9).length}（${(100 * leads.filter((x) => x >= 1 - 1e-9).length / n).toFixed(0)}%）`);
 const f1 = fresh.filter((x) => x >= 1 - 1e-9).length;
 console.log(`  そのうち、その前の ${FRESH} 秒は見つかっていなかった回 ${fresh.length}: lead p25=${q(fresh, 0.25).toFixed(2)} p50=${q(fresh, 0.5).toFixed(2)} p75=${q(fresh, 0.75).toFixed(2)} 秒  1.0 秒以上 ${f1}（${(100 * f1 / fresh.length).toFixed(0)}%）  0.8 秒以上 ${fresh.filter((x) => x >= 0.8 - 1e-9).length}  出ていなかった ${fresh.filter((x) => x === 0).length}`);
+// Fix round 1: 隠れられない待ち時間（払ったあと・隠れたあと）の間に見つかった回（字だけの LOOK OUT!）と、その外の回
+for (const [name, xs] of [['待ち時間の間（字だけ）', freshLock], ['待ち時間の外（矢印あり）', freshFree]]) if (xs.length) console.log(`    ${name} ${xs.length}: lead p50=${q(xs, 0.5).toFixed(2)} 秒  1.0 秒以上 ${xs.filter((x) => x >= 1 - 1e-9).length}（${(100 * xs.filter((x) => x >= 1 - 1e-9).length / xs.length).toFixed(0)}%）  出ていなかった ${xs.filter((x) => x === 0).length}`);
 console.log(`  見つかった直後の猶予で LOOK OUT! が出ていた ${graceShown}/${n}、矢印（押せる）まで出ていた ${graceArrow}/${n}`);
 console.log(`確かめ 1 回 平均 ${(checkMs / Math.max(1, checks)).toFixed(3)} ms（${checks} 回、1 秒に ${(checks / (frames * DT)).toFixed(1)} 回）`);

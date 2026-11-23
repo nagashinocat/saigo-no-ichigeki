@@ -85,7 +85,7 @@ function threatFor(g) {
 }
 const st = (g, extra = {}) => ({ hero: g.hero, enemies: g.enemies.list, buildings: g.city.buildings, hideBlock: g.hideBlock, azimuthDeg: 0, ...extra });
 
-test('R1e: 危ないときに出る。掴まれている・待ち時間・もう見つかっている・隠れている・溜めていないときは出ない', () => {
+test('R1e / Fix round 1: 危ないときに出る。掴まれている・もう見つかっている・隠れている・溜めていないときは出ない（待ち時間は字だけ出る）', () => {
   const g = scene();
   const e = threatFor(g);
   expect(e).not.toBe(null);
@@ -94,7 +94,8 @@ test('R1e: 危ないときに出る。掴まれている・待ち時間・もう
   const run = (extra, sec = 10 * DT) => { const lo = createLookout(); let s; for (let i = 0; i < Math.ceil(sec / DT); i++) s = lo.update(DT, st(g, extra)); return s.show; };
   expect(run({})).toBe(true);
   expect(run({ hideBlock: 'grabbed' })).toBe(false);
-  expect(run({ hideBlock: 'cooldown' })).toBe(false);
+  // Fix round 1（まとめ役の裁定）: 待ち時間（隠れるの待ち・払ったあとの休み）の間も、字だけの LOOK OUT! は出す（矢印なし）。下の別のテスト
+  expect(run({ hideBlock: 'cooldown' })).toBe(true);
   expect(run({ hideBlock: 'off' })).toBe(false);
   expect(run({ hero: { ...g.hero, hidden: true } })).toBe(false);
   expect(run({ enemies: [...g.enemies.list, { state: 'chase', x: 500, z: 500 }] }, L.graceSec + 0.2)).toBe(false);
@@ -173,7 +174,7 @@ test('R1e / 持ち主 10:02: 最低 minShowSec（1.0 秒）は出す。危なく
   expect(s.show).toBe(false);
 });
 
-test('R1e: 見つかった（押せる物陰がない）・隠れた・待ち時間なら、minShowSec を待たずにすぐ消える', () => {
+test('R1e / Fix round 1: 見つかった（押せる物陰がない）・隠れたなら、minShowSec を待たずにすぐ消える。待ち時間なら矢印だけ消える', () => {
   const lo = createLookout();
   const base = { hero: H, buildings: [], hideBlock: null, azimuthDeg: 0 };
   expect(lo.update(DT, { ...base, enemies: [rider(30)] }).show).toBe(true);
@@ -181,7 +182,11 @@ test('R1e: 見つかった（押せる物陰がない）・隠れた・待ち時
   expect(lo.update(DT, { ...base, enemies: [rider(30)] }).show).toBe(true);
   expect(lo.update(DT, { ...base, hero: { ...H, hidden: true }, enemies: [rider(30)] }).show).toBe(false);
   expect(lo.update(DT, { ...base, enemies: [rider(30)] }).show).toBe(true);
-  expect(lo.update(DT, { ...base, hideBlock: 'cooldown', enemies: [rider(30)] }).show).toBe(false);
+  // Fix round 1: 待ち時間の間は、字だけ出したまま矢印を消す
+  const cd = lo.update(DT, { ...base, hideBlock: 'cooldown', enemies: [rider(30)] });
+  expect(cd.show).toBe(true);
+  expect(cd.deg).toBe(null);
+  expect(cd.spot).toBe(null);
 });
 
 test('R1e: 確かめるのは数回/秒（checkEvery 秒ごと）。その間のフレームは前の答えを使う', () => {
@@ -386,4 +391,49 @@ test('持ち主 10:02: 猶予の矢印も、その向きに払えば（追う者
     }
   }
   expect(checked).toBeGreaterThanOrEqual(4);
+});
+
+// Fix round 1（まとめ役の裁定、持ち主 10:02「隠れるの矢印を押すタイミングがない」）: 隠れられない待ち時間（hideBlock: cooldown。隠れたあと・
+// 払ったあと）の間も、ライトがもうすぐ届くなら「LOOK OUT!」を字だけで出す（矢印・当たりなし。タップは払うのまま）。待ち時間が明ければ矢印も出る
+test('Fix round 1: 待ち時間の間は LOOK OUT! を字だけで出し（deg・spot なし）、明けたら矢印も出す。見つかった後・掴まれ・隠れ中は出さない', () => {
+  const g = scene();
+  const e = threatFor(g);
+  expect(e).not.toBe(null);
+  const lo = createLookout();
+  let s;
+  for (let i = 0; i < 6; i++) s = lo.update(DT, st(g, { enemies: [e], hideBlock: 'cooldown' }));
+  expect(s.show).toBe(true);
+  expect(s.deg).toBe(null);
+  expect(s.spot).toBe(null);
+  // 待ち時間が明けた: 次の確かめで矢印が出る
+  for (let i = 0; i < Math.ceil(L.checkEvery / DT) + 1; i++) s = lo.update(DT, st(g, { enemies: [e] }));
+  expect(s.show).toBe(true);
+  expect(s.spot).not.toBe(null);
+  // また待ち時間に入ったら、その場で矢印だけ消える
+  s = lo.update(DT, st(g, { enemies: [e], hideBlock: 'cooldown' }));
+  expect(s.show).toBe(true);
+  expect(s.spot).toBe(null);
+  // 掴まれ・隠れ中・溜めていない（off）は出さない
+  for (const extra of [{ hideBlock: 'grabbed' }, { hideBlock: 'off' }, { hideBlock: 'cooldown', hero: { ...g.hero, hidden: true } }, { hideBlock: 'cooldown', enemies: [e, { id: 5, state: 'grab', x: g.hero.x + 1, z: g.hero.z }] }]) {
+    const l2 = createLookout();
+    let s2;
+    for (let i = 0; i < 6; i++) s2 = l2.update(DT, st(g, { enemies: [e], ...extra }));
+    expect(s2.show, JSON.stringify(Object.keys(extra))).toBe(false);
+  }
+});
+
+// Fix round 1（見直し Important 8「終盤ほど重い」）: 一番重いのは矢印の物陰探し（lookoutArrow: 8 向き × 2 回の findCover）。
+// 危ないかは checkEvery 秒ごとに確かめるが、物陰は出し始めにすぐ選び、そのあとは arrowEvery 秒ごとに選び直す（矢印の角は毎フレーム今の主人公から）
+test('Fix round 1: 物陰を選び直すのは arrowEvery 秒ごと（危ないかの確かめより少ない）。出し始めはすぐ', () => {
+  expect(L.arrowEvery).toBeGreaterThan(L.checkEvery);
+  expect(L.arrowEvery).toBeLessThanOrEqual(0.4);
+  const g = scene();
+  const e = threatFor(g);
+  const lo = createLookout();
+  let s = lo.update(DT, st(g, { enemies: [e] }));
+  expect(s.spot).not.toBe(null); // 出し始めはすぐ
+  expect(lo.arrowPicks).toBe(1);
+  for (let t = 0; t < 1 - 1e-9; t += DT) s = lo.update(DT, st(g, { enemies: [e] }));
+  expect(lo.arrowPicks).toBeLessThanOrEqual(Math.ceil(1 / L.arrowEvery) + 1);
+  expect(lo.checks).toBeGreaterThan(lo.arrowPicks);
 });

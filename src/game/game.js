@@ -220,6 +220,8 @@ export function createGame({ seed, cfg = CONFIG }) {
     get canPuff() { return canPuff(); },
     // M2: 残りの払える回数（HUD の 3 つの点）と、今払えない理由（'out' / 'short' / 'busy' / 'off'。払えるなら null）
     get puffsLeft() { return puffsLeft; },
+    // Fix round 1: 払うの守りの残り秒（輪の見た目）
+    get guardLeft() { return enemies.guardLeft; },
     get puffBlock() { return puffBlock(); },
     // R1f fix1: 前の払うが広がり終わるまでの残りの秒（広がっていなければ 0。input/puffBuffer.js が使う）
     get puffBusyLeft() { let m = 0; for (const b of blasts) if (b.shot.small) m = Math.max(m, b.blast.left); return m; },
@@ -372,6 +374,7 @@ export function createGame({ seed, cfg = CONFIG }) {
       power.drain(enemies.drainLoad * cfg.enemy.drainPerSec * dt);
       drainedTotal += v0 - power.value;
       for (const a of enemies.takeArrivals()) emit('bossArrive', a);
+      for (const h of enemies.takeGuardHits()) emit('guardHit', h); // Fix round 1: 払うの守りで弾いた（輪の脈・弾く音）
       updateBlasts(dt);
       timer.update(dt);
       // 時間切れまで放たなければ、主人公はブラックホールになる（破壊額はつかない）

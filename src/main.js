@@ -35,6 +35,7 @@ import { createLookout } from './game/lookout.js';
 import { createLookoutView } from './ui/lookoutView.js';
 import { createDashStreak } from './render/dashStreak.js';
 import { createHideAction } from './render/hideAction.js';
+import { createGuardRing } from './render/guardRing.js';
 import { stickMarks } from './ui/stickMarks.js';
 import { bindPointerInput, eventMs } from './input/bindDom.js';
 import { clearThreshold } from './game/charge.js';
@@ -872,6 +873,7 @@ function restartRound() {
   heroMoved = false; liftT = 0;
   hand.reset(); hand.setCollapse(0);
   dashStreak.update(game.hero, 1e3); hideAction.update({ ...game.hero, action: null }, 1e3); // 滑り込みの筋・跳ぶ見た目を消しきる
+  guardRing.reset();
   views.resetCamera(game.hero);
   // 入力・HUD・知らせ
   controls.reset(); keysDown.clear(); keyFlick.reset(); puffBuffer.clear();
@@ -946,6 +948,9 @@ function syncHide(dt) {
   if (fx.landed) audio.hideCue('land', screenCue(game.hero.x, 1, game.hero.z).pan);
 }
 game.on('hide', () => audio.hideCue('jump', screenCue(game.hero.x, 1, game.hero.z).pan));
+// Fix round 1（見直し Important 5）: 払うの守りの輪（守りの間だけ、主人公のまわりの地面）と、弾いた瞬間の脈・音
+const guardRing = createGuardRing(cityScene);
+game.on('guardHit', (h) => { guardRing.hit(); audio.guardCue(screenCue(h.x, 1, h.z).pan); });
 views.follow(game.hero, { snap: true });
 
 // ゲームを gdt 秒進める（一度に進めるのは最大 0.1 秒ずつ。演出は時間を一気に進めることがある）
@@ -1015,6 +1020,7 @@ function simulate(dt) {
   if (cdt === null) game.update(dt); else stepGame(cdt);
   syncHero();
   syncHide(dt);
+  guardRing.update(dt, game.hero, game.phase === 'playing' ? game.guardLeft : 0, CONFIG.puff.guardSec);
   const wdt = cinematic.active ? cinematic.worldDt : dt;
   explosionView.setBirthScale(cinematic.active ? cinematic.blastBirthScale : 1);
   explosionView.setCoreScale(cinematic.active ? cinematic.blastCoreScale : 1);

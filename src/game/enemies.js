@@ -168,6 +168,8 @@ export function createEnemies(rng, cfg = CONFIG, { buildings = [], patrolRng = n
   let time = 0;
   // Pass 2（まとめ役、持ち主 10:06）: 払ったあとの守りの残り秒（guard）。その間に掴む輪・群がる輪に着いた者は掴まず弾かれる
   let guardLeft = 0;
+  // Fix round 1: 守りで弾いた者（{ id, x, z, killed }）。game が読んで guardHit を知らせる（輪の脈・弾く音）
+  const guardHits = [];
   // R1f（持ち主 19:47「見つけたらビル貫通してバイクがくるよ」「撒けるようにしたらまだいいかも」）: 追う者の回り込みと見失い（CONFIG.enemy.chase）。
   //  - 見通し（建物の足元そのもの、spotDist m の内）があれば今の主人公へ一直線（R0 の突っ込み）。なければ最後に見た所へ（そこへの見通しがあれば）、
   //    それも無ければ道しるべ（flowField.js、主人公の升から）で通り・広場を回り込む
@@ -623,7 +625,7 @@ export function createEnemies(rng, cfg = CONFIG, { buildings = [], patrolRng = n
       let grabbing = list.reduce((n, e) => n + (e.state === 'grab' ? 1 : 0), 0);
       // 枠が空いていれば、先に群がった者からすぐ掴む（回りながら掴む者の輪へ内へ寄る）。順は群がった順（swarmSeq）
       for (const e of clingers()) {
-        if (grabbing >= E.maxGrabbing) break;
+        if (grabbing >= E.maxGrabbing || guardLeft > 0) break; // Fix round 1: 守りの間は群がる者も掴む者にならない
         e.state = 'grab'; e.unpile = 0; grabbing++; // layer は残す（群がりから下りる見た目）
       }
       let clinging = relayer();
@@ -688,8 +690,10 @@ export function createEnemies(rng, cfg = CONFIG, { buildings = [], patrolRng = n
         // Pass 2: 守りの間は掴まない。払いの残りで弾かれる（cfg.puff.guardKill なら hp 1 の者は倒れ、重い者・大物（hp が残る）と
         // guardKill でないときはよろめく。hp は減らない）
         if (guardLeft > 0) {
-          if (cfg.puff?.guardKill && (e.hp ?? kindOf(e, E)?.hp ?? 1) <= 1) { e.state = 'dead'; e.deadTime = 0; e.guarded = true; }
+          const killed = !!cfg.puff?.guardKill && (e.hp ?? kindOf(e, E)?.hp ?? 1) <= 1;
+          if (killed) { e.state = 'dead'; e.deadTime = 0; e.guarded = true; }
           else { e.state = 'stagger'; e.staggerT = 0; }
+          guardHits.push({ id: e.id, x: e.x, z: e.z, killed });
           continue;
         }
         e.grabTime = 0;
@@ -751,6 +755,8 @@ export function createEnemies(rng, cfg = CONFIG, { buildings = [], patrolRng = n
     // Pass 2: 払ったあとの守りを sec 秒にする（長い方を残す）。残りの秒
     guard(sec) { guardLeft = Math.max(guardLeft, sec); },
     get guardLeft() { return guardLeft; },
+    // Fix round 1: 守りで弾いた者（読んだら空にする）
+    takeGuardHits() { return guardHits.splice(0); },
     // 前線 front m の内の者に当てる。当たった数（倒れた者とよろめいた者）を返す。
     // blast: { id, small }。small（払う）なら、hp の残る者（重い者・大物）は倒れずによろめき、同じ一発（id）には二度当たらない。
     // 省けば（最後の一発）、当たった者はみな倒れる

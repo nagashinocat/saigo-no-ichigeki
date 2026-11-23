@@ -85,3 +85,37 @@ test('Pass 2: 払ったあと hideLockSec 秒は隠れられず、過ぎれば�
   for (; t < P.hideLockSec + 0.2; t += 1 / 30) g.update(1 / 30);
   expect(g.hideBlock).toBe(null);
 });
+
+// Fix round 1（見直し Important 5・Minor 10）: 守りで弾いた者は game の guardHit で知らせる（輪の脈・弾く音）。守りの間は、群がる者が
+// 空いた枠に入って掴む者になることもない
+test('Fix round 1: 守りで弾かれた者は guardHit で知らせる（位置と、倒れたか）。game.guardLeft は守りの残り', () => {
+  const g = createGame({ seed: 3, cfg: quiet });
+  g.begin(); g.pressStart();
+  for (let t = 0; t < 3; t += 1 / 30) g.update(1 / 30);
+  const hits = [];
+  g.on('guardHit', (p) => hits.push(p));
+  expect(g.guardLeft).toBe(0);
+  expect(g.puff()).toBe(true);
+  expect(g.guardLeft).toBeCloseTo(P.guardSec, 6);
+  // 払いの前線が過ぎてから、主人公へ突っ込む者
+  while (g.blasts.length) g.update(1 / 30);
+  expect(g.guardLeft).toBeGreaterThan(0.5);
+  const a = charger(500, 6);
+  a.x += g.hero.x; a.z += g.hero.z;
+  g.enemies.list.push(a);
+  for (let t = 0; t < 1 && !hits.length; t += 1 / 30) g.update(1 / 30);
+  expect(hits.length).toBe(1);
+  expect(hits[0]).toMatchObject({ id: 500, killed: P.guardKill });
+  expect(Number.isFinite(hits[0].x) && Number.isFinite(hits[0].z)).toBe(true);
+});
+
+test('Fix round 1: 守りの間は、群がる者が空いた枠に入って掴む者にならない', () => {
+  const en = createEnemies(createRng(1), quiet, { heroPos: { x: 0, z: 0 } });
+  const c = { ...charger(7, 4.2), state: 'cling', layer: 0, swarmSeq: 0 };
+  en.list.push(c);
+  en.guard(P.guardSec);
+  en.update(DT);
+  expect(c.state).not.toBe('grab');
+  for (let t = 0; t < P.guardSec + 0.2; t += DT) en.update(DT);
+  expect(c.state).toBe('grab'); // 守りが切れたら枠に入る
+});

@@ -90,7 +90,7 @@ export function lookoutArrow(hero, buildings, watchers, azimuthDeg = 0, threats 
 
 // 出す・消すの決まり（毎フレーム update。危ないかと矢印は checkEvery 秒ごと）:
 //  - 出すのは、見つかっていない・隠れていない・隠れられる（hideBlock が null）・危ない者がいるとき
-//  - 隠れた・隠れられなくなった（掴まれた・待ち時間・溜めていない）ら、すぐ消す
+//  - 隠れた・隠れられなくなった（掴まれた・溜めていない）ら、すぐ消す。待ち時間（hideBlock: cooldown。隠れたあと・払ったあと）の間は字だけ（矢印なし）
 //  - 危なくなくなったら、出てから minShowSec 秒を過ぎていれば消す。出ている間の危ないかは holdK 倍に広げて見る（ちらつかない）
 //  - 持ち主 10:02（「隠れるの矢印を押すタイミングがない」）: 見つかった直後（見つかっていない → 見つかったに変わってから graceSec 秒）は、
 //    掴まれていない（掴む・群がる者がいない）・隠れられるなら、矢印を出し続ける（押せば M2 の hide と同じく、追う者は見失って最後に見た所を探す）。
@@ -102,17 +102,23 @@ const GRABBED = new Set(['grab', 'cling']);
 export function createLookout(cfg = CONFIG) {
   const L = cfg.lookout;
   let show = false, shownT = 0, clock = 0, danger = false, arrow = null, checks = 0;
+  // Fix round 1: 物陰を選んでからの秒と、選んだ回数（テスト用）。物陰は arrowEvery 秒ごとに選び直す（一番重い所）
+  let arrowAge = Infinity, arrowPicks = 0;
   let spottedPrev = false, graceLeft = 0, graceArrow = null, graceClock = 0;
   const out = { show: false, deg: null, spot: null, t: 0, grace: false };
   const near = (H, bs) => bs.filter((b) => Math.abs(b.x - H.x) - b.w / 2 < L.nearBuildings && Math.abs(b.z - H.z) - b.d / 2 < L.nearBuildings);
-  function check(s) {
+  function check(s, textOnly = false) {
     checks++;
     const bs = near(s.hero, s.buildings);
     const threats = [];
     for (const e of s.enemies) if (e.state === 'search' && inDanger(e, s.hero, bs, cfg, show ? L.holdK : 1)) threats.push(e);
     danger = threats.length > 0;
     // 矢印: 追っている者はいない（見つかっていない）ので、hide と同じく watchers は空
-    arrow = danger ? lookoutArrow(s.hero, bs, [], s.azimuthDeg ?? 0, threats, cfg) : null;
+    // Fix round 1: 待ち時間の間（textOnly）は矢印を探さない（字だけ）
+    if (!danger || textOnly) { arrow = null; arrowAge = Infinity; return; }
+    if (arrow && arrowAge < (L.arrowEvery ?? 0)) return;
+    arrow = lookoutArrow(s.hero, bs, [], s.azimuthDeg ?? 0, threats, cfg);
+    arrowAge = 0; arrowPicks++;
   }
   // 見つかった直後の矢印: 追っている者から見えない物陰（hide と同じ watchers）。ライトがもうすぐ届く探す者のライトが届かない所を先に
   function checkGrace(s) {
@@ -121,16 +127,22 @@ export function createLookout(cfg = CONFIG) {
     const watchers = s.enemies.filter((e) => WATCH.has(e.state) && e.x != null);
     const threats = s.enemies.filter((e) => e.state === 'search' && inDanger(e, s.hero, bs, cfg, L.holdK));
     graceArrow = lookoutArrow(s.hero, bs, watchers, s.azimuthDeg ?? 0, threats, cfg);
+    arrowPicks++;
   }
   return {
     // 危ないかを確かめた回数（テスト用）
     get checks() { return checks; },
+    get arrowPicks() { return arrowPicks; },
     update(dt, s) {
+      arrowAge += dt;
       const spotted = isSpotted(s.enemies);
       if (spotted && !spottedPrev) { graceLeft = L.graceSec ?? 0; graceClock = 0; graceArrow = null; }
       spottedPrev = spotted;
       if (!spotted) graceLeft = 0; else graceLeft -= dt;
-      const canHide = s.hideBlock == null && !s.hero.hidden && !s.enemies.some((e) => GRABBED.has(e.state));
+      const grabbedNow = s.enemies.some((e) => GRABBED.has(e.state));
+      const canHide = s.hideBlock == null && !s.hero.hidden && !grabbedNow;
+      // Fix round 1（まとめ役の裁定）: 隠れられない待ち時間（隠れたあと・払ったあと）の間も、LOOK OUT! は字だけ出す（矢印・当たりなし。タップは払う）
+      const textOnly = !canHide && s.hideBlock === 'cooldown' && !s.hero.hidden && !grabbedNow;
       let grace = false;
       if (spotted && graceLeft > 0 && canHide) {
         graceClock -= dt;
@@ -139,12 +151,13 @@ export function createLookout(cfg = CONFIG) {
       }
       if (grace) {
         if (!show) shownT = 0;
-        show = true; arrow = graceArrow; danger = false; clock = 0;
-      } else if (spotted || !canHide) {
-        show = false; danger = false; arrow = null; clock = 0;
+        show = true; arrow = graceArrow; danger = false; clock = 0; arrowAge = Infinity;
+      } else if (spotted || !(canHide || textOnly)) {
+        show = false; danger = false; arrow = null; clock = 0; arrowAge = Infinity;
       } else {
         clock -= dt;
-        if (clock <= 0) { clock += L.checkEvery; if (clock <= 0) clock = L.checkEvery; check(s); }
+        if (clock <= 0) { clock += L.checkEvery; if (clock <= 0) clock = L.checkEvery; check(s, textOnly); }
+        if (textOnly) arrow = null;
         if (danger) { if (!show) shownT = 0; show = true; }
         else if (show && shownT >= L.minShowSec) show = false;
       }

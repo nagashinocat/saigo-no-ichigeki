@@ -174,5 +174,5 @@ export const CONFIG = {
   // predictSec 0.6 → 1.2（道を走る者は次の交差点で曲がる道すじも predictStep m ごとに先読み。lookout.js inDanger）、確かめる checkEvery 0.2 → 0.1 秒、
   // 最低 minShowSec 0.4 → 1.0 秒は出す。見つかった直後も graceSec 秒は矢印を出す（掴まれていない・隠れられるとき）。
   // 今日の街 60 で、その前 1.5 秒見つかっていなかった回の知らせの先は p50 0.40 → 1.23 秒・1.0 秒以上 4% → 95%（scripts/lookout-lead.mjs）
-  lookout: { nearK: 1.8, angleK: 1.4, predictSec: 1.2, predictStep: 6, checkEvery: 0.1, minShowSec: 1.0, holdK: 1.15, graceSec: 0.8, dirs: 8, agreeDeg: 15, nearBuildings: 80 },
+  lookout: { nearK: 1.8, angleK: 1.4, predictSec: 1.2, predictStep: 6, checkEvery: 0.1, arrowEvery: 0.3, minShowSec: 1.0, holdK: 1.15, graceSec: 0.8, dirs: 8, agreeDeg: 15, nearBuildings: 80 },
 };
