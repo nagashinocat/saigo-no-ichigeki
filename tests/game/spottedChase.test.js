@@ -3,6 +3,7 @@ import { createGame } from '../../src/game/game.js';
 import { swarmRing, lineOfSight, createEnemies, seesHero } from '../../src/game/enemies.js';
 import { createRng } from '../../src/rng.js';
 import { CONFIG } from '../../src/config.js';
+import { prePass2 } from './prePass2.js';
 
 // R1d（持ち主 13:36「見つかってから敵キャラがどっかいく」）: 見つけた軍勢は、主人公が 28 m/s（M2）で通りを渡り角を曲がっても、
 // 主人公が物陰に隠れない限り（M2、持ち主 15:20: 隠れるでだけ見失う。tests/game/hide.test.js）、
@@ -36,7 +37,8 @@ function reacquired(e, H) {
 }
 
 // M2: 払うは 3 回までになったが、ここはよろめきからの立ち直りも確かめたいので回数の制限を外す（見失わないことは回数によらない）
-const UNLIMITED = { ...CONFIG, puff: { ...CONFIG.puff, uses: Infinity } };
+// Pass 2: 軍勢の数・払うの守りは前のまま（tests/game/prePass2.js。確かめるのは見失わないこと）
+const UNLIMITED = prePass2({ ...CONFIG, puff: { ...CONFIG.puff, uses: Infinity, guardSec: 0 } });
 function run(seed, sec = 45) {
   const g = createGame({ seed, cfg: UNLIMITED });
   g.begin(); g.pressStart();

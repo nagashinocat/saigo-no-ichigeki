@@ -1,7 +1,7 @@
 import { test, expect } from 'vitest';
 import { jstDayKey, parseCityKey, citySeed, pickCity, cityLabel, cityLink, shareBase, rememberRetryCity, RETRY_CITY_KEY } from '../../src/game/daily.js';
 import { createGame } from '../../src/game/game.js';
-import { SHARE_BASE_URL } from '../../src/config.js';
+import { SHARE_BASE_URL, CONFIG } from '../../src/config.js';
 import { steerBot, actBot } from '../../src/game/bot.js';
 
 // R3（spec §15 今日の街）: 日本時間の日付（YYYYMMDD）で全員が同じ街。?city=YYYYMMDD で上書き（友達のリンク）。?seed=（撮影・試し）がいちばん強い
@@ -126,7 +126,7 @@ test('R3 fix1: もう一度の街は 0 時をまたいでも同じ（一度だ�
 });
 
 // 同じ種なら街も軍勢の湧き方・見回りも同じ（友達のリンクで同じ街に挑める）
-function schedule(seed, sec = 52) {
+function schedule(seed, sec = CONFIG.enemy.kinds.boss.at + 3) { // Pass 2: 大物は 55 秒
   const g = createGame({ seed });
   g.begin(); g.pressStart();
   const log = [], bossLog = [];
@@ -137,7 +137,7 @@ function schedule(seed, sec = 52) {
   }
   return { city: g.city, log, bossLog, hero: [g.hero.x, g.hero.z], power: g.power.value };
 }
-test('R3: 同じ日の街は同じ街・同じ軍勢の時刻表（見回り・種類・49 秒の大物を含む）。別の日は別の街', () => {
+test('R3: 同じ日の街は同じ街・同じ軍勢の時刻表（見回り・種類・大物（Pass 2: 55 秒）を含む）。別の日は別の街', () => {
   const s = citySeed('20261121');
   const a = schedule(s), b = schedule(s);
   expect(a.city).toEqual(b.city);

@@ -7,7 +7,8 @@ import { steerBot, actBot } from '../../src/game/bot.js';
 
 // R3（spec §15 珍しい結末の称号）
 const E = CONFIG.enemy;
-const quiet = { ...CONFIG, enemy: { ...E, spawnPerSec: 0 } };
+// Pass 2: 払ったあとの守り（guardSec。tests/game/puffGuard.test.js）は、ここでは外す（払うの当たり・数え方だけを見る）
+const quiet = { ...CONFIG, enemy: { ...E, spawnPerSec: 0 }, puff: { ...CONFIG.puff, guardSec: 0 } };
 const still = { ...quiet, enemy: { ...quiet.enemy, drainPerSec: 0 } };
 const DT = 1 / 30;
 const bonus = (timeLeft) => ({ base: 1, timeLeft, near: 0, timeMul: 1, closeMul: 1, mul: 1 });

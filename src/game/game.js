@@ -243,7 +243,9 @@ export function createGame({ seed, cfg = CONFIG }) {
       const lost = enemies.loseHero(from);
       // R1f: 物陰へ跳ぶ動き（しゃがむ → 跳ぶ・壁を蹴る → 着地）。着く時刻 dashSec は前のまま
       motion.dash(spot, cfg.hide.dashSec, cfg.hideAction ? planHideMotion(from, spot, city.buildings, cfg) : null);
-      hideCool = cfg.hide.cooldown;
+      // Pass 2（まとめ役: LOOK OUT! の矢印に従う人を損させない）: 追われていない間の隠れる（だれも見失わせない、先回りの隠れる）は
+      // 待ち時間 evadeCooldown 秒（追われていて撒いた隠れるは cooldown 秒）
+      hideCool = lost > 0 ? cfg.hide.cooldown : (cfg.hide.evadeCooldown ?? cfg.hide.cooldown);
       hides++;
       emit('hide', { from, to: spot, lost });
       return true;
@@ -314,6 +316,8 @@ export function createGame({ seed, cfg = CONFIG }) {
       if (!canPuff()) return false;
       power.spend(cfg.puff.cost);
       puffsLeft--;
+      enemies.guard(cfg.puff.guardSec ?? 0); // Pass 2: 払ったあとしばらく掴まれない
+      hideCool = Math.max(hideCool, cfg.puff.hideLockSec ?? 0); // Pass 2: 払ったあと hideLockSec 秒は隠れられない（払うと隠れるを続けて使えない）
       const shot = { amount: cfg.puff.cost, radius: cfg.puff.radius, isBig: false, small: true, centre: { x: hero.x, z: hero.z } };
       startBlast(shot);
       emit('puff', shot);

@@ -19,10 +19,11 @@ function start(seed = 1) {
 }
 const chaser = (id, x, z) => ({ id, state: 'chase', x, z, heading: Math.atan2(-z, -x), speed: 30, turn: 0, lane: [0, 0], dist: Math.hypot(x, z), angle: Math.atan2(z, x) });
 
-test('M2: 隠れるの値は config にある（シュッと 0.25〜0.4 秒、次まで約 3 秒）', () => {
+// Pass 2（まとめ役）: 追われていて撒いた隠れるの次まで 3 → 6 秒、追われていない間の先回りの隠れるは evadeCooldown（tests/game/hideEvade.test.js）
+test('M2 / Pass 2: 隠れるの値は config にある（シュッと 0.25〜0.4 秒、撒いた隠れるの次まで約 6 秒）', () => {
   expect(HC.dashSec).toBeGreaterThanOrEqual(0.25);
   expect(HC.dashSec).toBeLessThanOrEqual(0.4);
-  expect(HC.cooldown).toBeCloseTo(3, 0);
+  expect(HC.cooldown).toBeCloseTo(6, 0);
   expect(HC.range).toBeGreaterThan(10);
 });
 
@@ -63,7 +64,8 @@ test('M2: 隠れると、シュッと物陰へ滑り込み、追っていた者�
   expect(moved).toBeGreaterThan(2);
   expect(moved).toBeLessThanOrEqual(HC.range + 1e-6);
   // 物陰にいる間（動かない）は誰にも見つからず、追っていた者は今の主人公ではなく最後に見た所へ向かう
-  for (let t = 0; t < 2; t += DT) {
+  // Pass 2: 物陰にいられるのは隠れてから holdSec 秒（6 秒）まで。2 秒かその少し前まで見る
+  for (let t = 0; t < Math.min(2, HC.holdSec - HC.dashSec - 0.25); t += DT) {
     g.update(DT);
     expect(c.state).toBe('search');
     expect(seesHero({ ...c, heading: Math.atan2(g.hero.z - c.z, g.hero.x - c.x) }, g.hero, [], CONFIG)).toBe(false);

@@ -12,7 +12,7 @@ import { pathToFileURL } from 'node:url';
 const root = path.resolve(process.argv[2] ?? path.join(path.dirname(new URL(import.meta.url).pathname), '..'));
 const imp = (p) => import(pathToFileURL(path.join(root, p)).href);
 const { createGame } = await imp('src/game/game.js');
-const { steerBot, actBot, releaseBot, RELEASE } = await imp('src/game/bot.js');
+const { steerBot, actBot, releaseBot, RELEASE, POLICY } = await imp('src/game/bot.js');
 const { CONFIG } = await imp('src/config.js');
 const rankMod = await imp('src/game/rank.js').catch(() => null);
 const DT = 1 / 30;
@@ -22,7 +22,7 @@ const SEEDS = process.env.CITIES === 'ints'
   ? Array.from({ length: Number(process.env.SEEDS ?? 60) }, (_, i) => i + 1)
   : dayKeys(process.env.FROM ?? '20261101', Number(process.env.DAYS ?? 120)).map(citySeed);
 const BLOCK = Number(process.env.BLOCK ?? 30);
-const BEST = { grab: 2, trigger: 0, crowd: Infinity, hide: true };
+const BEST = POLICY?.best ?? { grab: 2, trigger: 0, crowd: Infinity, hide: true }; // Pass 2: bot.js の最善（掴まれたら払う）
 const q = (xs, p) => { const s = [...xs].sort((a, b) => a - b); return s.length ? s[Math.min(s.length - 1, Math.floor(p * s.length))] : NaN; };
 const yen = (v) => `${(v / 1e12).toFixed(2)}兆`;
 

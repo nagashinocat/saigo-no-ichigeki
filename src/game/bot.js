@@ -12,11 +12,12 @@ import { createLookout } from './lookout.js';
 const lookouts = new WeakMap();
 
 // 持ち主 10:06（「払う全部使って隠れる無しでもクリアできないから…85パーセントくらい」）: 釣り合いを測る遊び方（actBot の st）
-//  best: 最善（掴まれ 2 人で払う・追われたら隠れる）。puffNoHide: 払うは 3 回とも使う（掴まれ 2 人で）が、隠れる・LOOK OUT! は使わない。
+//  best: 最善（掴まれたら払う・追われたら隠れる。Pass 2: 払うのあと守りがあるので、1 人目で払うのが一番よい。前の 2 人目では 87%、1 人目では 98%）。puffNoHide: 払うは 3 回とも使う（掴まれたらすぐ。Pass 2: 払うのあと守りがあるので、
+//  1 人目で払うのがこの遊び方の一番よいきっかけ）が、隠れる・LOOK OUT! は使わない。
 //  none: 払わない・隠れない（動くだけ）
 export const POLICY = {
-  best: { grab: 2, trigger: 0, crowd: Infinity, hide: true },
-  puffNoHide: { grab: 2, trigger: 0, crowd: Infinity, hide: false, lookout: false },
+  best: { grab: 1, trigger: 0, crowd: Infinity, hide: true },
+  puffNoHide: { grab: 1, trigger: 0, crowd: Infinity, hide: false, lookout: false },
   none: { grab: Infinity, trigger: 0, crowd: Infinity, hide: false },
 };
 export const BOT = { holdR: 40, holdDist: 45, centreSlack: 6, dodgeDist: 16, dodgeW: 1.6, coneW: 1.2, coneSlack: 8 };

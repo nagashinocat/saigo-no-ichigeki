@@ -1,6 +1,7 @@
 import { test, expect } from 'vitest';
 import { createGame } from '../../src/game/game.js';
 import { CONFIG } from '../../src/config.js';
+import { prePass2 } from './prePass2.js';
 
 // R1f fix1（見直し Important 1）: R0（主人公から 25 m の内の軍勢は、どのフレームでも 6 m/s 以上で動く）を、主人公が動く・壁に沿って滑る・
 // 追う者が見失う・払ってよろめく場面で確かめる（enemies.test.js の R0 は主人公を広場の真ん中に止めたまま）。
@@ -8,7 +9,8 @@ import { CONFIG } from '../../src/config.js';
 const DT = 1 / 30;
 const LEGS = [[0, -1], [1, 0], [0, 1], [1, 0], [0, -1], [-1, 0], [0.7, 0.7], [0, 1], [-1, 0], [0, -1], [-0.7, 0.7], [1, 0]];
 test('R1f fix1: 動く主人公（通りを渡り角を曲がり、壁に沿って滑る）でも、25 m の内の軍勢はどのフレームでも 6 m/s 以上（見失う・よろめく・掴む・群がるも）', () => {
-  const cfg = { ...CONFIG, puff: { ...CONFIG.puff, uses: Infinity } };
+  // Pass 2: 軍勢の数・払うの守りは前のまま（tests/game/prePass2.js。確かめるのは動きの速さで、同じ数の軍勢を見る）
+  const cfg = prePass2({ ...CONFIG, puff: { ...CONFIG.puff, uses: Infinity, guardSec: 0 } });
   const bad = [], seen = { lose: 0, stagger: 0, grab: 0, cling: 0, wall: 0 };
   let frames = 0;
   for (const seed of [1, 2, 3, 4, 5, 6]) {
