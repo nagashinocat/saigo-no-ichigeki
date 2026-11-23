@@ -26,7 +26,8 @@ export const CONFIG = {
   // （その間に掴みに来た者は払いの残りで倒れる。重い者・大物はよろめく。guardKill。enemies.js guard。守りの間は輪と音 render/guardRing.js、
   // 音は 1 秒に 6 回まで）。隠れても守りは消えない（Fix round 3: LOOK OUT! の矢印に従う人を損させない）。払ったあと hideLockSec 秒は隠れられない。
   // 払う費用は 3.5 → 2.2（持ち主 09:11「払うたびに力も少し使う」の範囲。2.5 では 3 回払った最善の満タンが 56 秒を越える）
-  puff:    { cost: 2.2, uses: 3, radius: 22, guardSec: 10.5, guardKill: true, hideLockSec: 4, combo: { from: 3 } },
+  // 持ち主 19:50（掴まれている間は貯まらず、吸われて減るだけ）: 払う 3 回・隠れないが 4 割を割った（39%）ので、守り 10.5 → 10.9 秒（drain-fix-report.md）
+  puff:    { cost: 2.2, uses: 3, radius: 22, guardSec: 10.9, guardKill: true, hideLockSec: 4, combo: { from: 3 } },
   // 最後の一発の半径（貯めた力 / power.max で決まる）。S8: max 440 → 720（街の端 680 m と、見回る軍勢の一番外
   // （maxEnemyReach、約 603 m）より十分先まで。最大溜めなら街のどこにいる軍勢も必ず巻き込む）
   // fix1（持ち主 15:33「軍勢は街の全体に」）: 見回る者が街の端まで行くので max 720 → 730（maxEnemyReach 約 685 m + 40 m より先）
@@ -51,7 +52,7 @@ export const CONFIG = {
   // Fix round 1: しきい値は力（%）で持ち、半径は radiusFor で出す（規模の称号 titles.js の段の境目も同じ値。宇宙の段と称号の段が食い違わない）
   spaceTier: { normalPct: 50, maxPct: 97 },
   // 湧く速さ（持ち主の決定「終盤ほど一気に増やす」）: 序盤は spawnPerSec で平ら、surgeStart 秒から surgeEnd 秒へ一気に surgeMul 倍まで増える
-  // （残り 20 秒ほどで群れになる。60 秒で約 100）。掴んだ一人ごとに貯めた力が drainPerSec ずつ減る。
+  // （残り 20 秒ほどで群れになる。60 秒で約 100）。掴んだ一人ごとに貯めた力が drainPerSec ずつ減る（掴まれている間は貯まらない）。
   // 浮遊バイクは spawnDist（上空カメラの画面の外。R1g でカメラを 0.8 倍に寄せてからは、ほとんどが画面の端より外）の道路に湧き、道路に沿って searchSpeed m/s で探し回る
   // （交差点で曲がる。主人公に近づく向きは inwardBias 倍の重みで選ぶ。roamDist の外へは出ない。laneSpread: 道の中心線からのずれ）。
   // spotDist の内側で建物にさえぎられずに見えたら（spotEvery 秒ごとに確かめる。sightMargin: 建物の足元を広げる）見つけ、
@@ -76,7 +77,10 @@ export const CONFIG = {
     // 群れは残り 20 秒（40 → 52 秒）のまま。数で釣り合いを取る: 序盤の湧く速さ 0.5 → 0.1/秒（隠れない主人公が広場で一人ずつ
     // 見つかり、払う 3 回を序盤で使い切っていた）、surgeMul 11 → 68（60 秒で約 100 のまま、終盤の山 5.5 → 6.8/秒）、吸う 1.2 → 0.85/秒。
     // 三つの時期の今日の街 360 で最善 99%（99.2 / 98.3 / 99.2%）、払う 3 回・隠れない 51%、隠れるだけ 27%（lookout-timing-report.md Fix round 3）
-    spawnPerSec: 0.1, surgeStart: 40, surgeEnd: 52, surgeMul: 68, drainPerSec: 0.85, maxGrabbing: 6,
+    // 持ち主 2026-11-23 19:50（「力が吸収されてても減らなくなってるかも」）: 吸う 0.85 が貯める 1.92 より小さく、掴まれても力が増えていた。
+    // 掴まれている間は貯まらない（game.js）ようにし、吸う 0.85 → 1.2/秒（ふつうの者 1 人で 1.2%/秒、吸う者 3%/秒、大物 4.8%/秒と、はっきり下がる）。
+    // 今日の街 360 で最善 99%（99.2 / 98.3 / 99.2%）、払う 3 回・隠れない 46%、隠れるだけ 27%、矢印に従う 94%（drain-fix-report.md）
+    spawnPerSec: 0.1, surgeStart: 40, surgeEnd: 52, surgeMul: 68, drainPerSec: 1.2, maxGrabbing: 6,
     spawnDist: [50, 66], roamDist: 75, laneSpread: 1.6, // 湧く輪（主人公から m）は R1g のカメラでは画面のほぼ外
     searchSpeed: 30, inwardBias: 0.8, turnRate: 16, lookAhead: 2.5, accel: 30, brake: 70,
     // M2（持ち主 09:11「敵の前方ライトを少し広くして」）: 見つけるのは前を照らすライトの中だけ。前の 28 m の丸 → 前向きの扇

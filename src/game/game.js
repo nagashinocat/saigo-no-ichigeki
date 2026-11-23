@@ -60,6 +60,7 @@ export function createGame({ seed, cfg = CONFIG }) {
   let hidden = false;
   let grabbing = 0;
   let drainedTotal = 0; // R1b: 掴まれて実際に吸われた力の合計（増えるだけ）
+  let held = false; // 持ち主 19:50: 掴まれていて、長押ししていても貯まらない（このフレーム）
   let cinematicClock = 0;
   let pendingShot = null;
   let finalBlast = null;
@@ -186,7 +187,7 @@ export function createGame({ seed, cfg = CONFIG }) {
       makeRound();
       destroyed.clear();
       phase = 'ready';
-      grabbing = 0; drainedTotal = 0; cinematicClock = 0;
+      grabbing = 0; drainedTotal = 0; held = false; cinematicClock = 0;
       pendingShot = null; finalBlast = null; blasts = [];
       releaseIds = null; releaseInfo = null; outcome = null;
       nextBlastId = 1; maxCombo = 0; draggedIds = null;
@@ -210,6 +211,8 @@ export function createGame({ seed, cfg = CONFIG }) {
         release: releaseInfo ? { timeLeft: releaseInfo.timeLeft, near: releaseInfo.near, power: releaseInfo.power, centreDist: releaseInfo.centreDist } : null,
       };
     },
+    // 持ち主 19:50: 掴まれていて貯まらない（長押ししていても力は増えない）。貯めの唸りもこの間は止める
+    get chargeHeld() { return held; },
     // R1b: 掴まれて実際に吸われた力の合計（増えるだけ。HUD の「−N」と吸われる音が、フレームごとの差を使う）
     get drainedTotal() { return drainedTotal; },
     // 今、街に生きている軍勢の数（見回る者を含む。HUD の「街の軍勢 N」）
@@ -346,7 +349,6 @@ export function createGame({ seed, cfg = CONFIG }) {
         return;
       }
 
-      charge.update(dt);
       hideCool -= dt;
       // M2: 物陰から leaveDist m より離れたら、もう隠れていない（見られれば、また見つかる）。同じ物陰にいられるのは holdSec 秒まで
       // （制作側の判断: ずっと隠れたまま満タンまで待つ、にしない。次の物陰へ移る）
@@ -369,7 +371,11 @@ export function createGame({ seed, cfg = CONFIG }) {
       pursuedPrev = pursued;
       // M2: 物陰で見つかった（照らされて追われる・掴まれた）ら、もう隠れていない
       if (hero.hidden && hero.dashing == null && enemies.list.some((e) => e.state === 'chase' || e.state === 'grab' || e.state === 'cling')) { hero.hidden = false; emit('found', { x: hero.x, z: hero.z }); }
-      // 掴んでいる者の吸う力（R1: 吸う者 ×2.5、大物 ×4）
+      // 持ち主 2026-11-23 19:50（「力が吸収されてても減らなくなってるかも」）: 掴まれている（掴む者・群がる者が一人でもいる）間は、
+      // 長押ししていても貯まらない。力は掴んでいる者の吸う力（R1: 吸う者 ×2.5、大物 ×4）の合計 × drainPerSec ずつ減るだけ
+      // （吸う量が貯める速さより小さくても、掴まれれば数字ははっきり下がる）。貯めは軍勢が動いたあとの今の掴まれ方で決める
+      held = grabbing > 0 || enemies.list.some((e) => e.state === 'grab' || e.state === 'cling');
+      if (!held) charge.update(dt);
       const v0 = power.value;
       power.drain(enemies.drainLoad * cfg.enemy.drainPerSec * dt);
       drainedTotal += v0 - power.value;

@@ -1101,7 +1101,7 @@ let _transitCam = null;
 // 音源の位置を今のカメラの空間へ（毎フレーム同じ関数と同じ物を使う。transitMix は値を読むだけ）
 const transitToCam = (p) => { _camV.set(p.x, p.y ?? 0, p.z).applyMatrix4(_transitCam.matrixWorldInverse); _camXZ.x = _camV.x; _camXZ.z = _camV.z; return _camXZ; };
 function updateAudio(live, dt = 0) {
-  audio.chargeHum(game.charge.active ? game.power.level : 0);
+  audio.chargeHum(game.charge.active && !game.chargeHeld ? game.power.level : 0); // 持ち主 19:50: 掴まれて貯まらない間は唸らない（吸われる音だけ）
   audio.drain(drainFx.state); // 吸われる音（はがれたらその場で止まる）
   // 電車と高速（S8）: 今の画面のカメラから見た一番近い車両・高速の点の距離と左右。演出・リプレイ・結末の間は鳴らさない
   if (cityView.transit && finaleOff() && audio.running) {

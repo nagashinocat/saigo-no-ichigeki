@@ -8,7 +8,7 @@
 //  - 払わない・隠れない（動くだけ）: 満タンに届いた数（0 のはず）と 60 秒の力の最大
 //  - 見つかった回数・見失わせた回数（追う者が見失った）の p50
 //  - 持ち主 10:06: 払うを 3 回とも使って隠れない遊び方（bot.js POLICY.puffNoHide）の撃退成功（時期ごと。NOPNH=1 で省く）
-// ENEMY / HIDE / POWER / PUFF / ALERT / CHASE / STAGGER / PATROL / BOSS='{...}' で CONFIG の一部を、BEST / PNH='{...}' で遊び方を差し替えられる
+// ENEMY / HIDE / POWER / PUFF / ALERT / CHASE / STAGGER / PATROL / BOSS='{...}'・KINDS='{"heavy":{...}}'（種類ごと）で CONFIG の一部を、BEST / PNH='{...}' で遊び方を差し替えられる
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -20,7 +20,7 @@ const { CONFIG: BASE } = await imp('src/config.js');
 const { radiusFor } = await imp('src/game/charge.js');
 const { citySeed } = await imp('src/game/daily.js');
 const J = (k) => JSON.parse(process.env[k] ?? '{}');
-const CONFIG = { ...BASE, enemy: { ...BASE.enemy, ...J('ENEMY'), alert: { ...BASE.enemy.alert, ...J('ALERT') }, chase: { ...BASE.enemy.chase, ...J('CHASE') }, stagger: { ...BASE.enemy.stagger, ...J('STAGGER') }, patrol: { ...BASE.enemy.patrol, ...J('PATROL') }, kinds: { ...BASE.enemy.kinds, boss: { ...BASE.enemy.kinds.boss, ...J('BOSS') } } }, hide: { ...BASE.hide, ...J('HIDE') }, power: { ...BASE.power, ...J('POWER') }, puff: { ...BASE.puff, ...J('PUFF') } };
+const CONFIG = { ...BASE, enemy: { ...BASE.enemy, ...J('ENEMY'), alert: { ...BASE.enemy.alert, ...J('ALERT') }, chase: { ...BASE.enemy.chase, ...J('CHASE') }, stagger: { ...BASE.enemy.stagger, ...J('STAGGER') }, patrol: { ...BASE.enemy.patrol, ...J('PATROL') }, kinds: Object.fromEntries(Object.entries(BASE.enemy.kinds).map(([k, v]) => [k, { ...v, ...(k === 'boss' ? J('BOSS') : {}), ...(J('KINDS')[k] ?? {}) }])) }, hide: { ...BASE.hide, ...J('HIDE') }, power: { ...BASE.power, ...J('POWER') }, puff: { ...BASE.puff, ...J('PUFF') } };
 const DT = 1 / 30;
 const dayKeys = (from, n) => Array.from({ length: n }, (_, i) => { const d = new Date(Date.UTC(+from.slice(0, 4), +from.slice(4, 6) - 1, +from.slice(6, 8)) + i * 864e5); return `${d.getUTCFullYear()}${String(d.getUTCMonth() + 1).padStart(2, '0')}${String(d.getUTCDate()).padStart(2, '0')}`; });
 // fix2: 既定は三つの時期（2026-07-01・2026-11-01・2027-03-01 から DAYS 日ずつ）。FROMS=YYYYMMDD,… か FROM=YYYYMMDD（一つ）で変えられる

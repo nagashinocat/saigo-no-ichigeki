@@ -22,6 +22,9 @@ const BEST = POLICY.best;
 const NO_PUFF = { grab: Infinity, trigger: 0, crowd: Infinity, hide: false };
 // fix2（まとめ役の判断: 三つの時期で頑健に）: 2026-07-01・2026-11-01・2027-03-01 から 120 日ずつの時期から、それぞれ 15 日おきに 8 の街（計 24）。
 // sim（scripts/daily-balance.mjs、360 日すべて）: 最善の撃退成功 270/360（75%。時期ごと 72.5% / 79.2% / 73.3%）。この 24 の街で 17/24 が満タン、p50 52.1 秒
+// 持ち主 19:50（掴まれている間は貯まらず、吸われて減るだけ。吸う 1.2/秒・守り 10.9 秒）: 今日の街 360 で最善 99%（99.2 / 98.3 / 99.2%）、
+// 隠れるだけ 27%（26.7 / 24.2 / 29.2%）、払う 3 回・隠れない 46%（40.8 / 49.2 / 46.7%）、矢印に従う 94%（95.0 / 94.2 / 93.3%）、満タン p50 53.7 秒。
+// この 24 の街: 最善 23/24 が満タン（p50 53.7 秒）、隠れるだけ 6、払う 3 回・隠れない 11、矢印に従う 23（drain-fix-report.md）
 const dayKey = (y, m, d, i) => { const t = new Date(Date.UTC(y, m, d) + i * 864e5); return `${t.getUTCFullYear()}${String(t.getUTCMonth() + 1).padStart(2, '0')}${String(t.getUTCDate()).padStart(2, '0')}`; };
 const SEEDS = [[2026, 6, 1], [2026, 10, 1], [2027, 2, 1]].flatMap(([y, m, d]) => Array.from({ length: 8 }, (_, i) => citySeed(dayKey(y, m, d, i * 15))));
 function play(seed, st = BEST, { centreAt = null } = {}) {
@@ -47,8 +50,9 @@ test('R0 / M2: 最善の操作（動くボット）でも、満タンは終わ�
   // Fix round 2（持ち主の判断「間をとる」: 最善 90〜95%）: 24 の街の 21〜23（24 の街の刻みでは 90〜95% は 22 の一つだけなので、
   // 下限 85%・上限 96% で 1 ずつ余りを置く）。Fix round 3: この 24 の街では 23/24 が満タン・p50 53.4 秒（上限ちょうど）。
   // 今日の街 360 では 99%（時期ごと 99.2 / 98.3 / 99.2%）で、目標の 95% を越える（隠れても守りが消えなくなったため。報告 Fix round 3）
-  expect(got.length).toBeGreaterThanOrEqual(Math.ceil(SEEDS.length * 0.85));
-  expect(got.length).toBeLessThanOrEqual(Math.floor(SEEDS.length * 0.96)); // 上手に遊んでも失敗することがある
+  // 持ち主 19:50 の直しのあとも 360 で 99%（99.2 / 98.3 / 99.2%）、この 24 の街で 23/24（上限 99% = 23 ちょうど。下限 90% − 1 = 21 で余り 2）
+  expect(got.length).toBeGreaterThanOrEqual(Math.ceil(SEEDS.length * 0.9) - 1);
+  expect(got.length).toBeLessThanOrEqual(Math.floor(SEEDS.length * 0.99)); // 上手に遊んでも失敗することがある（99% まで）
   expect(median(got)).toBeGreaterThanOrEqual(52);
   expect(median(got)).toBeLessThanOrEqual(56);
 }, 120000);
@@ -69,6 +73,8 @@ test('払わずに長押しし続けるだけ（M2: 動いてかわしても、�
   expect(Math.max(...ends)).toBeLessThan(70);
   // 掴まれた者 6 人ぶんの減りは、貯める速さより速い
   expect(CONFIG.enemy.maxGrabbing * CONFIG.enemy.drainPerSec).toBeGreaterThan(CONFIG.power.chargePerSec * 1.5);
+  // 持ち主 19:50: 掴まれている間は貯まらないので、ふつうの者 1 人でも力ははっきり下がる（1%/秒以上。tests/game/grabDrain.test.js）
+  expect(100 * CONFIG.enemy.drainPerSec / CONFIG.power.max).toBeGreaterThanOrEqual(1);
 }, 120000);
 
 // M2（TODO(M2) を消す）: 続く量で比べる（掴まれた人秒の合計）。満タンの時刻の中央は、払うが 3 回になったので比べない:
@@ -144,6 +150,7 @@ test('M2: 中心から 200 m の所へ寄って放つ操作は、中心のそば
 // 持ち主 10:06（「払う全部使って隠れる無しでもクリアできない」）・Pass 2（まとめ役）: 払うを 3 回とも使い、隠れない遊び方（bot.js POLICY.puffNoHide）でも
 // 4 割以上は撃退できる（目標 5 割）。力が 99% に届いた瞬間に放つ（daily-balance と同じ。満タンを待つより撃退が多い）。
 // Fix round 1・2: sim（今日の街 360）: 51%（時期ごと 50.8 / 53.3 / 47.5%）。この 24 の街で 12/24（下限 10 から 2 の余り）
+// 持ち主 19:50 の直し（掴まれている間は貯まらない・吸う 1.2・守り 10.9 秒）: 360 で 46%（40.8 / 49.2 / 46.7%）。この 24 の街で 11/24（下限 10 から余り 1）
 test('Pass 2: 払う 3 回・隠れない遊び方でも、24 の街の 4 割以上（10 以上）で撃退成功', () => {
   const runs = SEEDS.map((s) => {
     const g = createGame({ seed: s });
@@ -176,6 +183,7 @@ test('持ち主 10:06: 払う 3 回・隠れない遊び方は、払うを 3 回
 
 // Fix round 2・3（持ち主の判断「間をとる」）: 隠れるだけ（払う 0 回、S ランクの道）でも 2〜3 割は撃退できる。力が 99% に届いた瞬間に放つ。
 // sim（今日の街 360）: 27%（時期ごと 26.7 / 24.2 / 29.2%）。この 24 の街で 6/24。範囲は 2〜3 割（5〜7/24）に抜き出しの誤差 ±1 で 4〜8
+// 持ち主 19:50 の直しのあとも同じ（隠れるだけは掴まれれば負けなので、吸う量・守りの長さに左右されない）: 360 で 27%（26.7 / 24.2 / 29.2%）、24 の街で 6
 test('Fix round 3: 隠れるだけ（払う 0 回）でも、24 の街の 2〜3 割（±1）で撃退成功（S ランクの道はあるが、易しすぎない）。S ランクも出る', () => {
   const st = { ...POLICY.best, grab: Infinity };
   let ok = 0;
@@ -205,4 +213,21 @@ test('Fix round 3: 隠れるだけで最後まで待って放つと、S ラン�
     if (g.outcome?.rank === 'S') s++;
   }
   expect(s).toBeGreaterThanOrEqual(1);
+}, 240000);
+
+// 持ち主 19:50 の直し（「間をとる」の目標）: LOOK OUT! の矢印に従って隠れる遊び方（最善 + st.lookout）は、払う 3 回・隠れないより撃退が多い。
+// sim（今日の街 360）: 矢印に従う 94%（95.0 / 94.2 / 93.3%）、払う 3 回・隠れない 46%。この 24 の街で 23 と 11
+test('持ち主 19:50: LOOK OUT! の矢印に従う遊び方は、払う 3 回・隠れない遊び方より撃退成功が少なくない', () => {
+  const clears = (st) => SEEDS.filter((s) => {
+    const g = createGame({ seed: s });
+    g.begin(); g.pressStart();
+    for (let t = 0; t < CONFIG.roundSeconds - DT / 2; t += DT) {
+      steerBot(g); actBot(g, st); g.update(DT);
+      if (g.power.value >= 99 - 1e-6) { g.pressEnd(); g.settle(); return g.outcome.clear; }
+    }
+    return false;
+  }).length;
+  const arrow = clears({ ...POLICY.best, lookout: true }), pnh = clears(POLICY.puffNoHide);
+  expect(arrow).toBeGreaterThanOrEqual(pnh);
+  expect(arrow).toBeGreaterThanOrEqual(Math.ceil(SEEDS.length * 0.85)); // 最善に近い（23/24）
 }, 240000);

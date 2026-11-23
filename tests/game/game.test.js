@@ -215,7 +215,7 @@ test('長押ししながら小爆発を押せ、押した分だけ最後の一�
   expect(b.radius).toBeLessThan(a.radius);
 });
 
-test('掴まれている数 × drainPerSec で貯めた力が減る。0 になってもゲームは続く', () => {
+test('掴まれている数 × drainPerSec で貯めた力が減る（持ち主 19:50: 掴まれている間は長押ししていても貯まらない）。0 になってもゲームは続く', () => {
   const cfg = { ...CONFIG, enemy: { ...CONFIG.enemy, spawnPerSec: 10, surgeMul: 1, spawnDist: [3, 3] } };
   const g = createGame({ seed: 1, cfg });
   const log = record(g, ['over']);
@@ -226,11 +226,13 @@ test('掴まれている数 × drainPerSec で貯めた力が減る。0 にな�
   expect(grabbing).toBe(CONFIG.enemy.maxGrabbing);
   expect(g.grabbing).toBe(grabbing);
   expect(g.power.value).toBe(0);
-  // 貯めても、掴まれている分だけ減る
+  // 長押ししても貯まらず、掴まれている分だけ減る（力を足して確かめる）
   g.pressStart();
+  g.power.add(20);
   const v0 = g.power.value;
   g.update(0.1);
-  expect(g.power.value).toBeCloseTo(Math.max(0, v0 + (CONFIG.power.chargePerSec - grabbing * CONFIG.enemy.drainPerSec) * 0.1));
+  expect(g.chargeHeld).toBe(true);
+  expect(g.power.value).toBeCloseTo(v0 - grabbing * CONFIG.enemy.drainPerSec * 0.1);
   expect(g.phase).toBe('playing');
   expect(log).toHaveLength(0);
 });
