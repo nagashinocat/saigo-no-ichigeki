@@ -31,11 +31,11 @@ const SCALE_BANDS = [
   { id: 'scaleBulb', name: '豆電球', from: 0, rarity: 1 },
   { id: 'scaleSparkler', name: '線香花火', from: 20, rarity: 1 },
   { id: 'scaleCracker', name: '爆竹', from: 35, rarity: 1 },
-  { id: 'scaleFireworks', name: '花火職人', from: 50, rarity: 1 },
+  { id: 'scaleFireworks', name: '花火職人', from: CONFIG.spaceTier.normalPct, rarity: 1 }, // 宇宙の中の始まり（Fix round 1: 同じ設定の値）
   { id: 'scaleLauncher', name: '打ち上げ師', from: 65, rarity: 2 },
   { id: 'scaleWrecker', name: '街の解体屋', from: 80, rarity: 2 },
   { id: 'scaleMapmaker', name: '地図を書き換えた者', from: 90, rarity: 2 },
-  { id: 'scaleNation', name: '国を消した者', from: 97, rarity: 2 },
+  { id: 'scaleNation', name: '国を消した者', from: CONFIG.spaceTier.maxPct, rarity: 2 }, // 宇宙の最大の始まり
   { id: 'scaleWorld', name: '世界の破壊者', from: 100, rarity: 3 },
 ];
 // amount: 放った力（power.max と同じ単位）。満タンちょうどだけが最後の段、ほかは from ≤ 力% の段のうちいちばん上

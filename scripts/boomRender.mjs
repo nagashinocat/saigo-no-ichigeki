@@ -106,7 +106,7 @@ export async function renderScenes(scenes, { modPath = 'src/audio/audio.js', SR 
       ctx.createDynamicsCompressor = () => (lim = mk());
       window.AudioContext = function () { return ctx; };
       const audio = createAudio(); audio.unlock();
-      const tlArg = { erupt: sc.erupt, burst: sc.burst, resume: sc.resume, beatEnd: sc.resume, engulf: sc.engulf, snap: sc.snap, chaseEnd: sc.chaseEnd, flatten: sc.flatten, lineEnd: sc.lineEnd };
+      const tlArg = { erupt: sc.erupt, burst: sc.burst, resume: sc.resume, beatEnd: sc.resume, engulf: sc.engulf, snap: sc.snap, chaseEnd: sc.chaseEnd, flatten: sc.flatten, lineEnd: sc.lineEnd, spaceSound: sc.spaceSound };
       const run = (name, arg) => {
         if (name === 'boom') audio.boom(arg);
         else if (name === 'boomOnly') audio.boom(sc.size, { hold: sc.hold, open: sc.open, heavy: sc.heavy });
@@ -115,7 +115,7 @@ export async function renderScenes(scenes, { modPath = 'src/audio/audio.js', SR 
         else if (name === 'burst') audio.boom(sc.size, { hold: sc.hold, open: sc.open, heavy: sc.heavy });
         else if (name === 'debrisMode') audio.debrisMode(arg); // リプレイ（'replay'）の瓦礫の音の道
         else if (name === 'space') audio.muffle(1.4);
-        else if (name === 'rumble') audio.deepRumble();
+        else if (name === 'rumble') audio.deepRumble(tlArg.spaceSound ?? 1); // R1i: 宇宙の段の大きさ（main.js の cinematic.timeline.spaceSound と同じ。ページの中なので時刻表から渡す）
         else if (name === 'bgmLoud') {
           // 最高潮の BGM の大きさ（mixOffline の最大値 0.5 未満）の、低い太鼓のような音を BGM の道へ鳴らし続ける
           const o = audio.bgmOutput; if (!o) return;
@@ -139,7 +139,7 @@ export async function renderScenes(scenes, { modPath = 'src/audio/audio.js', SR 
       }
       const buf = await ctx.startRendering();
       return { left: Array.from(buf.getChannelData(0)), right: Array.from(buf.getChannelData(1)), red, redAt };
-    }, { sc: { ...sc, erupt: tl.erupt, burst: tl.burst, resume: tl.resume, engulf: tl.engulf, snap: tl.snap, chaseEnd: tl.chaseEnd, flatten: tl.flatten, lineEnd: tl.lineEnd }, mod, SR });
+    }, { sc: { ...sc, erupt: tl.erupt, burst: tl.burst, resume: tl.resume, engulf: tl.engulf, snap: tl.snap, chaseEnd: tl.chaseEnd, flatten: tl.flatten, lineEnd: tl.lineEnd, spaceSound: tl.spaceSound }, mod, SR });
       out.push({ name: sc.name, sc, left: Float32Array.from(r.left), right: Float32Array.from(r.right), red: r.red, redAt: r.redAt });
     }
   } finally {

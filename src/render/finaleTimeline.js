@@ -1,6 +1,7 @@
 import { CONFIG } from '../config.js';
 import { frontAt, timeAtFront, phaseTimes, blastDuration } from '../game/blast.js';
 import { createSwell } from './pacing.js';
+import { radiusFor } from '../game/charge.js';
 
 // 最後の一発の演出の時間割（絵コンテ 1〜5、仕様 12 章。14 章: 広がりをゆっくりにして見せ場を作る）。描画は知らない純粋な関数だけ。
 // t は放った瞬間からの演出の秒。
@@ -46,9 +47,14 @@ export const SPACE_BEATS = {
   normal: { domeMin: 1.6, spaceHold: 0.35, spaceMin: 1.8, flattenSec: 0.8, thinSec: 0.4, silenceSec: 0.4, rumbleHold: 0.85, spaceSound: 0.6 },
   small: { domeMin: 0.8, spaceHold: 0.2, spaceMin: 1.1, flattenSec: 0.5, thinSec: 0.3, silenceSec: 0.3, rumbleHold: 0.6, spaceSound: 0.32 },
 };
+// Fix round 1: 段の境目の半径（m）。しきい値は力（%。CONFIG.spaceTier.normalPct・maxPct）で持ち、radiusFor で半径にする
+export function spaceTierRadii(cfg = CONFIG) {
+  const T = cfg.spaceTier, M = cfg.power.max;
+  return { normal: radiusFor((T.normalPct * M) / 100, cfg), max: radiusFor((T.maxPct * M) / 100, cfg) };
+}
 export function spaceTierFor(radius, cfg = CONFIG) {
-  const T = cfg.spaceTier;
-  if (!T) return 'max';
+  if (!cfg.spaceTier) return 'max';
+  const T = spaceTierRadii(cfg);
   return radius >= T.max ? 'max' : radius >= T.normal ? 'normal' : 'small';
 }
 

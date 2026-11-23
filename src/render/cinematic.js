@@ -132,11 +132,12 @@ const SPACE_FOV = { h: 54, v: 36 };
 //   dome: 光の半球の大きさ（最大に対する割合）、glow: 半球の明るさ、line: 縦一線の光の明るさ、
 //   pierce: 線が画面の上の端を突き抜けるか（最大だけ。M2）、topNdc: 突き抜けない段で、線の板の先が届く画面の縦の上限（NDC）、
 //   stretch: 押しつぶされて縦へ伸びる高さの上限（半球の半径に対して）、ring / shell: 衝撃波の輪と殻（明るさと、輪の走る遠さ）、
+//   （Fix round 1: 小の輪は 0.45 → 0.28。半球に比べて輪が大きすぎ、中とあまり変わらなかった）
 //   scar: 消えたあとの焼けた街の灯、pop: 小の「ぽっ」— ふくらみきる手前から止まる間に、半球と光が少しだけ跳ねる
 export const SPACE_LOOK = {
   max: { dome: 1, glow: 1, line: 1, pierce: true, topNdc: LINE_HANDOFF.topNdc, stretch: 2.5, ring: 1, shell: 1, scar: 1, pop: 0 },
   normal: { dome: 0.66, glow: 0.72, line: 0.72, pierce: false, topNdc: 0.42, stretch: 1.8, ring: 0.7, shell: 0.7, scar: 0.7, pop: 0 },
-  small: { dome: 0.34, glow: 0.55, line: 0.5, pierce: false, topNdc: 0.05, stretch: 0.9, ring: 0.45, shell: 0.45, scar: 0.45, pop: 0.16 },
+  small: { dome: 0.34, glow: 0.55, line: 0.5, pierce: false, topNdc: 0.05, stretch: 0.9, ring: 0.28, shell: 0.45, scar: 0.45, pop: 0.16 },
 };
 const lookOf = (tl) => SPACE_LOOK[tl?.tier] ?? SPACE_LOOK.max;
 // カメラのそばのビル（水平にこの距離 m 以内）は、光の壁が触れた瞬間に隠す（球の面へ半分だけ押されて引き伸ばされた壁が

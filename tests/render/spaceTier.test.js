@@ -1,7 +1,7 @@
 import { test, expect } from 'vitest';
 import * as THREE from 'three';
-import { createCinematic, leadFor } from '../../src/render/cinematic.js';
-import { createTimeline, FINALE, SPACE_BEATS, spaceTierFor } from '../../src/render/finaleTimeline.js';
+import { createCinematic, leadFor, SPACE_LOOK } from '../../src/render/cinematic.js';
+import { createTimeline, FINALE, SPACE_BEATS, spaceTierFor, spaceTierRadii } from '../../src/render/finaleTimeline.js';
 import { planFinale } from '../../src/render/finalePlan.js';
 import { createReplayTimeline } from '../../src/render/replayTimeline.js';
 import { planClip, CLIP } from '../../src/share/clip.js';
@@ -17,7 +17,8 @@ import SNAP from './spaceMaxSnapshot.json';
 const city = generateCity(3);
 const shotOf = (amount) => ({ amount, radius: radiusFor(amount), isBig: true });
 const ARMY = [{ id: 1, angle: 0.3, dist: 40, state: 'approach', deadTime: 0 }, { id: 11, angle: 0.8, dist: 120, state: 'search', deadTime: 0, patrol: true }];
-const T = CONFIG.spaceTier;
+// R1i fix1: しきい値は力（%）で持ち、半径は radiusFor で出す
+const T = spaceTierRadii();
 // 段ごとに試す一撃: 小（最小の力・小の上の端）、中（中の下の端・上の端）、最大（膝ちょうど・満タン）
 const POW_AT = (r) => { let lo = 0, hi = 100; for (let i = 0; i < 60; i++) { const m = (lo + hi) / 2; if (radiusFor(m) < r) lo = m; else hi = m; } return hi; };
 const CASES = {
@@ -41,6 +42,8 @@ const meshes = (scene) => ({
 
 test('R1i: 段は爆発の半径で決まる（設定の値）。境目ちょうどで上の段', () => {
   expect(T.max).toBe(CONFIG.radius.kneeRadius); // 最大 = 膝（力 97%）から
+  expect(T.normal).toBe(radiusFor(CONFIG.spaceTier.normalPct * CONFIG.power.max / 100));
+  expect(T.max).toBe(radiusFor(CONFIG.spaceTier.maxPct * CONFIG.power.max / 100));
   expect(spaceTierFor(radiusFor(100))).toBe('max');
   expect(spaceTierFor(radiusFor(97))).toBe('max');
   expect(spaceTierFor(radiusFor(96.99))).toBe('normal');
@@ -51,10 +54,10 @@ test('R1i: 段は爆発の半径で決まる（設定の値）。境目ちょう
   expect(spaceTierFor(radiusFor(CONFIG.power.minRelease))).toBe('small');
   for (const [tier, amounts] of Object.entries(CASES)) for (const a of amounts) expect(spaceTierFor(radiusFor(a)), `${a}`).toBe(tier);
   // 設定を変えれば段も変わる
-  const cfg = { ...CONFIG, spaceTier: { normal: 100, max: 200 } };
-  expect(spaceTierFor(150, cfg)).toBe('normal');
-  expect(spaceTierFor(250, cfg)).toBe('max');
-  expect(spaceTierFor(50, cfg)).toBe('small');
+  const cfg = { ...CONFIG, spaceTier: { normalPct: 20, maxPct: 40 } };
+  expect(spaceTierFor(radiusFor(30), cfg)).toBe('normal');
+  expect(spaceTierFor(radiusFor(45), cfg)).toBe('max');
+  expect(spaceTierFor(radiusFor(15), cfg)).toBe('small');
   // 時刻表は段を持つ（渡せば段を決められる）
   expect(createTimeline({ radius: radiusFor(100) }).tier).toBe('max');
   expect(createTimeline({ radius: radiusFor(30) }).tier).toBe('small');
@@ -223,4 +226,25 @@ test('R1i: 縦動画（R4）も同じ段 — 縦一線の場面の長さ・音�
     expect(clip.total).toBeGreaterThanOrEqual(CLIP.minSec - 1e-9);
     expect(clip.total).toBeLessThanOrEqual(CLIP.maxSec + 1e-9);
   }
+});
+
+// R1i Fix round 1（レビュー Minor 2）: 小の衝撃波の輪は半球と同じく控えめ。輪の走る遠さ（宇宙の地表の角度 uRing）は中の 0.45 倍以下。
+// 最大の輪は前のまま（SPACE_LOOK.max.ring = 1）
+test('R1i fix1: 小の衝撃波の輪は小さく（中の輪の半分より小さく）、最大の輪は前のまま', () => {
+  const ringReach = (amount) => {
+    const shot = shotOf(amount);
+    const cin = makeCinematic({ w: 390, h: 844 }, shot);
+    const tl = cin.timeline;
+    let reach = 0;
+    for (let t = tl.chaseEnd; t < tl.flatten; t += 1 / 60) {
+      const v = cin.spaceShot(t, { shot, timeline: tl });
+      const earth = v.scene.children.find((o) => o.isMesh && o.material.uniforms?.uRing);
+      if (earth.material.uniforms.uRingI.value > 0.01) reach = Math.max(reach, earth.material.uniforms.uRing.value);
+    }
+    return reach;
+  };
+  const small = ringReach(30), normal = ringReach(75);
+  expect(small).toBeGreaterThan(0);
+  expect(small).toBeLessThan(0.45 * normal);
+  expect(SPACE_LOOK.max.ring).toBe(1);
 });

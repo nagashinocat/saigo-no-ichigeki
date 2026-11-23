@@ -86,3 +86,24 @@ test('R1i: 規模の称号もほかの称号と競う（いちばん珍しい一
   centre.stats.release.centreDist = 10;
   expect(pickTitle(centre, 5)).toBe('centre');
 });
+
+// R1i Fix round 1（レビュー Minor 1）: 宇宙の段と称号の段は、同じ力（%）のしきい値（CONFIG.spaceTier.normalPct・maxPct）から決まる。
+// 中の境目（50%）でも最大の境目（97%）でも、境目のすぐ下・ちょうど・すぐ上で、宇宙の段と称号の段が食い違わない
+test('R1i fix1: 宇宙の段と称号の段の境目は、中の境目でも最大の境目でもそろう', () => {
+  const { normalPct, maxPct } = CONFIG.spaceTier;
+  expect(normalPct).toBe(50);
+  expect(maxPct).toBe(97);
+  const titleTier = (amount) => { const f = scaleTitleFor(amount).from; return f >= maxPct ? 'max' : f >= normalPct ? 'normal' : 'small'; };
+  for (const edge of [normalPct, maxPct]) {
+    for (let d = -0.1; d <= 0.1 + 1e-12; d += 0.001) {
+      const amount = (edge + d) * M / 100;
+      expect(titleTier(amount), `力 ${(edge + d).toFixed(3)}%`).toBe(spaceTierFor(radiusFor(amount)));
+    }
+    // 境目ちょうどは上の段
+    expect(spaceTierFor(radiusFor(edge * M / 100))).toBe(edge === maxPct ? 'max' : 'normal');
+    expect(titleTier(edge * M / 100)).toBe(edge === maxPct ? 'max' : 'normal');
+  }
+  // 称号の段の始まりは設定の値から（花火職人 = 中の始まり、国を消した者 = 最大の始まり）
+  expect(SCALE_TITLES.find((t) => t.name === '花火職人').from).toBe(normalPct);
+  expect(SCALE_TITLES.find((t) => t.name === '国を消した者').from).toBe(maxPct);
+});

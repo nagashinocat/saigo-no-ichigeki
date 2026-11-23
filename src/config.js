@@ -46,9 +46,10 @@ export const CONFIG = {
   finalBlast: { burstSec: 0.6, burstMin: 0.15, burstFrac: 0.45, burstPow: 4, showSec: 4.3, showMin: 0.5, showPow: 1.6 },
   cinematic: { freezeSec: 1.4 },
   // R1i（持ち主 2026-11-23 10:29「宇宙の爆発の演出…規模によって大きさ変えられる？今のを最大にしてしょうもないやつと普通のやつ3段階」）:
-  // 宇宙から見た爆発の段は、放った一撃の半径（m）で決める（finaleTimeline.js spaceTierFor）。max 以上が最大（今のまま。膝 = 力 97% の
-  // kneeRadius から）、normal 以上が中（普通。力 約 50%）、それより小さいものが小（しょうもない）。見せるだけ（釣り合いは変えない）
-  spaceTier: { normal: 390, max: 635 },
+  // 宇宙から見た爆発の段は、放った一撃の半径で決める（finaleTimeline.js spaceTierFor）。maxPct 以上が最大（今のまま。膝 = 力 97% の
+  // kneeRadius 635 m から）、normalPct 以上が中（普通。力 50% = 約 390 m）、それより小さいものが小（しょうもない）。見せるだけ（釣り合いは変えない）
+  // Fix round 1: しきい値は力（%）で持ち、半径は radiusFor で出す（規模の称号 titles.js の段の境目も同じ値。宇宙の段と称号の段が食い違わない）
+  spaceTier: { normalPct: 50, maxPct: 97 },
   // 湧く速さ（持ち主の決定「終盤ほど一気に増やす」）: 序盤は spawnPerSec で平ら、surgeStart 秒から surgeEnd 秒へ一気に surgeMul 倍まで増える
   // （残り 20 秒ほどで群れになる。60 秒で約 100）。掴んだ一人ごとに貯めた力が drainPerSec ずつ減る。
   // 浮遊バイクは spawnDist（上空カメラの画面の外。R1g でカメラを 0.8 倍に寄せてからは、ほとんどが画面の端より外）の道路に湧き、道路に沿って searchSpeed m/s で探し回る
