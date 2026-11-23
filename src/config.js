@@ -22,11 +22,11 @@ export const CONFIG = {
   // M2（持ち主 09:11「払うを 3 回くらいの回数制限」）: 1 回のゲームで uses 回まで。払うたびに力も cost 使う（2.8 → 4.5。持ち主の選択）
   // R1f fix1: 4.5 → 4（吸う 0.8 と合わせて）。表は task-R1f-report.md（Fix round 1）
   // fix2（まとめ役の判断）: 4 → 3.5（吸う 1.2 のまま）
-  // Pass 2・Fix round 1（まとめ役、持ち主 10:06「払う全部使って隠れる無しでもクリアできない」）: 払ったあと guardSec 秒は掴まれない
-  // （その間に掴みに来た者は払いの残りで倒れる。重い者・大物はよろめく。guardKill。enemies.js guard。守りの間は輪と音 render/guardRing.js）。
-  // 隠れたら守りは切れ（hideEndsGuard）、払ったあと hideLockSec 秒は隠れられない（守りと隠れるを重ねると最善が 98〜100% になる）。
-  // 払う費用は 3.5 → 2.2（持ち主 09:11「払うたびに力も少し使う」の範囲。Pass 2 の 1 から戻した。2.5 では 3 回払った最善の満タンが 56 秒を越える）
-  puff:    { cost: 2.2, uses: 3, radius: 22, guardSec: 10.5, guardKill: true, hideEndsGuard: true, hideLockSec: 4, combo: { from: 3 } },
+  // Pass 2〜Fix round 3（まとめ役、持ち主 10:06「払う全部使って隠れる無しでもクリアできない」）: 払ったあと guardSec 秒は掴まれない
+  // （その間に掴みに来た者は払いの残りで倒れる。重い者・大物はよろめく。guardKill。enemies.js guard。守りの間は輪と音 render/guardRing.js、
+  // 音は 1 秒に 6 回まで）。隠れても守りは消えない（Fix round 3: LOOK OUT! の矢印に従う人を損させない）。払ったあと hideLockSec 秒は隠れられない。
+  // 払う費用は 3.5 → 2.2（持ち主 09:11「払うたびに力も少し使う」の範囲。2.5 では 3 回払った最善の満タンが 56 秒を越える）
+  puff:    { cost: 2.2, uses: 3, radius: 22, guardSec: 10.5, guardKill: true, hideLockSec: 4, combo: { from: 3 } },
   // 最後の一発の半径（貯めた力 / power.max で決まる）。S8: max 440 → 720（街の端 680 m と、見回る軍勢の一番外
   // （maxEnemyReach、約 603 m）より十分先まで。最大溜めなら街のどこにいる軍勢も必ず巻き込む）
   // fix1（持ち主 15:33「軍勢は街の全体に」）: 見回る者が街の端まで行くので max 720 → 730（maxEnemyReach 約 685 m + 40 m より先）
@@ -70,7 +70,7 @@ export const CONFIG = {
     // 持ち主 10:06（「数値で85パーセントくらいのクリア確率にしたらいいかも」）・Fix round 1（まとめ役: 持ち主の決まりへ戻す）:
     // 群れは残り 20 秒（40 → 52 秒）のまま。数で釣り合いを取る: 序盤の湧く速さ 0.5 → 0.1/秒（隠れない主人公が広場で一人ずつ
     // 見つかり、払う 3 回を序盤で使い切っていた）、surgeMul 11 → 68（60 秒で約 100 のまま、終盤の山 5.5 → 6.8/秒）、吸う 1.2 → 0.85/秒。
-    // 三つの時期の今日の街 360 で最善 94%（93.3 / 95.0 / 93.3%）、払う 3 回・隠れない 51%、隠れるだけ 23%（lookout-timing-report.md Fix round 2）
+    // 三つの時期の今日の街 360 で最善 99%（99.2 / 98.3 / 99.2%）、払う 3 回・隠れない 51%、隠れるだけ 27%（lookout-timing-report.md Fix round 3）
     spawnPerSec: 0.1, surgeStart: 40, surgeEnd: 52, surgeMul: 68, drainPerSec: 0.85, maxGrabbing: 6,
     spawnDist: [50, 66], roamDist: 75, laneSpread: 1.6, // 湧く輪（主人公から m）は R1g のカメラでは画面のほぼ外
     searchSpeed: 30, inwardBias: 0.8, turnRate: 16, lookAhead: 2.5, accel: 30, brake: 70,
@@ -146,11 +146,11 @@ export const CONFIG = {
   // 物陰に着くのは dashSec 秒（前のまま）。そのあと landSec 秒、着地のしゃがみ（見た目だけ）。残像・光の尾・着地の光は render/hideAction.js
   hideAction: { crouchSec: 0.06, crouchCreep: 0.04, leapH: 4, kickMinLen: 6, kickNear: 3.5, landSec: 0.16 },
   // fix2: 同じ物陰にいられる秒 holdSec 12 → 16（三つの時期の今日の街で 7 割を保つ。task-R1f-report.md Fix round 2）
-  // Fix round 2（持ち主の判断「間をとる」）: 隠れるだけ（払う 0 回、S ランクの道）で 2〜3 割、最善 90〜95%。物陰にいられる holdSec 6 → 10 秒
-  // （持ち主の 16 秒と前の 6 秒の間）、撒いた隠れるの待ち時間 cooldown 8 → 7 秒（3 秒と 8 秒の間）。物陰で見つかる真正面の近さ seeDist 4 → 6.5 m
-  // （holdSec が cooldown より長いと隠れ続けられ、隠れるだけで 5 割を越えるので、物陰を探し回る者に見つかりやすくして 2〜3 割に）。
-  // 追われていない間の先回りの隠れる（LOOK OUT! の矢印に従う）は evadeCooldown 3 秒（矢印に従う人を損させない）
-  hide: { holdSec: 10, evadeCooldown: 3, seeDist: 6.5, dashSec: 0.3, cooldown: 7, range: 26, minDist: 3, step: 1.5, wallDist: 1.6, offW: 6, leaveDist: 3 },
+  // Fix round 3（持ち主の判断「間をとる」・見直し Important B）: 物陰で見つかるのは真正面 seeDist 4.5 m の内だけで、物陰の確かめは毎フレーム
+  // （さいころなし）。物陰に近づく者がいれば、見つかる前に字だけの LOOK OUT! とかくれ中の赤い脈（lookout.coverWarnK × seeDist）。
+  // 隠れるだけ（払う 0 回、S ランクの道）を 2〜3 割にするのは holdSec と cooldown: 物陰にいられる 10 → 6.5 秒、撒いた隠れるの待ち時間 7 → 6 秒
+  // （持ち主の 16 秒・3 秒からは離れる）。追われていない間の先回りの隠れる（矢印に従う）は evadeCooldown 3 秒
+  hide: { holdSec: 6.5, evadeCooldown: 3, seeDist: 4.5, dashSec: 0.3, cooldown: 6, range: 26, minDist: 3, step: 1.5, wallDist: 1.6, offW: 6, leaveDist: 3 },
   // M1 の操作（持ち主 09:15、制作側の判断）: 溜めているあいだの 2 本目の指は、longPressSec 秒以上で浮かぶジョイスティック（押した所に出て、
   // 指を離すと消える。stickRadiusPx の輪いっぱいで全速、deadPx より内は止まる）、それより短く tapMovePx px 未満の動きで離せば払う
   // M2（持ち主 15:20）: PC の隠れる操作。向きのキーを同じ向きに素早く 2 回押す（keyTwice: mag より深く・window 秒の内・向きのずれ angleDeg° 以内、
@@ -173,5 +173,5 @@ export const CONFIG = {
   // 最低 minShowSec 0.4 → 1.0 秒は出す。見つかった直後も graceSec 秒は矢印を出す（掴まれていない・隠れられるとき）。
   // 今日の街 60 で、その前 1.5 秒見つかっていなかった回の知らせの先は p50 0.40 → 1.23 秒・1.0 秒以上 4% → 93%（Fix round 1 の出荷の値。
   // 待ち時間の間の字だけの LOOK OUT! も含む。scripts/lookout-lead.mjs）。物陰は arrowEvery 秒ごとに選び直す（一番重い所）
-  lookout: { nearK: 1.8, angleK: 1.4, predictSec: 1.2, predictStep: 6, checkEvery: 0.1, arrowEvery: 0.3, minShowSec: 1.0, holdK: 1.15, graceSec: 0.8, dirs: 8, agreeDeg: 15, nearBuildings: 80 },
+  lookout: { nearK: 1.8, angleK: 1.4, predictSec: 1.2, predictStep: 6, checkEvery: 0.1, arrowEvery: 0.3, coverWarnK: 2, coverStep: 2, minShowSec: 1.0, holdK: 1.15, graceSec: 0.8, dirs: 8, agreeDeg: 15, nearBuildings: 80 },
 };

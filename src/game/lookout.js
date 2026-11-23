@@ -38,12 +38,17 @@ export function inDanger(e, H, buildings, cfg = CONFIG, k = 1) {
     if (off <= E.spotHalfAngle * L.angleK * k && lineOfSight(e.x, e.z, buildings, E.sightMargin, H.x, H.z)) return true;
   }
   if (!(ahead > 0)) return false;
-  const step = L.predictStep ?? 6;
-  // (x0, z0) から向き (cx, cz) へ len m 進む間（step m ごとと終わりの点）にライトに入るか
+  return pathHits(e, ahead, L.predictStep ?? 6, (x, z, hh) => seesFrom(x, z, hh, H, buildings, cfg));
+}
+
+// 探す者 e が ahead m 進む道すじ（step m ごとと終わりの点）のどこかで hit(x, z, 向き) が true になるか。道を走る者は次の交差点まで道に沿い、
+// そこから先はまっすぐ・左・右（戻らない）。道を持たない者は今の向きのまっすぐ先
+function pathHits(e, ahead, step, hit) {
+  const h = e.heading ?? 0;
   const leg = (x0, z0, cx, cz, len) => {
     const hh = Math.atan2(cz, cx);
     for (let s = Math.min(step, len); len > 0; s = Math.min(s + step, len)) {
-      if (seesFrom(x0 + cx * s, z0 + cz * s, hh, H, buildings, cfg)) return true;
+      if (hit(x0 + cx * s, z0 + cz * s, hh)) return true;
       if (s >= len) break;
     }
     return false;
@@ -57,6 +62,19 @@ export function inDanger(e, H, buildings, cfg = CONFIG, k = 1) {
   const x1 = e.x + e.di * s1, z1 = e.z + e.dj * s1;
   for (const [bi, bj] of [[e.di, e.dj], [-e.dj, e.di], [e.dj, -e.di]]) if (leg(x1, z1, bi, bj, ahead - s1)) return true;
   return false;
+}
+
+// Fix round 3（見直し Important B）: 物陰にいる主人公 H へ、探す者 e がもうすぐ近づくか（物陰で見つかる前の知らせ）。
+//  - 今 coverWarnK × seeDist m の内（建物にさえぎられない）、または predictSec 秒の内の道すじ（coverStep m ごと）のどこかが
+//    coverWarnK × seeDist m の内（建物にさえぎられない）
+export function coverDanger(e, H, buildings, cfg = CONFIG) {
+  if (e.state === 'dead' || e.x == null) return false;
+  const L = cfg.lookout, R = cfg.hide.seeDist * (L.coverWarnK ?? 2);
+  const near = (x, z) => Math.hypot(H.x - x, H.z - z) <= R && lineOfSight(x, z, buildings, 0, H.x, H.z);
+  const v = e.speed ?? 0, ahead = v * L.predictSec;
+  if (Math.hypot(H.x - e.x, H.z - e.z) > R + ahead) return false;
+  if (near(e.x, e.z)) return true;
+  return ahead > 0 && pathHits(e, ahead, L.coverStep ?? 2, (x, z) => near(x, z));
 }
 
 // シュッで入れる物陰の向き。画面の dirs 向きへ払ったときに M2 の hide（findCover。watchers は hide と同じ、追っている者）が選ぶ物陰を探し、
@@ -105,7 +123,9 @@ export function createLookout(cfg = CONFIG) {
   // Fix round 1: 物陰を選んでからの秒と、選んだ回数（テスト用）。物陰は arrowEvery 秒ごとに選び直す（一番重い所）
   let arrowAge = Infinity, arrowPicks = 0;
   let spottedPrev = false, graceLeft = 0, graceArrow = null, graceClock = 0;
-  const out = { show: false, deg: null, spot: null, t: 0, grace: false };
+  const out = { show: false, deg: null, spot: null, t: 0, grace: false, coverWarn: false };
+  // Fix round 3: 物陰にいる間の知らせ（coverDanger）。checkEvery 秒ごとに確かめる
+  let coverWarn = false, coverClock = 0;
   const near = (H, bs) => bs.filter((b) => Math.abs(b.x - H.x) - b.w / 2 < L.nearBuildings && Math.abs(b.z - H.z) - b.d / 2 < L.nearBuildings);
   function check(s, textOnly = false) {
     checks++;
@@ -140,6 +160,22 @@ export function createLookout(cfg = CONFIG) {
       spottedPrev = spotted;
       if (!spotted) graceLeft = 0; else graceLeft -= dt;
       const grabbedNow = s.enemies.some((e) => GRABBED.has(e.state));
+      // Fix round 3: 物陰にいる間は、近づく者がいれば字だけの LOOK OUT! とかくれ中の赤い知らせ（coverWarn）。矢印は出さない（タップは払う）
+      if (s.hero.hidden && s.hero.dashing == null && !grabbedNow && s.hideBlock !== 'off' && !spotted) {
+        coverClock -= dt;
+        if (coverClock <= 0) {
+          coverClock += L.checkEvery; if (coverClock <= 0) coverClock = L.checkEvery;
+          checks++;
+          const bs = near(s.hero, s.buildings);
+          coverWarn = s.enemies.some((e) => e.state === 'search' && coverDanger(e, s.hero, bs, cfg));
+        }
+        if (coverWarn && !show) shownT = 0;
+        show = coverWarn; danger = false; arrow = null; clock = 0; arrowAge = Infinity; graceLeft = 0;
+        if (show) shownT += dt;
+        out.show = show; out.t = show ? shownT : 0; out.grace = false; out.coverWarn = coverWarn; out.spot = null; out.deg = null;
+        return out;
+      }
+      coverWarn = false; coverClock = 0; out.coverWarn = false;
       const canHide = s.hideBlock == null && !s.hero.hidden && !grabbedNow;
       // Fix round 1（まとめ役の裁定）: 隠れられない待ち時間（隠れたあと・払ったあと）の間も、LOOK OUT! は字だけ出す（矢印・当たりなし。タップは払う）
       const textOnly = !canHide && s.hideBlock === 'cooldown' && !s.hero.hidden && !grabbedNow;

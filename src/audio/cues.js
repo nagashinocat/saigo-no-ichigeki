@@ -72,6 +72,14 @@ export const GUARD_CUE = {
   tones: [{ f: 1480, dur: 0.18, gain: 0.07, when: 0 }, { f: 2220, dur: 0.14, gain: 0.04, when: 0.02 }],
   air: { dur: 0.08, freq: 4200, gain: 0.05, q: 1.1, attack: 0.004 },
 };
+// Fix round 3（見直し Minor D）: 弾く音は 1 秒に GUARD_CUE_MAX_PER_SEC 回まで（終盤の群れで連打にしない）
+export const GUARD_CUE_MAX_PER_SEC = 6;
+// 1 秒に perSec 回まで true を返す（間は 1 / perSec 秒以上）。t: 秒
+export function createRateLimit(perSec) {
+  const gap = 1 / perSec;
+  let last = -Infinity;
+  return (t) => { if (t - last < gap - 1e-9) return false; last = t; return true; };
+}
 export function guardRecipe(C = GUARD_CUE) {
   return { tones: C.tones.map((t) => ({ ...t })), air: { ...C.air } };
 }

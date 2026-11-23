@@ -49,7 +49,7 @@ import { createClipRecorder, createClipSession, createClipPanel, restoreReplayAf
 import { INTRO_FONT } from './ui/introOverlay.js';
 import { createAudio, finaleBoomOpts } from './audio/audio.js';
 import { createHitFeed } from './audio/hitFeed.js';
-import { screenPan } from './audio/cues.js';
+import { screenPan, createRateLimit, GUARD_CUE_MAX_PER_SEC } from './audio/cues.js';
 import { transitObstacles } from './world/transit.js';
 import { transitMix } from './audio/transitSound.js';
 import { createPatrolGlow, patrolGlowVisible } from './render/patrolGlow.js';
@@ -950,7 +950,8 @@ function syncHide(dt) {
 game.on('hide', () => audio.hideCue('jump', screenCue(game.hero.x, 1, game.hero.z).pan));
 // Fix round 1（見直し Important 5）: 払うの守りの輪（守りの間だけ、主人公のまわりの地面）と、弾いた瞬間の脈・音
 const guardRing = createGuardRing(cityScene);
-game.on('guardHit', (h) => { guardRing.hit(); audio.guardCue(screenCue(h.x, 1, h.z).pan); });
+const guardCueLimit = createRateLimit(GUARD_CUE_MAX_PER_SEC); // Fix round 3: 弾く音は 1 秒に 6 回まで
+game.on('guardHit', (h) => { guardRing.hit(); if (guardCueLimit(performance.now() / 1000)) audio.guardCue(screenCue(h.x, 1, h.z).pan); });
 views.follow(game.hero, { snap: true });
 
 // ゲームを gdt 秒進める（一度に進めるのは最大 0.1 秒ずつ。演出は時間を一気に進めることがある）
@@ -1066,7 +1067,7 @@ function finishFrame(dt, live) {
   lookoutNow = lo?.show ? { show: true, spot: lo.spot ? { ...lo.spot } : null, deg: lo.deg } : null;
   lookoutView.update(lo, lo?.show ? screenCue(game.hero.x, 1.2, game.hero.z) : null);
   // R1f fix1: 物陰にいる間の「かくれ中」と残りの輪
-  const hm = inPlay() && !debugCam ? hideMarkState({ hero: game.hero, hideLeft: game.hideLeft, holdSec: CONFIG.hide.holdSec }) : { show: false, p: 0 };
+  const hm = inPlay() && !debugCam ? hideMarkState({ hero: game.hero, hideLeft: game.hideLeft, holdSec: CONFIG.hide.holdSec, warn: !!lo?.coverWarn }) : { show: false, p: 0 };
   hideMark.update(hm, hm.show ? screenCue(game.hero.x, 1.2, game.hero.z) : null);
   // 最後の一発を放ってから結果までずっと HUD は出さない（両手が玉を握り込む間も、リプレイの間も）
   hud.setVisible(!debugCam && !introFlow.blocksInput && finaleOff()); // C1: リトライの TAP の間も出さない

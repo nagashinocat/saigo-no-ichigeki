@@ -22,3 +22,17 @@ test('R1f fix1: 出す・消すと輪の割合を DOM に書く（変わった�
   v.update({ show: false, p: 0 }, null);
   expect(el.hidden).toBe(true);
 });
+
+// Fix round 3（見直し Important B「物陰で黙って見つかる」）: 物陰に近づく者がいるとき（lookout の coverWarn）は、かくれ中の印を赤く脈打たせる
+test('Fix round 3: 近づく者がいるとき（warn）は印に warn の印（赤い脈）を付け、いなくなれば外す', () => {
+  expect(hideMarkState({ hero: { hidden: true, dashing: null }, hideLeft: 3, holdSec: 10, warn: true }).warn).toBe(true);
+  expect(hideMarkState({ hero: { hidden: true, dashing: null }, hideLeft: 3, holdSec: 10 }).warn).toBe(false);
+  expect(hideMarkState({ hero: { hidden: false }, hideLeft: 0, holdSec: 10, warn: true }).warn).toBe(false);
+  const cls = new Set();
+  const el = { hidden: true, style: { setProperty() {} }, classList: { toggle(c, on) { if (on) cls.add(c); else cls.delete(c); } } };
+  const v = createHideMark(el);
+  v.update({ show: true, p: 0.5, warn: true }, { sx: 10, sy: 10 });
+  expect(cls.has('warn')).toBe(true);
+  v.update({ show: true, p: 0.5, warn: false }, { sx: 10, sy: 10 });
+  expect(cls.has('warn')).toBe(false);
+});

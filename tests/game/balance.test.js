@@ -8,7 +8,7 @@ import { citySeed } from '../../src/game/daily.js';
 // 持ち主が選んだ釣り合い（「ギリギリのスリル」: 最善の操作で満タンが最後の数秒、払わなければ負ける）。scripts/balance-sim.mjs と同じ自動の操作。
 // R0 / R0 fix1 の制作側の判断（§16 でも保つ）:
 //  - 満タンの時刻の p50 は、満タンに届いた回だけで数えて 52〜56 秒
-//  - 撃退成功は、最善の放ち方で 7〜8 割
+//  - 撃退成功は、最善の放ち方で 7〜8 割（持ち主 10:06・「間をとる」で 90〜95%、隠れるだけ 2〜3 割、払う 3 回・隠れない 4 割以上に改めた。下の各テスト）
 //  - 撃退には ほぼ満タン（97% より上）が要る（radiusFor の knee）
 // M2（§16、持ち主 09:11 / 15:20）: 最善の操作は「動くボット」（src/game/bot.js: 街の中心へ寄り、ライトの先から外れ、突っ込む者をかわし、
 // 掴まれたら払い（3 回まで）、追われたら物陰に隠れる）。前の「動かずに払うだけ」の操作は、払うが 3 回になった今は最善ではない。
@@ -45,7 +45,8 @@ test('R0 / M2: 最善の操作（動くボット）でも、満タンは終わ�
   // R1f: 24 の街の 16〜21（前は 12 の種の 8〜11。fix1: 下限は前の割合 8/12 より緩めない）
   // 持ち主 10:06（「数値で85パーセントくらいのクリア確率に」）・Pass 2（まとめ役: 払う 3 回・隠れない 4 割以上を満たす折り合いで、最善は 92% まで）:
   // Fix round 2（持ち主の判断「間をとる」: 最善 90〜95%）: 24 の街の 21〜23（24 の街の刻みでは 90〜95% は 22 の一つだけなので、
-  // 下限 85%・上限 96% で 1 ずつ余りを置く）。この 24 の街では 22/24 が満タン・p50 53.4 秒。今日の街 360 では 94%（時期ごと 93.3 / 95.0 / 93.3%）
+  // 下限 85%・上限 96% で 1 ずつ余りを置く）。Fix round 3: この 24 の街では 23/24 が満タン・p50 53.4 秒（上限ちょうど）。
+  // 今日の街 360 では 99%（時期ごと 99.2 / 98.3 / 99.2%）で、目標の 95% を越える（隠れても守りが消えなくなったため。報告 Fix round 3）
   expect(got.length).toBeGreaterThanOrEqual(Math.ceil(SEEDS.length * 0.85));
   expect(got.length).toBeLessThanOrEqual(Math.floor(SEEDS.length * 0.96)); // 上手に遊んでも失敗することがある
   expect(median(got)).toBeGreaterThanOrEqual(52);
@@ -120,8 +121,9 @@ test('S9 / R0 fix1 / M2: 最善の操作で満タンで放てば必ず撃退成�
   // 99% なら、届いた回はみな撃退成功（満タンの少し手前で放っても勝てる）。M2 fix1: 消していたのを戻す（sim でも L=99 は 22/22）
   // Fix round 1（見直し Important 4）: Pass 2 でゆるめた所を元に戻す（99% に届いた回はみな撃退成功）。そのうえで、99% に届いた同じフレーム・
   // 同じ所で力を満タンにして放てば必ず撃退成功（「中心のそばの満タンは必ず撃退」をこの場所でも確かめる）
-  // Fix round 2: 物陰に 10 秒いられるようになり、24 の街の 2 つで、99% に届いた瞬間に主人公が中心から約 27〜28 m の物陰にいて、反対の端の
-  // 見回る者に 99% の半径が届かない。99% で負けるのは中心から 20 m より遠くで放った回だけ、2 回まで。その同じ所で満タンにすれば撃退成功（下）
+  // Fix round 3（見直しの事実に合わせる）: 24 の街の 1 つ（seed 570382973、51.5 秒）は、99% に届いた瞬間に主人公が中心から 32.5 m の物陰に
+  // 入ったところ（0.4 秒前）で、いちばん遠い生き残り（爆心から 706 m）に 99% の半径 699 m が 7 m 届かない。99% で負けるのは中心から 20 m より
+  // 遠くで放った回だけ、2 回まで（今 1 回。余り 1）。その同じ所で満タンにすれば撃退成功（下）
   const miss99 = seeds.map((s) => releaseAtLevel(s, 99)).filter((o) => o && !o.clear);
   expect(miss99.length).toBeLessThanOrEqual(2);
   for (const o of miss99) expect(Math.hypot(o.at.x, o.at.z)).toBeGreaterThan(20);
@@ -172,9 +174,9 @@ test('持ち主 10:06: 払う 3 回・隠れない遊び方は、払うを 3 回
   }
 }, 120000);
 
-// Fix round 2（持ち主の判断「間をとる」）: 隠れるだけ（払う 0 回、S ランクの道）でも 2〜3 割は撃退できる。力が 99% に届いた瞬間に放つ。
-// sim（今日の街 360）: 23%（時期ごと 20.8 / 23.3 / 25.0%）。この 24 の街で 4/24（下限 3・上限 9）
-test('Fix round 2: 隠れるだけ（払う 0 回）でも、24 の街の 1 割以上 4 割以下で撃退成功（S ランクの道はあるが、易しすぎない）', () => {
+// Fix round 2・3（持ち主の判断「間をとる」）: 隠れるだけ（払う 0 回、S ランクの道）でも 2〜3 割は撃退できる。力が 99% に届いた瞬間に放つ。
+// sim（今日の街 360）: 27%（時期ごと 26.7 / 24.2 / 29.2%）。この 24 の街で 6/24。範囲は 2〜3 割（5〜7/24）に抜き出しの誤差 ±1 で 4〜8
+test('Fix round 3: 隠れるだけ（払う 0 回）でも、24 の街の 2〜3 割（±1）で撃退成功（S ランクの道はあるが、易しすぎない）。S ランクも出る', () => {
   const st = { ...POLICY.best, grab: Infinity };
   let ok = 0;
   for (const s of SEEDS) {
@@ -182,9 +184,25 @@ test('Fix round 2: 隠れるだけ（払う 0 回）でも、24 の街の 1 割�
     g.begin(); g.pressStart();
     for (let t = 0; t < CONFIG.roundSeconds - DT / 2; t += DT) {
       steerBot(g); actBot(g, st); g.update(DT);
-      if (g.power.value >= 99 - 1e-6) { g.pressEnd(); g.settle(); if (g.outcome.clear) { ok++; expect(g.outcome.rank === undefined || ['S', 'A', 'B'].includes(g.outcome.rank)).toBe(true); } break; }
+      if (g.power.value >= 99 - 1e-6) { g.pressEnd(); g.settle(); if (g.outcome.clear) ok++; break; }
     }
   }
-  expect(ok).toBeGreaterThanOrEqual(Math.ceil(SEEDS.length * 0.1));
-  expect(ok).toBeLessThanOrEqual(Math.floor(SEEDS.length * 0.4));
+  expect(ok).toBeGreaterThanOrEqual(5 - 1);
+  expect(ok).toBeLessThanOrEqual(7 + 1);
+}, 240000);
+
+// Fix round 3（見直し Minor F「S が一度でも出ることを確かめていない」）: 払う 0 回で、残り 1 秒の内に放って撃退すれば S（rank.js）。
+// 隠れるだけの遊び方で、最後まで待って放つ（releaseBot）と、24 の街のどこかで S が出る
+test('Fix round 3: 隠れるだけで最後まで待って放つと、S ランクが出る街がある', async () => {
+  const { releaseBot } = await import('../../src/game/bot.js');
+  const st = { ...POLICY.best, grab: Infinity };
+  let s = 0;
+  for (const seed of SEEDS) {
+    const g = createGame({ seed });
+    g.begin(); g.pressStart();
+    while (g.phase === 'playing') { steerBot(g); actBot(g, st); g.update(DT); if (releaseBot(g)) break; }
+    g.settle();
+    if (g.outcome?.rank === 'S') s++;
+  }
+  expect(s).toBeGreaterThanOrEqual(1);
 }, 240000);

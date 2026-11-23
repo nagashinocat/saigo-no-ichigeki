@@ -467,8 +467,9 @@ export function createEnemies(rng, cfg = CONFIG, { buildings = [], patrolRng = n
   // 見つける（M2: 前を照らすライトの中か、ごく近く。spotEvery 秒ごとに確かめる）。見つけたら chase へ、まわりへ知らせる
   function trySpot(e, dt) {
     e.spotClock = (e.spotClock ?? (e.id * 0.37) % E.spotEvery) - dt;
-    if (e.spotClock > 0) return;
-    e.spotClock += E.spotEvery;
+    // Fix round 3（見直し Important B）: 物陰にいる主人公は毎フレーム確かめる（確かめの位相というさいころで見つかる・見つからないが決まらない）
+    if (e.spotClock > 0 && !H.hidden) return;
+    if (e.spotClock <= 0) e.spotClock += E.spotEvery;
     if (e.dist <= E.spotDist && seesHero(e, H, nearBuildings(), cfg)) {
       e.state = 'chase'; e.spotT = 0;
       e.sees = true; e.seenT = time; e.lastSeen = { x: H.x, z: H.z, vx: H.vx ?? 0, vz: H.vz ?? 0 }; if (CH) seeHero();
@@ -754,8 +755,6 @@ export function createEnemies(rng, cfg = CONFIG, { buildings = [], patrolRng = n
     takeArrivals() { return arrivals.splice(0); },
     // Pass 2: 払ったあとの守りを sec 秒にする（長い方を残す）。残りの秒
     guard(sec) { guardLeft = Math.max(guardLeft, sec); },
-    // Fix round 1: 守りを切る（puff.hideEndsGuard: 隠れた瞬間）
-    endGuard() { guardLeft = 0; },
     get guardLeft() { return guardLeft; },
     // Fix round 1: 守りで弾いた者（読んだら空にする）
     takeGuardHits() { return guardHits.splice(0); },

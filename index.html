@@ -132,6 +132,10 @@
     /* R1f fix1: 物陰にいる間の「かくれ中」と、その物陰にいられる残り（--p、1 → 0）の細い輪（hideMark.js） */
     #hideMark { position: fixed; left: 0; top: 0; width: 0; height: 0; pointer-events: none; z-index: 4; --p: 1; }
     #hideMark[hidden] { display: none; }
+    /* Fix round 3: 物陰に近づく者がいる（見つかる前の知らせ）: 赤く脈打つ */
+    #hideMark.warn .hm-ring { background: conic-gradient(rgba(255, 70, 60, 0.98) calc(var(--p) * 360deg), rgba(255, 70, 60, 0.2) 0); animation: hmWarn 0.35s ease-in-out infinite alternate; }
+    #hideMark.warn .hm-tag { color: #ffe0dc; box-shadow: 0 0 0 2px rgba(255, 70, 60, 0.95), 0 0 12px rgba(255, 60, 40, 0.8); }
+    @keyframes hmWarn { from { transform: scale(1); opacity: 0.75; } to { transform: scale(1.18); opacity: 1; } }
     #hideMark .hm-ring { position: absolute; left: -26px; top: -26px; width: 52px; height: 52px; border-radius: 50%;
       background: conic-gradient(rgba(140, 220, 255, 0.95) calc(var(--p) * 360deg), rgba(140, 220, 255, 0.12) 0);
       -webkit-mask: radial-gradient(circle, transparent 22px, #000 23px); mask: radial-gradient(circle, transparent 22px, #000 23px); }
