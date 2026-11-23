@@ -19,11 +19,11 @@ function start(seed = 1) {
 }
 const chaser = (id, x, z) => ({ id, state: 'chase', x, z, heading: Math.atan2(-z, -x), speed: 30, turn: 0, lane: [0, 0], dist: Math.hypot(x, z), angle: Math.atan2(z, x) });
 
-// Pass 2（まとめ役）: 追われていて撒いた隠れるの次まで 3 → 6 秒、追われていない間の先回りの隠れるは evadeCooldown（tests/game/hideEvade.test.js）
-test('M2 / Pass 2: 隠れるの値は config にある（シュッと 0.25〜0.4 秒、撒いた隠れるの次まで約 6 秒）', () => {
+// Pass 2（まとめ役）: 追われていて撒いた隠れるの次まで 3 → 8 秒、追われていない間の先回りの隠れるは evadeCooldown（tests/game/hideEvade.test.js）
+test('M2 / Pass 2: 隠れるの値は config にある（シュッと 0.25〜0.4 秒、撒いた隠れるの次まで約 8 秒）', () => {
   expect(HC.dashSec).toBeGreaterThanOrEqual(0.25);
   expect(HC.dashSec).toBeLessThanOrEqual(0.4);
-  expect(HC.cooldown).toBeCloseTo(6, 0);
+  expect(HC.cooldown).toBeCloseTo(8, 0);
   expect(HC.range).toBeGreaterThan(10);
 });
 

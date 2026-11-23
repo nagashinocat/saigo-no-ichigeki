@@ -44,10 +44,10 @@ test('R0 / M2: 最善の操作（動くボット）でも、満タンは終わ�
   const got = ts.filter(Number.isFinite);
   // R1f: 24 の街の 16〜21（前は 12 の種の 8〜11。fix1: 下限は前の割合 8/12 より緩めない）
   // 持ち主 10:06（「数値で85パーセントくらいのクリア確率に」）・Pass 2（まとめ役: 払う 3 回・隠れない 4 割以上を満たす折り合いで、最善は 92% まで）:
-  // 24 の街の 20〜23（下限 80%。この 24 の街では 23/24 が満タン・p50 53.4 秒で、下限から 3 の余り。今日の街 360 では 91%
-  // （時期ごと 91.7 / 90.0 / 92.5%）。上限は 23/24: 上手に遊んでも失敗することがある）
+  // Fix round 1（見直し Important 2: 上限は目標に合わせる）: 24 の街の 20〜22（下限 80%、上限は 92% の 22/24 まで）。
+  // この 24 の街では 21/24 が満タン・p50 55.9 秒。今日の街 360 では 90%（時期ごと 90.8 / 92.5 / 87.5%）
   expect(got.length).toBeGreaterThanOrEqual(Math.ceil(SEEDS.length * 0.8));
-  expect(got.length).toBeLessThanOrEqual(SEEDS.length - 1);
+  expect(got.length).toBeLessThanOrEqual(Math.floor(SEEDS.length * 0.92)); // 上手に遊んでも失敗することがある
   expect(median(got)).toBeGreaterThanOrEqual(52);
   expect(median(got)).toBeLessThanOrEqual(56);
 }, 120000);
@@ -83,7 +83,8 @@ test('払う（掴まれ 2 人で払う）は、枠いっぱい（6 人）まで
 }, 240000);
 
 // S9: 撃退成功（放った一発で街の軍勢を全員倒す）。最善の操作で力が level に届いた瞬間に離す
-function releaseAtLevel(seed, level, centreAt = null) {
+// topUp: level に届いたフレームで、放つ前に力を満タンにする（同じ所の満タン）
+function releaseAtLevel(seed, level, centreAt = null, { topUp = false } = {}) {
   const g = createGame({ seed });
   g.begin(); g.pressStart();
   for (let t = 0; t < CONFIG.roundSeconds - DT / 2; t += DT) {
@@ -92,6 +93,7 @@ function releaseAtLevel(seed, level, centreAt = null) {
     g.update(DT);
     if (g.power.value >= level - 1e-6) {
       const at = { x: g.hero.x, z: g.hero.z };
+      if (topUp) g.power.add(CONFIG.power.max);
       g.pressEnd(); g.settle();
       return { ...g.outcome, at };
     }
@@ -116,11 +118,10 @@ test('S9 / R0 fix1 / M2: 最善の操作で満タンで放てば必ず撃退成�
     }
   }
   // 99% なら、届いた回はみな撃退成功（満タンの少し手前で放っても勝てる）。M2 fix1: 消していたのを戻す（sim でも L=99 は 22/22）
-  // Pass 2: 24 の街の 1 つは、99% に届いた瞬間に主人公が中心から約 36 m の所にいて、反対の端の見回る者に 99% の半径が届かない
-  // （満タンならその場でも撃退成功）。99% で負けるのは、中心から 20 m より遠くで放った回だけ、それも 1 回まで
-  const miss99 = seeds.map((s) => releaseAtLevel(s, 99)).filter((o) => o && !o.clear);
-  expect(miss99.length).toBeLessThanOrEqual(1);
-  for (const o of miss99) expect(Math.hypot(o.at.x, o.at.z)).toBeGreaterThan(20);
+  // Fix round 1（見直し Important 4）: Pass 2 でゆるめた所を元に戻す（99% に届いた回はみな撃退成功）。そのうえで、99% に届いた同じフレーム・
+  // 同じ所で力を満タンにして放てば必ず撃退成功（「中心のそばの満タンは必ず撃退」をこの場所でも確かめる）
+  for (const s of seeds) { const o = releaseAtLevel(s, 99); if (o) expect(o.clear, `L=99 seed ${s}`).toBe(true); }
+  for (const s of seeds) { const o = releaseAtLevel(s, 99, null, { topUp: true }); if (o) { expect(o.clear, `L=99→満タン seed ${s}`).toBe(true); expect(Math.hypot(o.at.x, o.at.z)).toBeLessThan(60); } }
 }, 300000);
 
 // M2（§16「最大溜めで必ず撃退できるのは、街の中心のそばで放ったときだけ」）: 中心から離れて放つ操作は悪い
@@ -136,7 +137,7 @@ test('M2: 中心から 200 m の所へ寄って放つ操作は、中心のそば
 
 // 持ち主 10:06（「払う全部使って隠れる無しでもクリアできない」）・Pass 2（まとめ役）: 払うを 3 回とも使い、隠れない遊び方（bot.js POLICY.puffNoHide）でも
 // 4 割以上は撃退できる（目標 5 割）。力が 99% に届いた瞬間に放つ（daily-balance と同じ。満タンを待つより撃退が多い）。
-// sim（今日の街 360）: 48%（時期ごと 53.3 / 46.7 / 42.5%）。この 24 の街で 11/24
+// Fix round 1: sim（今日の街 360）: 51%（時期ごと 50.8 / 53.3 / 47.5%）。この 24 の街で 12/24（下限 10 から 2 の余り）
 test('Pass 2: 払う 3 回・隠れない遊び方でも、24 の街の 4 割以上（10 以上）で撃退成功', () => {
   const runs = SEEDS.map((s) => {
     const g = createGame({ seed: s });

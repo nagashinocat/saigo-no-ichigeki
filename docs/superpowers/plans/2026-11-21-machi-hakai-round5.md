@@ -7,7 +7,7 @@
 
 ## Global Constraints
 - Portrait 390×844 primary; mid Android 30 fps; original content only; existing tests not weakened.
-- Balance (owner 22:15 + controller ruling): best play reaches full at p50 ≈ 54 s (52–56, over runs that reach full); best-play clear rate about 85% overall and 80–90% in each of the three periods (2026-07, 2026-11, 2027-03; 120 days each) under the BEST release policy (any charge level) (owner 10:06); the 払う-all-3-never-hide policy clears at least 50% (owner 10:06); no-払う never reaches full; a max charge always clears (bosses included).
+- Balance (owner 22:15 + controller ruling): best play reaches full at p50 ≈ 54 s (52–56, over runs that reach full); best-play clear rate about 85% overall and 80–90% in each of the three periods (2026-07, 2026-11, 2027-03; 120 days each) under the BEST release policy (any charge level) (owner 10:06); the 払う-all-3-never-hide policy clears at least 40%, aiming for 50% (owner 10:06 + controller ruling); following the LOOK OUT! arrow clears at least as often as 払う-no-hide; no-払う never reaches full; a max charge always clears (bosses included).
 - Sound follows the screen (owner 13:06). Text beats carry no SFX.
 - Static hosting only (GitHub Pages), with no server.
 - Title 「最後の一撃」; the score label is 「被害額」.

@@ -13,9 +13,11 @@ const quiet = { ...CONFIG, enemy: { ...E, spawnPerSec: 0, alertRate: 0, alertAtS
 // 主人公（原点）から d m の所で、主人公へ突っ込む者
 const charger = (id, d, a = 0) => ({ id, state: 'chase', x: Math.cos(a) * d, z: Math.sin(a) * d, heading: a + Math.PI, speed: E.speed, turn: 0, searchTime: 0, lane: [0, 0], seenT: 0, sees: true, dist: d, angle: a });
 
-test('Pass 2: 払うの守りの値は config にある（数秒・弾かれた者は倒れる）', () => {
+// Fix round 1: 守りは約 10 秒（払う 3 回で終盤の群れの約半分を覆う。隠れたら切れる）
+test('Pass 2 / Fix round 1: 払うの守りの値は config にある（約 10 秒・弾かれた者は倒れる・隠れたら切れる）', () => {
   expect(P.guardSec).toBeGreaterThanOrEqual(1);
-  expect(P.guardSec).toBeLessThanOrEqual(8);
+  expect(P.guardSec).toBeLessThanOrEqual(12);
+  expect(P.hideEndsGuard).toBe(true);
   expect(typeof P.guardKill).toBe('boolean');
 });
 
@@ -74,7 +76,9 @@ test('Pass 2: game.puff は守りを始める（払えなかったときは始�
 
 // Pass 2: 払ったあと puff.hideLockSec 秒は隠れられない（hideBlock: cooldown）。払うの守りと隠れるを続けて使い、どちらの弱さも消す遊び方にしない
 test('Pass 2: 払ったあと hideLockSec 秒は隠れられず、過ぎれば隠れられる', () => {
-  expect(P.hideLockSec).toBeGreaterThan(P.guardSec);
+  // Fix round 1（まとめ役: 12 秒の休みをやめ、3〜4 秒に。持ち主 15:20「払う → 隠れる」の流れを保つ）
+  expect(P.hideLockSec).toBeGreaterThanOrEqual(3);
+  expect(P.hideLockSec).toBeLessThanOrEqual(4);
   const g = createGame({ seed: 3, cfg: quiet });
   g.begin(); g.pressStart();
   for (let t = 0; t < 3; t += 1 / 30) g.update(1 / 30);
@@ -118,4 +122,27 @@ test('Fix round 1: 守りの間は、群がる者が空いた枠に入って掴�
   expect(c.state).not.toBe('grab');
   for (let t = 0; t < P.guardSec + 0.2; t += DT) en.update(DT);
   expect(c.state).toBe('grab'); // 守りが切れたら枠に入る
+});
+
+// Fix round 1（まとめ役: 12 秒の休みの代わり）: puff.hideEndsGuard なら、隠れた瞬間に払うの守りは切れる（守りと隠れるを重ねない）
+test('Fix round 1: hideEndsGuard なら、隠れた瞬間に守りが切れる', () => {
+  const cfg = { ...quiet, puff: { ...P, hideEndsGuard: true, hideLockSec: 0 } };
+  const g = createGame({ seed: 3, cfg });
+  g.begin(); g.pressStart();
+  for (let t = 0; t < 3; t += 1 / 30) g.update(1 / 30);
+  expect(g.puff()).toBe(true);
+  expect(g.guardLeft).toBeGreaterThan(0);
+  let hid = false;
+  for (let k = 0; k < 16 && !hid; k++) { const a = (k / 16) * 2 * Math.PI; hid = g.hide(Math.cos(a), Math.sin(a)); }
+  expect(hid).toBe(true);
+  expect(g.guardLeft).toBe(0);
+  // hideEndsGuard でなければ、隠れても守りは残る
+  const g2 = createGame({ seed: 3, cfg: { ...quiet, puff: { ...P, hideEndsGuard: false, hideLockSec: 0 } } });
+  g2.begin(); g2.pressStart();
+  for (let t = 0; t < 3; t += 1 / 30) g2.update(1 / 30);
+  g2.puff();
+  let hid2 = false;
+  for (let k = 0; k < 16 && !hid2; k++) { const a = (k / 16) * 2 * Math.PI; hid2 = g2.hide(Math.cos(a), Math.sin(a)); }
+  expect(hid2).toBe(true);
+  expect(g2.guardLeft).toBeGreaterThan(0);
 });

@@ -243,6 +243,7 @@ export function createGame({ seed, cfg = CONFIG }) {
       hero.hideSpot = spot;
       hero.hideT = 0;
       const lost = enemies.loseHero(from);
+      if (cfg.puff.hideEndsGuard) enemies.endGuard(); // Fix round 1: 隠れたら払うの守りは切れる（守りと隠れるを重ねない）
       // R1f: 物陰へ跳ぶ動き（しゃがむ → 跳ぶ・壁を蹴る → 着地）。着く時刻 dashSec は前のまま
       motion.dash(spot, cfg.hide.dashSec, cfg.hideAction ? planHideMotion(from, spot, city.buildings, cfg) : null);
       // Pass 2（まとめ役: LOOK OUT! の矢印に従う人を損させない）: 追われていない間の隠れる（だれも見失わせない、先回りの隠れる）は

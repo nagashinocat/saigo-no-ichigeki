@@ -8,9 +8,7 @@ import { prePass2 } from './prePass2.js';
 // 掴む者・群がる者は主人公と一緒に動くので、主人公に対する動き（相対位置の変わり方）で測る。ほかの者は世界での動き
 const DT = 1 / 30;
 const LEGS = [[0, -1], [1, 0], [0, 1], [1, 0], [0, -1], [-1, 0], [0.7, 0.7], [0, 1], [-1, 0], [0, -1], [-0.7, 0.7], [1, 0]];
-test('R1f fix1: 動く主人公（通りを渡り角を曲がり、壁に沿って滑る）でも、25 m の内の軍勢はどのフレームでも 6 m/s 以上（見失う・よろめく・掴む・群がるも）', () => {
-  // Pass 2: 軍勢の数・払うの守りは前のまま（tests/game/prePass2.js。確かめるのは動きの速さで、同じ数の軍勢を見る）
-  const cfg = prePass2({ ...CONFIG, puff: { ...CONFIG.puff, uses: Infinity, guardSec: 0 } });
+function runR0(cfg) {
   const bad = [], seen = { lose: 0, stagger: 0, grab: 0, cling: 0, wall: 0 };
   let frames = 0;
   for (const seed of [1, 2, 3, 4, 5, 6]) {
@@ -41,9 +39,25 @@ test('R1f fix1: 動く主人公（通りを渡り角を曲がり、壁に沿っ�
       }
     }
   }
+  return { frames, seen, bad };
+}
+
+test('R1f fix1: 動く主人公（通りを渡り角を曲がり、壁に沿って滑る）でも、25 m の内の軍勢はどのフレームでも 6 m/s 以上（見失う・よろめく・掴む・群がるも）', () => {
+  // Pass 2: 軍勢の数・払うの守りは前のまま（tests/game/prePass2.js。確かめるのは動きの速さで、同じ数の軍勢を見る）
+  const { frames, seen, bad } = runR0(prePass2({ ...CONFIG, puff: { ...CONFIG.puff, uses: Infinity, guardSec: 0 } }));
   expect(frames).toBeGreaterThan(5000);
   expect(seen.stagger).toBeGreaterThan(0);
   expect(seen.grab).toBeGreaterThan(500);
+  expect(seen.wall).toBeGreaterThan(30);
+  expect(bad.slice(0, 6)).toEqual([]);
+}, 120000);
+
+// Fix round 1（見直し Important 6）: 出荷する設定そのまま（払うの守りあり・序盤 0.1/秒）でも R0 を守る。守りで弾かれた者はよろめく（spin 以上）か倒れる
+test('Fix round 1: 出荷の設定（払うの守りあり）でも、25 m の内の軍勢はどのフレームでも 6 m/s 以上', () => {
+  const { frames, seen, bad } = runR0({ ...CONFIG, puff: { ...CONFIG.puff, uses: Infinity } });
+  if (process.env.R0_LOG) console.log(frames, seen);
+  expect(frames).toBeGreaterThan(3000);
+  expect(seen.grab).toBeGreaterThan(100);
   expect(seen.wall).toBeGreaterThan(30);
   expect(bad.slice(0, 6)).toEqual([]);
 }, 120000);

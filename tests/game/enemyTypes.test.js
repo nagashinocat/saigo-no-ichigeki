@@ -135,10 +135,9 @@ test('種類の湧き方: 重い者は 20 秒から探す者の約 15%、吸う�
   for (const e of g.enemies.list) expect(e.patrol && !e.kind).toBe(true);
 });
 
-// Pass 2（まとめ役、持ち主 10:06「払う全部使って隠れる無しでもクリアできない」）: 大物 49 → 55 秒（終わりの群れと同じころ）
-test('大物: どの回も 1 体だけ、54〜56 秒に湧き、来たことを知らせる（bossArrive を一度）。3 回払わないと倒れない', () => {
-  expect(K.boss.at).toBeGreaterThanOrEqual(54);
-  expect(K.boss.at).toBeLessThanOrEqual(56);
+test('大物: どの回も 1 体だけ、48〜50 秒に湧き、来たことを知らせる（bossArrive を一度）。3 回払わないと倒れない', () => {
+  expect(K.boss.at).toBeGreaterThanOrEqual(48);
+  expect(K.boss.at).toBeLessThanOrEqual(50);
   expect(K.boss.hp).toBe(3);
   for (const seed of [1, 2, 3, 4, 5]) {
     const g = createGame({ seed });
@@ -149,8 +148,8 @@ test('大物: どの回も 1 体だけ、54〜56 秒に湧き、来たことを�
       g.update(DT);
       if (bornAt === null && g.enemies.list.some((e) => e.kind === 'boss')) bornAt = t;
     }
-    expect(bornAt, `seed ${seed}`).toBeGreaterThanOrEqual(54 - 1e-6);
-    expect(bornAt).toBeLessThanOrEqual(56);
+    expect(bornAt, `seed ${seed}`).toBeGreaterThanOrEqual(48 - 1e-6);
+    expect(bornAt).toBeLessThanOrEqual(50);
     expect(g.enemies.list.filter((e) => e.kind === 'boss')).toHaveLength(1);
     expect(log).toHaveLength(1);
     const boss = g.enemies.list.find((e) => e.kind === 'boss');

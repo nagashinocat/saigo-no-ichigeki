@@ -332,13 +332,12 @@ test('死んだ敵は deadTime が進み、3秒後に list から消える', () 
 // 持ち主の決定（2026-11-21「終盤ほど一気に増やす」）: 序盤は少なく平らに、残り 20 秒ほどから一気に増えて群れになる。60 秒で約 100
 const totalSpawn = (t0, t1, cfg = CONFIG) => { let n = 0; for (let t = t0; t < t1; t += 0.01) n += spawnRateAt(t + 0.005, cfg) * 0.01; return n; };
 
-// Pass 2（まとめ役、持ち主 10:06「払う全部使って隠れる無しでもクリアできない」）: 群れは残り 20 秒 → 残り 10 秒から一気に
-// （surgeStart 40 → 50・surgeEnd 52 → 60。60 秒で約 100 は保つ。持ち主 2026-11-21「終盤ほど一気に増やす」の形のまま、より終盤へ）
-test('湧く速さ: 序盤は spawnPerSec で平ら、surgeStart（Pass 2: 残り 10 秒）から surgeEnd へ一気に surgeMul 倍まで増え、その後は保つ', () => {
-  expect(E.surgeStart).toBeGreaterThanOrEqual(46);
-  expect(E.surgeStart).toBeLessThanOrEqual(52);
+// Fix round 1（まとめ役: 持ち主の決まりへ戻す）: 群れは残り 20 秒ほどから（Pass 2 の 50〜60 秒をやめた）
+test('湧く速さ: 序盤は spawnPerSec で平ら、surgeStart（残り 20 秒ほど）から surgeEnd へ一気に surgeMul 倍まで増え、その後は保つ', () => {
+  expect(E.surgeStart).toBeGreaterThanOrEqual(36);
+  expect(E.surgeStart).toBeLessThanOrEqual(42);
   expect(E.surgeEnd).toBeGreaterThan(E.surgeStart);
-  expect(E.surgeEnd).toBeLessThanOrEqual(CONFIG.roundSeconds);
+  expect(E.surgeEnd).toBeLessThanOrEqual(CONFIG.roundSeconds - 4);
   for (const t of [0, 10, 20, 30, E.surgeStart]) expect(spawnRateAt(t)).toBeCloseTo(E.spawnPerSec, 9);
   expect(spawnRateAt(E.surgeEnd)).toBeCloseTo(E.spawnPerSec * E.surgeMul, 9);
   expect(spawnRateAt(90)).toBeCloseTo(E.spawnPerSec * E.surgeMul, 9);
@@ -480,10 +479,9 @@ test('fix1: 描ける数（enemyView の CAPACITY）は、払わずに 60 秒た
   expect(most).toBeLessThanOrEqual(HUNT_CAPACITY);
 });
 
-// Pass 2: 見回る者が加わるのは残り 20 秒 → 残り 8 秒（52 秒。終わりの群れと同じころ）
-test('R0: 残り 8 秒（patrol.joinAt。Pass 2 で残り 20 秒から）になると、広場の近く（patrol.joinDist の内）の見回る者が狩りに加わり、主人公へ集まって掴みに来る。遠くの見回る者は見回り続ける', () => {
+test('R0: 残り 20 秒（patrol.joinAt）になると、広場の近く（patrol.joinDist の内）の見回る者が狩りに加わり、主人公へ集まって掴みに来る。遠くの見回る者は見回り続ける', () => {
   const PJ = CONFIG.enemy.patrol;
-  expect(PJ.joinAt).toBe(CONFIG.roundSeconds - 8);
+  expect(PJ.joinAt).toBe(CONFIG.roundSeconds - 20);
   let joined = 0, grabbed = 0, stayed = 0;
   for (const seed of [1, 2, 3, 4]) {
     const city = generateCity(seed);
@@ -491,7 +489,7 @@ test('R0: 残り 8 秒（patrol.joinAt。Pass 2 で残り 20 秒から）にな�
     let t = 0;
     for (; t < PJ.joinAt - 1e-9; t += 1 / 30) en.update(1 / 30);
     for (const e of en.list) expect(e.hunting).toBeFalsy();
-    en.update(1 / 30); en.update(1 / 30); // Pass 2: 52 秒は 1/30 秒の足し算の丸めで 1 歩遅れることがある
+    en.update(1 / 30);
     const pats = en.list.filter((e) => e.patrol);
     const join = pats.filter((e) => e.hunting);
     for (const e of join) expect(e.dist).toBeLessThanOrEqual(PJ.joinDist + 1e-9);

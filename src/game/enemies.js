@@ -754,6 +754,8 @@ export function createEnemies(rng, cfg = CONFIG, { buildings = [], patrolRng = n
     takeArrivals() { return arrivals.splice(0); },
     // Pass 2: 払ったあとの守りを sec 秒にする（長い方を残す）。残りの秒
     guard(sec) { guardLeft = Math.max(guardLeft, sec); },
+    // Fix round 1: 守りを切る（puff.hideEndsGuard: 隠れた瞬間）
+    endGuard() { guardLeft = 0; },
     get guardLeft() { return guardLeft; },
     // Fix round 1: 守りで弾いた者（読んだら空にする）
     takeGuardHits() { return guardHits.splice(0); },

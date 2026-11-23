@@ -22,10 +22,11 @@ export const CONFIG = {
   // M2（持ち主 09:11「払うを 3 回くらいの回数制限」）: 1 回のゲームで uses 回まで。払うたびに力も cost 使う（2.8 → 4.5。持ち主の選択）
   // R1f fix1: 4.5 → 4（吸う 0.8 と合わせて）。表は task-R1f-report.md（Fix round 1）
   // fix2（まとめ役の判断）: 4 → 3.5（吸う 1.2 のまま）
-  // Pass 2（まとめ役、持ち主 10:06「払う全部使って隠れる無しでもクリアできない」）: 払う費用 3.5 → 1。払ったあと guardSec 秒は掴まれない
-  // （その間に掴みに来た者は払いの残りで倒れる。重い者・大物はよろめく。guardKill。enemies.js guard）。払ったあと hideLockSec 秒は隠れられない
-  // （払うの守りと隠れるを続けて使うと、最善が 98% になった）
-  puff:    { cost: 1, uses: 3, radius: 22, guardSec: 2, guardKill: true, hideLockSec: 12, combo: { from: 3 } },
+  // Pass 2・Fix round 1（まとめ役、持ち主 10:06「払う全部使って隠れる無しでもクリアできない」）: 払ったあと guardSec 秒は掴まれない
+  // （その間に掴みに来た者は払いの残りで倒れる。重い者・大物はよろめく。guardKill。enemies.js guard。守りの間は輪と音 render/guardRing.js）。
+  // 隠れたら守りは切れ（hideEndsGuard）、払ったあと hideLockSec 秒は隠れられない（守りと隠れるを重ねると最善が 98〜100% になる）。
+  // 払う費用は 3.5 → 2.2（持ち主 09:11「払うたびに力も少し使う」の範囲。Pass 2 の 1 から戻した。2.5 では 3 回払った最善の満タンが 56 秒を越える）
+  puff:    { cost: 2.2, uses: 3, radius: 22, guardSec: 10.5, guardKill: true, hideEndsGuard: true, hideLockSec: 4, combo: { from: 3 } },
   // 最後の一発の半径（貯めた力 / power.max で決まる）。S8: max 440 → 720（街の端 680 m と、見回る軍勢の一番外
   // （maxEnemyReach、約 603 m）より十分先まで。最大溜めなら街のどこにいる軍勢も必ず巻き込む）
   // fix1（持ち主 15:33「軍勢は街の全体に」）: 見回る者が街の端まで行くので max 720 → 730（maxEnemyReach 約 685 m + 40 m より先）
@@ -66,12 +67,11 @@ export const CONFIG = {
     // 払う 3 → 2.8、吸う 1.4 → 1.5/秒（tests/game/balance.test.js の範囲に戻す。数は task-R1-report.md）
     // R1f: 吸う 1.5 → 1.2/秒（6 人で 7.2/秒）。fix1 で 0.8 にしたのは、まとめ役の判断で 1.2 に戻した
     // fix2（まとめ役の判断）: 0.8 → 1.2 に戻す
-    // 持ち主 10:06（「数値で85パーセントくらいのクリア確率にしたらいいかも」）・Pass 2（「払う全部使って隠れる無しでもクリアできない」）:
-    // 隠れない主人公は広場で一人ずつ見つかり、払う 3 回を序盤で使い切ったあと、終盤の群れ（40 秒から）・見回る者（40 秒から）・
-    // 大物（49 秒）に吸われて 99% に届かなかった（今日の街 360 で 0%）。序盤を静かに（0.5 → 0.1/秒）、群れは終わりの 10 秒に一気に
-    // （surgeStart 40 → 50・surgeEnd 52 → 60・surgeMul → 189。60 秒で湧く数は約 100 のまま）、吸う 1.2 → 0.72/秒。
-    // 三つの時期の今日の街 360 で最善 91%（91.7 / 90.0 / 92.5%）、払う 3 回・隠れない 48%（lookout-timing-report.md Pass 2）
-    spawnPerSec: 0.1, surgeStart: 50, surgeEnd: 60, surgeMul: 189, drainPerSec: 0.72, maxGrabbing: 6,
+    // 持ち主 10:06（「数値で85パーセントくらいのクリア確率にしたらいいかも」）・Fix round 1（まとめ役: 持ち主の決まりへ戻す）:
+    // 群れは残り 20 秒（40 → 52 秒）のまま。数で釣り合いを取る: 序盤の湧く速さ 0.5 → 0.1/秒（隠れない主人公が広場で一人ずつ
+    // 見つかり、払う 3 回を序盤で使い切っていた）、surgeMul 11 → 68（60 秒で約 100 のまま、終盤の山 5.5 → 6.8/秒）、吸う 1.2 → 0.85/秒。
+    // 三つの時期の今日の街 360 で最善 90%（90.8 / 92.5 / 87.5%）、払う 3 回・隠れない 51%（lookout-timing-report.md Fix round 1）
+    spawnPerSec: 0.1, surgeStart: 40, surgeEnd: 52, surgeMul: 68, drainPerSec: 0.85, maxGrabbing: 6,
     spawnDist: [50, 66], roamDist: 75, laneSpread: 1.6, // 湧く輪（主人公から m）は R1g のカメラでは画面のほぼ外
     searchSpeed: 30, inwardBias: 0.8, turnRate: 16, lookAhead: 2.5, accel: 30, brake: 70,
     // M2（持ち主 09:11「敵の前方ライトを少し広くして」）: 見つけるのは前を照らすライトの中だけ。前の 28 m の丸 → 前向きの扇
@@ -87,8 +87,7 @@ export const CONFIG = {
     // M2（「見つかったらどんどん集まってくる」）: 見つけた者は光り、radius m の内の探す者・見回る者へ知らせる。知らされた者は relayDelay 秒で
     // 次へ伝える（hops 段まで）。主人公が見えている追う者・掴む者は callEvery 秒ごとに知らせ直す（最後に見えた所が今の主人公へ）。
     // 知らされただけの者は最後に見えた所へ向かい、そこから sweepDist m の内を探し回る（自分で見つけたら今の主人公を追う）
-    // Pass 2: 知らせの輪 120 → 50 m・hops 2 → 1（見つかると街じゅうの見回る者まで呼んでいた。隠れない遊び方が終盤までもたない）
-    alert: { radius: 50, relayDelay: 0.5, hops: 1, callEvery: 1, sweepDist: 25, flashSec: 0.6 },
+    alert: { radius: 120, relayDelay: 0.5, hops: 2, callEvery: 1, sweepDist: 25, flashSec: 0.6 },
     speed: 32, chaseAccel: 60, chaseTurnRate: 8, snapDist: 6, slowDist: 0.5, slowMin: 0.35, grabRange: 2.5,
     // R0（持ち主 22:15「まだ主人公前で止まる感じ」）: 掴んだ者は orbitSpeed m/s で主人公のまわりを回りながら吸う。
     // 枠が埋まっていて群がる者は swarmRing（r0 m から perRing 人ごとに step m 外、maxRing 回りまで）を speed m/s で回り、
@@ -100,8 +99,7 @@ export const CONFIG = {
     // （持ち主 15:33「軍勢は街の全体にいた方が良い」で 26 → 70 人、帯を街の端まで）。主人公を探さず掴みにも来ない（釣り合いは前のまま）。
     // 最大溜めの一発はこの帯の外端より先まで届く（maxEnemyReach）
     // R0: 残り 20 秒（joinAt 秒）からは、主人公から joinDist m の内の見回る者も狩りに加わる（気配を感じた探す者として集まる）
-    // Pass 2: 見回る者が狩りに加わるのは 40 → 52 秒から（終わりの群れと同じころ）
-    patrol: { count: 70, speed: 22, joinAt: 52, joinDist: 220 },
+    patrol: { count: 70, speed: 22, joinAt: 40, joinDist: 220 },
     // R1（spec §15「軍勢の種類」）: 探す者の種類。どれも撃退の数に入り、最後の一発は 1 回で倒す（hp は払うの回数）。
     //  heavy（重い者）: after 秒からの探す者の share。払う 2 回ではがれる（1 回目は後ろへよろめく）。速さ ×speedMul
     //  drainer（吸う者）: after 秒からの探す者の share。掴んでいる間、drainPerSec の drainMul 倍を吸う
@@ -112,8 +110,7 @@ export const CONFIG = {
       // M2（主人公 28 m/s）: 重い者 0.8 → 0.92、大物 0.9 → 0.95（突っ込む 29.4 / 30.4 m/s。主人公より遅いと、見つけても追いつけない）
       heavy: { share: 0.15, after: 20, hp: 2, speedMul: 0.92, drainMul: 1 },
       drainer: { share: 0.15, after: 30, hp: 1, speedMul: 1, drainMul: 2.5 },
-      // Pass 2: 大物 49 → 55 秒（吸う × 4 が、隠れない遊び方を最後に必ず止めていた）
-      boss: { at: 55, hp: 3, speedMul: 0.95, drainMul: 4 },
+      boss: { at: 49, hp: 3, speedMul: 0.95, drainMul: 4 },
     },
     // 払うが当たって倒れなかった者（重い者・大物）のよろめき: sec 秒、外へ push m/s（なめらかに 0 へ）と、回る向きへ spin m/s。
     // 止まって見えない（どの瞬間も spin 以上の速さ）。そのあと突っ込み直す
@@ -149,10 +146,11 @@ export const CONFIG = {
   // 物陰に着くのは dashSec 秒（前のまま）。そのあと landSec 秒、着地のしゃがみ（見た目だけ）。残像・光の尾・着地の光は render/hideAction.js
   hideAction: { crouchSec: 0.06, crouchCreep: 0.04, leapH: 4, kickMinLen: 6, kickNear: 3.5, landSec: 0.16 },
   // fix2: 同じ物陰にいられる秒 holdSec 12 → 16（三つの時期の今日の街で 7 割を保つ。task-R1f-report.md Fix round 2）
-  // Pass 2（まとめ役）: 序盤が静かになって、隠れるだけで 73% 撃退できた（払う 0 回の S が当たり前になる）。隠れるを少し弱めて
-  // 物陰にいられる holdSec 16 → 6 秒・追われていて撒いた隠れるの待ち時間 cooldown 3 → 6 秒（隠れるだけで約 2 割）。追われていない間の
-  // 先回りの隠れる（LOOK OUT! の矢印に従う）は evadeCooldown 3 秒（矢印に従う人を損させない）
-  hide: { holdSec: 6, evadeCooldown: 3, seeDist: 4, dashSec: 0.3, cooldown: 6, range: 26, minDist: 3, step: 1.5, wallDist: 1.6, offW: 6, leaveDist: 3 },
+  // Pass 2・Fix round 1（まとめ役）: 序盤が静かになって、隠れるだけで 73% 撃退でき、払うの守りと合わせた最善は 98〜100% になった。
+  // 持ち主の決まり（物陰 16 秒・待ち時間 約 3 秒）のままでは最善を 9 割以下にできない（物陰 10 秒・3 秒で 100%）ので、物陰にいられる
+  // holdSec 16 → 6 秒・追われていて撒いた隠れるの待ち時間 cooldown 3 → 8 秒（持ち主が直せる値）。追われていない間の先回りの隠れる
+  // （LOOK OUT! の矢印に従う）は evadeCooldown 3 秒（矢印に従う人を損させない）
+  hide: { holdSec: 6, evadeCooldown: 3, seeDist: 4, dashSec: 0.3, cooldown: 8, range: 26, minDist: 3, step: 1.5, wallDist: 1.6, offW: 6, leaveDist: 3 },
   // M1 の操作（持ち主 09:15、制作側の判断）: 溜めているあいだの 2 本目の指は、longPressSec 秒以上で浮かぶジョイスティック（押した所に出て、
   // 指を離すと消える。stickRadiusPx の輪いっぱいで全速、deadPx より内は止まる）、それより短く tapMovePx px 未満の動きで離せば払う
   // M2（持ち主 15:20）: PC の隠れる操作。向きのキーを同じ向きに素早く 2 回押す（keyTwice: mag より深く・window 秒の内・向きのずれ angleDeg° 以内、
@@ -173,6 +171,7 @@ export const CONFIG = {
   // 持ち主 10:02（「隠れるの矢印を押すタイミングがない」。制作側の判断、持ち主が直せる）: 早めに知らせる nearK 1.4 → 1.8・angleK 1.2 → 1.4・
   // predictSec 0.6 → 1.2（道を走る者は次の交差点で曲がる道すじも predictStep m ごとに先読み。lookout.js inDanger）、確かめる checkEvery 0.2 → 0.1 秒、
   // 最低 minShowSec 0.4 → 1.0 秒は出す。見つかった直後も graceSec 秒は矢印を出す（掴まれていない・隠れられるとき）。
-  // 今日の街 60 で、その前 1.5 秒見つかっていなかった回の知らせの先は p50 0.40 → 1.23 秒・1.0 秒以上 4% → 95%（scripts/lookout-lead.mjs）
+  // 今日の街 60 で、その前 1.5 秒見つかっていなかった回の知らせの先は p50 0.40 → 1.23 秒・1.0 秒以上 4% → 93%（Fix round 1 の出荷の値。
+  // 待ち時間の間の字だけの LOOK OUT! も含む。scripts/lookout-lead.mjs）。物陰は arrowEvery 秒ごとに選び直す（一番重い所）
   lookout: { nearK: 1.8, angleK: 1.4, predictSec: 1.2, predictStep: 6, checkEvery: 0.1, arrowEvery: 0.3, minShowSec: 1.0, holdK: 1.15, graceSec: 0.8, dirs: 8, agreeDeg: 15, nearBuildings: 80 },
 };

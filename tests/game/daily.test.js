@@ -126,7 +126,7 @@ test('R3 fix1: もう一度の街は 0 時をまたいでも同じ（一度だ�
 });
 
 // 同じ種なら街も軍勢の湧き方・見回りも同じ（友達のリンクで同じ街に挑める）
-function schedule(seed, sec = CONFIG.enemy.kinds.boss.at + 3) { // Pass 2: 大物は 55 秒
+function schedule(seed, sec = CONFIG.enemy.kinds.boss.at + 3) { // 大物（49 秒）のあとまで
   const g = createGame({ seed });
   g.begin(); g.pressStart();
   const log = [], bossLog = [];
@@ -137,7 +137,7 @@ function schedule(seed, sec = CONFIG.enemy.kinds.boss.at + 3) { // Pass 2: 大�
   }
   return { city: g.city, log, bossLog, hero: [g.hero.x, g.hero.z], power: g.power.value };
 }
-test('R3: 同じ日の街は同じ街・同じ軍勢の時刻表（見回り・種類・大物（Pass 2: 55 秒）を含む）。別の日は別の街', () => {
+test('R3: 同じ日の街は同じ街・同じ軍勢の時刻表（見回り・種類・49 秒の大物を含む）。別の日は別の街', () => {
   const s = citySeed('20261121');
   const a = schedule(s), b = schedule(s);
   expect(a.city).toEqual(b.city);

@@ -39,8 +39,8 @@ function reacquired(e, H) {
 // M2: 払うは 3 回までになったが、ここはよろめきからの立ち直りも確かめたいので回数の制限を外す（見失わないことは回数によらない）
 // Pass 2: 軍勢の数・払うの守りは前のまま（tests/game/prePass2.js。確かめるのは見失わないこと）
 const UNLIMITED = prePass2({ ...CONFIG, puff: { ...CONFIG.puff, uses: Infinity, guardSec: 0 } });
-function run(seed, sec = 45) {
-  const g = createGame({ seed, cfg: UNLIMITED });
+function run(seed, sec = 45, cfg = UNLIMITED) {
+  const g = createGame({ seed, cfg });
   g.begin(); g.pressStart();
   expect(CONFIG.hero.speed).toBe(28); // M2（持ち主 15:20）
   const rec = new Map(); // id → { back, growSec, maxGrowSec, staggerEnd }
@@ -127,8 +127,7 @@ for (const seed of [1, 2, 3]) {
   test(`R1d / M2 / R1f seed ${seed}: 28 m/s で通りを渡り角を曲がる主人公を、見つけた軍勢は見えている間と見えなくなって loseSec の間は見失わない（それより早く search に戻らず、見える間は距離が増え続けず、掴む者は今の主人公の輪の内）`, () => {
     const r = run(seed);
     expect(r.moved).toBeGreaterThan(300); // 主人公はずっと動いていた（10 秒以上）
-    // 持ち主 10:06 の釣り合いの直し（序盤の湧く速さ 0.3/秒）で、seed 3 の主人公は終わりに中心から 21 m の所へ戻っていた。
-    // 確かめたいのは「中心から離れて通りを走った」ことなので、終わりの位置ではなく、走った間の中心からの一番遠い距離で見る
+    expect(Math.hypot(r.hero.x, r.hero.z)).toBeGreaterThan(30); // Fix round 1（見直し Important 3）: 元の終わりの位置のアサーションに戻す
     expect(r.maxR).toBeGreaterThan(30);
     expect(r.spotted).toBeGreaterThan(10);
     expect(r.backToSearch).toBe(0);
@@ -145,7 +144,8 @@ for (const seed of [1, 2, 3]) {
 }
 
 test('R1d: 払いでよろめいた重い者は、よろめきが終わったそのフレームで chase へ戻り、動いている今の主人公へ突っ込み直す（探す道へそれない）', () => {
-  const cfg = { ...CONFIG, enemy: { ...CONFIG.enemy, spawnPerSec: 0, patrol: { ...CONFIG.enemy.patrol, count: 0 } } };
+  // Fix round 1: 払うの守り（10.5 秒）があると、よろめきから戻った者が守りでまたよろめくので、ここは守りなし（よろめきからの戻りを見る）
+  const cfg = { ...CONFIG, enemy: { ...CONFIG.enemy, spawnPerSec: 0, patrol: { ...CONFIG.enemy.patrol, count: 0 } }, puff: { ...CONFIG.puff, guardSec: 0 } };
   const g = createGame({ seed: 7, cfg });
   g.begin(); g.pressStart();
   // 主人公の 6 m 先で突っ込んでくる重い者 3 人（x, z を直に置く）
@@ -309,3 +309,19 @@ test('R1f fix1: 開けた所で 12 m 後ろの追う者は撒けない（見え�
   }
   expect(open.lostCount).toBe(0);
 });
+
+// Fix round 1（見直し Important 6）: 出荷する設定そのまま（払うの守りあり・序盤 0.1/秒）でも、見つけた軍勢は loseSec の間は見失わず、
+// 掴む者は今の主人公の輪の内（数が少ないので、見つけた数の下限は小さく）
+test('Fix round 1: 出荷の設定（払うの守りあり）でも、見つけた軍勢は早く見失わず、掴む者は輪の内', () => {
+  let spotted = 0;
+  for (const seed of [1, 2, 3]) {
+    const r = run(seed, 45, { ...CONFIG, puff: { ...CONFIG.puff, uses: Infinity } });
+    if (process.env.R1D_LOG) console.log(seed, r);
+    expect(r.backToSearch).toBe(0);
+    expect(r.ringOut).toBe(0);
+    expect(r.staggerBad).toBe(0);
+    expect(r.maxGrowSec).toBeLessThanOrEqual(0.3);
+    spotted += r.spotted;
+  }
+  expect(spotted).toBeGreaterThan(5);
+}, 120000);

@@ -65,23 +65,16 @@ test('M2: 前の丸（28 m）より遠い所でも、ライトの中なら見つ
   expect(away.state).toBe('search');
 });
 
-// Pass 2（まとめ役、持ち主 10:06「払う全部使って隠れる無しでもクリアできない」）: 知らせの輪 120 → 50 m・hops 2 → 1
-// （見つかると街じゅうの見回る者まで呼んでいた）。知らせの仕組みの試しは、前の輪（120 m・2 段）の置き方のまま A120 で見る
-const A120 = { ...A, radius: 120, hops: 2 };
-test('Pass 2: 知らせの輪は 40〜60 m・1 段（config）', () => {
-  expect(A.radius).toBeGreaterThanOrEqual(40);
-  expect(A.radius).toBeLessThanOrEqual(60);
-  expect(A.hops).toBe(1);
-});
-
 test('M2: 見つけた者は光り（callT）、alert.radius の内の探す者・見回る者へ知らせる。知らされた者は最後に見えた所（heard）を覚え、relayDelay 秒で次へ伝える', () => {
-  const A = A120;
+  // Fix round 1（まとめ役: 持ち主 09:11「見つかったらどんどん集まってくる」へ戻す）: 知らせの輪 120 m・2 段（Pass 2 の 50 m・1 段をやめた）
+  expect(A.radius).toBeGreaterThanOrEqual(100);
+  expect(A.radius).toBeLessThanOrEqual(140);
   const spotter = rider(roadNode(0, 0)[0], 30, -Math.PI / 2);
   const near = rider(100, 40, Math.PI / 2); // 見つけた者から 100 m 足らず（主人公は見えない）
   const relay = rider(100 + A.radius - 10, 40, Math.PI / 2); // 見つけた者からは遠く、near からは radius の内
   const far = rider(1000, 40, Math.PI / 2); // どこからも遠い
   const pat = rider(roadNode(1, 3)[0] + 5, roadNode(1, 3)[1], 0, { patrol: true, id: 100500 }); // 見回る者も
-  const e = field([spotter, near, relay, far, pat], { ...still, alert: A });
+  const e = field([spotter, near, relay, far, pat]);
   let t = 0;
   while (spotter.state === 'search' && t < 1) { e.update(1 / 30); t += 1 / 30; }
   expect(spotter.state).toBe('chase');
@@ -113,7 +106,7 @@ test('M2: 見えている間は、追う者が callEvery 秒ごとに知らせ�
   const H = { x: 0, z: 0 };
   const spotter = rider(roadNode(0, 0)[0], 30, -Math.PI / 2);
   const near = rider(90, 40, Math.PI / 2);
-  const e = field([spotter, near], { ...still, speed: 0, chaseAccel: 0, alert: A120 }, { heroPos: H });
+  const e = field([spotter, near], { ...still, speed: 0, chaseAccel: 0 }, { heroPos: H });
   run(e, 0.5);
   expect(near.heard).toBeTruthy();
   H.x = 6; // 追う者からまだ見える所へ少し動く
@@ -126,7 +119,7 @@ test('M2: 知らされただけの者は、最後に見えた所へ向かい、�
   const spotter = rider(roadNode(0, 0)[0], 30, -Math.PI / 2);
   const [nx, nz] = roadNode(3, 2);
   const L = rider(nx, nz + 1, Math.PI / 2);
-  const e = field([spotter, L], { speed: 0, chaseAccel: 0, alert: A120 }, { heroPos: H });
+  const e = field([spotter, L], { speed: 0, chaseAccel: 0 }, { heroPos: H });
   e.update(1 / 30);
   for (let i = 0; i < 15 && !L.heard; i++) e.update(1 / 30);
   expect(L.heard).toBeTruthy();
