@@ -80,3 +80,22 @@ test('M2: 隠れるの滑り込みは光の筋を残し（fadeSec で消える�
   for (let t = 0; t < 1; t += 1 / 30) k = ds.update(hero, 1 / 30);
   expect(k).toBeLessThan(0.01);
 });
+
+// 持ち主 10:02（ライトを約 5% 小さく）: 見える光の扇は、見つける扇と同じ長さ（spotDist m）・同じ角のまま
+test('持ち主 10:02: 見える光の扇の長さは spotDist（34.2 m）、半分の角は spotHalfAngle（0.665 rad）', () => {
+  const group = new THREE.Group();
+  const hl = createHeadlights(group, { capacity: 4 });
+  hl.begin(0, 500, 1);
+  hl.add({ state: 'search' }, { x: 10, z: 0, yaw: 0, keep: 1 }, 0, { x: 0, z: 0 });
+  hl.end();
+  expect(hl.cones.count).toBe(1);
+  const m = new THREE.Matrix4(), p = new THREE.Vector3(), q = new THREE.Quaternion(), s = new THREE.Vector3();
+  hl.cones.getMatrixAt(0, m); m.decompose(p, q, s);
+  expect(s.x).toBeCloseTo(CONFIG.enemy.spotDist, 5);
+  expect(s.z).toBeCloseTo(CONFIG.enemy.spotDist, 5);
+  expect(CONFIG.enemy.spotDist).toBeCloseTo(34.2, 6);
+  const g = hl.cones.geometry.getAttribute('position');
+  let maxAng = 0;
+  for (let i = 1; i < g.count; i++) maxAng = Math.max(maxAng, Math.abs(Math.atan2(g.getX(i), g.getZ(i))));
+  expect(maxAng).toBeCloseTo(0.665, 6);
+});

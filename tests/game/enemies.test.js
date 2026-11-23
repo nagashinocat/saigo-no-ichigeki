@@ -116,9 +116,13 @@ test('見つける距離は、広場を囲む道（の一番外の車線）よ�
   const ring = roadNode(0, 0)[0]; // 広場を囲む道の中心線までの距離（13m）
   expect(E.spotDist).toBeGreaterThan(ring + E.laneSpread + 1);
   // 広場を囲む道のいちばん外の車線を通る者も、道の真ん中あたりで見つける
-  const { e, x } = solo({ x: ring + E.laneSpread, z: 20, heading: -Math.PI / 2, ni: 0, nj: -1, di: 0, dj: -1, lane: [E.laneSpread, 0] });
+  // 持ち主 10:02（ライトを約 5% 小さく。扇の半分の角 0.665 rad）: 前は z = 20 m（もう扇の内側の縁のそば。0.665 rad では扇の内に 1.4 m・0.05 秒しか
+  // いない）から走り出していたのを、ライトの外（z = 34 m、主人公まで約 37 m）から車線を走って入ってくる形に。扇の内（z 約 31 → 18.6 m）を走り抜ける前に見つける
+  const { e, x } = solo({ x: ring + E.laneSpread, z: 34, heading: -Math.PI / 2, ni: 0, nj: -1, di: 0, dj: -1, lane: [E.laneSpread, 0] });
+  expect(Math.hypot(x.x, x.z)).toBeGreaterThan(E.spotDist); // 始めはライトの外
   for (let i = 0; i < 60 && x.state === 'search'; i++) e.update(1 / 60);
   expect(x.state).toBe('chase');
+  expect(x.z).toBeGreaterThan((ring + E.laneSpread) / Math.tan(E.spotHalfAngle) - 1); // 扇の内にいる間に（走り抜ける前に）
 });
 
 test('見つけたら（R0、持ち主 22:15「まだ主人公前で止まる感じ」）: 止まる一拍（にらみ）はなく、そのまま全速で主人公へ一直線に突っ込み（離れない）、ブレーキは最後の 0.5 m ほどだけ', () => {

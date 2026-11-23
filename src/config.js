@@ -73,7 +73,9 @@ export const CONFIG = {
     // R1f（持ち主 18:14）: sightMargin 0.8 → 0（壁に触れて立つ主人公への、角をかすめる見通しが、見えているのにさえぎられていた。
     // 壁のそばの格子で見えている 3454 件のうち 522 件。tests/game/wallSpot.test.js）
     // fix2（三つの時期の今日の街で 7 割を保つ）: ライトの扇の半分の角 0.8 → 0.7 rad（46° → 40°）
-    spotDist: 36, spotHalfAngle: 0.7, spotNear: 5, spotEvery: 0.15, sightMargin: 0, alertAfter: Infinity, alertRate: 0, alertAtSpawn: 0,
+    // 持ち主 10:02（「ちょっとすぐ見つかりすぎな気がするから群勢のライトの距離と幅を今より5%くらい小さくしよう」）: 見つける距離 36 → 34.2 m・
+    // 扇の半分の角 0.7 → 0.665 rad（どちらも × 0.95。見える光の扇 render/headlights.js も同じ値を読む）
+    spotDist: 34.2, spotHalfAngle: 0.665, spotNear: 5, spotEvery: 0.15, sightMargin: 0, alertAfter: Infinity, alertRate: 0, alertAtSpawn: 0,
     // M2（「見つかったらどんどん集まってくる」）: 見つけた者は光り、radius m の内の探す者・見回る者へ知らせる。知らされた者は relayDelay 秒で
     // 次へ伝える（hops 段まで）。主人公が見えている追う者・掴む者は callEvery 秒ごとに知らせ直す（最後に見えた所が今の主人公へ）。
     // 知らされただけの者は最後に見えた所へ向かい、そこから sweepDist m の内を探し回る（自分で見つけたら今の主人公を追う）

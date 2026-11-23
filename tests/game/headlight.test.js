@@ -55,7 +55,9 @@ test('M2: ライトは前の 28 m の丸より遠くまで届き、前向きの�
 });
 
 test('M2: 前の丸（28 m）より遠い所でも、ライトの中なら見つけて突っ込む。背を向けて通り過ぎる者は見つけない', () => {
-  const ahead = rider(roadNode(0, 0)[0], 32, -Math.PI / 2); // 主人公まで約 34.5 m
+  // 持ち主 10:02（見つける距離 36 → 34.2 m）: z 32 → 30（主人公まで約 34.5 → 32.7 m。前の丸 28 m より遠いまま）
+  const ahead = rider(roadNode(0, 0)[0], 30, -Math.PI / 2);
+  expect(Math.hypot(ahead.x, ahead.z)).toBeGreaterThan(28 + 4);
   const away = rider(-roadNode(0, 0)[0], 14, Math.PI / 2);
   const e = field([ahead, away]);
   run(e, 0.5);
@@ -152,4 +154,18 @@ test('M2（M1 の見直しの持ち越し）: 主人公が街の端のそばに�
   }
   expect(e.list.length).toBeGreaterThan(40);
   expect(worst).toBeLessThanOrEqual(CONFIG.cityRadius);
+});
+
+// 持ち主 10:02「ちょっとすぐ見つかりすぎな気がするから群勢のライトの距離と幅を今より5%くらい小さくしよう」:
+// 見つける距離 36 → 34.2 m（× 0.95）、扇の半分の角 0.7 → 0.665 rad（× 0.95）。広場を囲む道より外まで届くのは下のテストのまま
+test('持ち主 10:02: 軍勢のライトの距離と幅は前（36 m・0.7 rad）の約 95%（34.2 m・0.665 rad）', () => {
+  expect(E.spotDist).toBeCloseTo(36 * 0.95, 6);
+  expect(E.spotHalfAngle).toBeCloseTo(0.7 * 0.95, 6);
+  const H = { x: 0, z: 0 };
+  // 小さくした扇のしきいの両側（距離・角）
+  expect(seesHero(rider(0, E.spotDist - 0.3, -Math.PI / 2), H, [], CONFIG)).toBe(true);
+  expect(seesHero(rider(0, E.spotDist + 0.3, -Math.PI / 2), H, [], CONFIG)).toBe(false);
+  const d = 20, inA = E.spotHalfAngle - 0.01, outA = E.spotHalfAngle + 0.01;
+  expect(seesHero(rider(-Math.sin(inA) * d, Math.cos(inA) * d, -Math.PI / 2), H, [], CONFIG)).toBe(true);
+  expect(seesHero(rider(-Math.sin(outA) * d, Math.cos(outA) * d, -Math.PI / 2), H, [], CONFIG)).toBe(false);
 });
