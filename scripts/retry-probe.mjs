@@ -5,6 +5,7 @@
 //   normal   … ふつうの読み込みは今までどおり（TAP → 導入 → 題字 → TAP START → 遊び方の説明）。JS が動く前にも説明は出ない
 //   menu     … 遊んでいる途中にメニューのリトライ: 読み直さない・導入/題字/説明/TAP なし・音は running のまま・最初の押下が溜め
 //   result   … 最後の一発 → 演出 → リプレイ → 結果の「もう一度」: 同じ
+//   midfinale… 最後の一発の演出の途中・リプレイの途中にメニューのリトライ: 同じ（止めた AudioContext も戻る）
 //   blackhole… 時間切れ（ブラックホール）→ 結果の「もう一度」: 同じ
 //   determinism … 同じ種の読み直したページと、その場のリトライのあとの一回が同じ（決まった刻みで同じ操作）
 //   memory   … 5 回のリトライ（毎回、最後の一発から結果まで）で renderer.info の GPU の数が増えない
@@ -234,6 +235,29 @@ for (const v of variants) {
     const city = await f.evaluate(() => ({ detail: __cityView.detail, centre: __cityView.blastCentre, debris: __destruction.pool.count ?? null }));
     check(`result/${v.name}: 街は起動したときの姿（粗い箱・爆心なし）`, city.detail === 'coarse' && city.centre === null, JSON.stringify(city));
     check(`result/${v.name}: ページのエラーなし`, errors.length === 0, errors.join(' | '));
+    await ctx.close();
+  }
+}
+
+// ---- midfinale: 最後の一発の演出の途中・リプレイの途中にメニューのリトライ（演出中のメニューは AudioContext を止める: 戻るか） ----
+if (want('midfinale')) {
+  for (const at of ['cinematic', 'replay']) {
+    const { ctx, page, frame: f, errors } = await openPage(variants[0]);
+    await playThroughIntro(page, f);
+    await f.evaluate(() => { __debug.pause(); const g = __game; g.pressStart(); g.power.drain(1e9); g.power.add(92); g.pressEnd(); });
+    for (let i = 0; i < 200; i++) {
+      const ok = await f.evaluate((at) => { __debug.step(0.25); return at === 'cinematic' ? window.__cinematic.active && window.__cinematic.time > 4 : window.__replay.active && window.__replay.time > 2; }, at);
+      if (ok) break;
+    }
+    await f.evaluate(() => { __debug.resume(); window.__marker = 'before-retry'; });
+    await page.waitForTimeout(200);
+    await pressRetryInMenu(page, f);
+    await page.waitForTimeout(300);
+    await shot(page, `retry-fix-menu-during-${at}.png`);
+    await expectPlayable(`midfinale/${at}`, page, f);
+    const v = await f.evaluate(() => ({ cine: window.__cinematic.active, replay: window.__replay.active, tag: document.getElementById('replay').hidden }));
+    check(`midfinale/${at}: 演出・リプレイは止まり、リプレイの札も消える`, !v.cine && !v.replay && v.tag, JSON.stringify(v));
+    check(`midfinale/${at}: ページのエラーなし`, errors.length === 0, errors.join(' | '));
     await ctx.close();
   }
 }
