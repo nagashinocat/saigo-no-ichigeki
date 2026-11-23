@@ -1,6 +1,6 @@
 import { test, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { createIntroFlow, introMode, RETRY_KEY } from '../../src/ui/introFlow.js';
+import { createIntroFlow, introMode, markRetry, RETRY_KEY, RETRY_HASH } from '../../src/ui/introFlow.js';
 import { createGame } from '../../src/game/game.js';
 import { createControls } from '../../src/input/controls.js';
 import { bindPointerInput } from '../../src/input/bindDom.js';
@@ -299,4 +299,30 @@ test('C1: main.js はタッチの端末かを渡し、画面の押下の種類�
   expect(src).toMatch(/introFlow\.state === 'tap'\) \{ if \(!bodyPrep\.done\) bodyPrep\.step\(\)/);
   expect(src).toMatch(/function simulate\(dt\) \{\s*if \(introFlow\.playsIntro\) return;/);
   expect(src).toMatch(/function draw\(\) \{\s*if \(introFlow\.playsIntro\) return;/);
+});
+
+// 持ち主 2026-11-23 08:41: artifact の iframe（sandbox で別のオリジン）では sessionStorage が投げる・使えないことがある（ヘッドレスの
+// sandbox="allow-scripts" で SecurityError を確かめた）。読み直しの控えでも導入・説明を出さないよう、印は URL の #retry へ逃がす（読んだら消す）
+function fakePage(path = '/index.html', search = '?city=20261121', hash = '') {
+  const location = { pathname: path, search, hash };
+  const history = { state: null, calls: [], replaceState(st, _t, url) { this.calls.push(url); const u = new URL(url, 'https://x.test'); location.pathname = u.pathname; location.search = u.search; location.hash = u.hash; } };
+  return { location, history };
+}
+test('markRetry: sessionStorage が投げる・無いときは URL の #retry に印（履歴は増やさない）。使えるときは今までどおり sessionStorage', () => {
+  const throwing = { getItem() { throw new DOMException('denied', 'SecurityError'); }, setItem() { throw new DOMException('denied', 'SecurityError'); }, removeItem() {} };
+  for (const storage of [throwing, null, { getItem: () => null, setItem() {}, removeItem() {} } /* 置いても読めない（分けられた保存） */]) {
+    const page = fakePage();
+    expect(markRetry(storage, page)).toBe('hash');
+    expect(page.location.hash).toBe(RETRY_HASH);
+    expect(page.location.search).toBe('?city=20261121'); // 街のリンクはそのまま
+    expect(introMode({ params: new URLSearchParams(page.location.search), storage, page })).toBe('retry');
+    expect(page.location.hash).toBe(''); // 読んだら消す（次の読み直しは最初から）
+    expect(introMode({ params: new URLSearchParams(page.location.search), storage, page })).toBe('full');
+  }
+  const m = new Map();
+  const ss = { getItem: (k) => m.get(k) ?? null, setItem: (k, v) => m.set(k, v), removeItem: (k) => m.delete(k) };
+  const page = fakePage();
+  expect(markRetry(ss, page)).toBe('storage');
+  expect(page.location.hash).toBe('');
+  expect(introMode({ params: new URLSearchParams(''), storage: ss, page })).toBe('retry');
 });

@@ -5,14 +5,20 @@ import { createIntroTimeline } from '../render/introTimeline.js';
 // 画面のタップは、ゲームが始まるまで導入が受け取る（consumePointer）: gate では離したとき（release）に導入を始め、導入の途中では題字の終わりへ飛ばす。
 // 長押しの押下にはならないので、貯めることも放つこともない。ゲームを始めるのは TAP START（start）だけで、一度きり。
 // mode: 'full'（最初の読み込み）・'short'（?intro=short の撮影用。短い題字から）・'retry'（R1g リトライ: 導入も題字も説明もなく、すぐ遊べる）・'bypass'（撮影の ?debug。今までどおりすぐ遊べる）
-// 最終レビュー C1: touch（タッチの端末）のリトライは 'tap'（遊ぶ画面の上に大きな「TAP」を一つ）から。読み直しでユーザーの操作の記録は消え、
+// 最終レビュー C1: touch（タッチの端末）の読み直しのリトライは 'tap'（遊ぶ画面の上の案内。持ち主 2026-11-23 08:41 から小さな「タップでスタート」の一行で、
+// ふだんのリトライはその場で遊び直すので通らない。その場の遊び直しが投げたときの控えだけ）から。読み直しでユーザーの操作の記録は消え、
 // タッチの pointerdown は音を鳴らせるようにする操作に数えられないので、すぐ溜めにすると最初の操作らしい操作が最後の一撃の離す操作になり、
 // 60 秒ずっと無音になる。'tap' を離した操作（pointerup / click / キー）で unlock してから 'game'（onPlay）。次の押下が溜め。
 // マウスの pointerdown は操作に数えられるので、'tap' でもマウスで押せばそのまま 'game' にして溜めにする（PC は 'tap' を出さない）
 export const RETRY_KEY = 'saigo-no-ichigeki:retry';
 
-// URL と sessionStorage から始め方を決める。リトライの印は一度読んだら消す（そのあとの読み直しは最初から）
-export function introMode({ params, storage }) {
+// 持ち主 2026-11-23 08:41: リトライはふだんその場で遊び直す（main.js の restartRound。読み直さない）。読み直しは、それが投げたときだけの控え。
+// artifact の iframe（sandbox で別のオリジン）では sessionStorage が投げる・使えないことがあるので、そのときの印は URL の #retry（読んだら消す）
+export const RETRY_HASH = '#retry';
+
+// URL と sessionStorage（と #retry）から始め方を決める。リトライの印は一度読んだら消す（そのあとの読み直しは最初から）。
+// page: { location, history }（#retry を読んで消す。省けば sessionStorage だけ）
+export function introMode({ params, storage, page = null }) {
   const p = params.get('intro');
   if (p === 'short') return 'short';
   if (params.has('debug') && p === null) return 'bypass';
@@ -20,13 +26,30 @@ export function introMode({ params, storage }) {
   try {
     retry = storage?.getItem(RETRY_KEY) === '1';
     if (retry) storage.removeItem(RETRY_KEY);
-  } catch { /* 保存できない環境では毎回最初から */ }
+  } catch { /* 保存できない環境では #retry を見る */ }
+  try {
+    if (page?.location?.hash === RETRY_HASH) {
+      retry = true;
+      page.history.replaceState(page.history.state ?? null, '', page.location.pathname + page.location.search);
+    }
+  } catch { /* 消せなくても、遊び方は retry */ }
   return retry ? 'retry' : 'full';
 }
 
-// リトライの直前に呼ぶ（読み直したページが導入を飛ばす）
-export function markRetry(storage) {
-  try { storage?.setItem(RETRY_KEY, '1'); } catch { /* 保存できなければ導入から */ }
+// 読み直しの控えの直前に呼ぶ（読み直したページが導入も説明も飛ばす）。sessionStorage に置けて読み返せれば 'storage'、
+// だめなら（投げる・無い・置いても読めない）URL の #retry（履歴は増やさない）で 'hash'。どちらもだめなら null（導入から）
+export function markRetry(storage, page = null) {
+  try {
+    storage?.setItem(RETRY_KEY, '1');
+    if (storage?.getItem(RETRY_KEY) === '1') return 'storage';
+  } catch { /* #retry へ */ }
+  try {
+    if (page) {
+      page.history.replaceState(page.history.state ?? null, '', page.location.pathname + page.location.search + RETRY_HASH);
+      return 'hash';
+    }
+  } catch { /* 導入から */ }
+  return null;
 }
 
 export function createIntroFlow({ mode = 'full', touch = false, onBegin = () => {}, onSkip = () => {}, onTitle = () => {}, onStart = () => {}, onPlay = () => {} } = {}) {

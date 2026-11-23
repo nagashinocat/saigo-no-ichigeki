@@ -1,7 +1,7 @@
 // R1f（持ち主 18:14「一時停止、リトライ、音量調節ができるメニューボタンを作って」）: 画面の隅のメニューボタン（≡）と、開くと出る一時停止のメニュー
 // （つづける・リトライ・BGM と効果音の音量）。音量は端末に覚える（localStorage、名前に接頭辞、保存できなくても動く）。
 // ボタンとメニューは canvas の上の DOM なので、触れても canvas の指の知らせ（溜め・スティック）にならない（pointerdown は伝えずに止める）。
-// 一時停止そのものは ui/pause.js、リトライの街は game/daily.js の rememberRetryCity（main.js の onRetry）
+// 一時停止そのものは ui/pause.js、リトライ（その場の遊び直し）は main.js の restartRound、控えの読み直しの街は game/daily.js の rememberRetryCity
 
 export const VOLUME_KEYS = { bgm: 'saigo-no-ichigeki:vol-bgm', sfx: 'saigo-no-ichigeki:vol-sfx' };
 const clamp = (v, d) => (Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : d);
@@ -19,12 +19,21 @@ export function saveVolumes(storage, v) {
   } catch { return false; }
 }
 
-// R1f（R3 の見直しの持ち越し）: メニューのリトライは、同じ街（今日の街は日本時間の 0 時をまたいでも同じ）で、導入を飛ばしてすぐ遊び直す。
-// 読み直す前に、今日の街を覚え（rememberRetryCity）、導入を飛ばす印（markRetry）を置く。順は覚える → 印 → 読み直す
-export function retryRound({ session, cityPick, rememberRetryCity, markRetry, reload }) {
-  rememberRetryCity(session, cityPick);
-  markRetry(session);
-  reload();
+// R1f（R3 の見直しの持ち越し）: メニューのリトライ（と結果の「もう一度」）は、同じ街で、導入も説明も飛ばしてすぐ遊び直す。
+// 持ち主 2026-11-23 08:41: ふだんはページを読み直さず、その場で遊び直す（restart。音の許可が残るので TAP が要らない。sessionStorage にもよらない）。
+// restart が投げたときだけ控えとして読み直す: 今日の街を覚え（rememberRetryCity）、導入を飛ばす印（markRetry）を置き、読み直す（この順）。
+// 戻り値: 'inplace'（その場で）か 'reload'（読み直した）
+export function retryRound({ restart, onError = () => {}, session, cityPick, rememberRetryCity, markRetry, reload }) {
+  try {
+    restart();
+    return 'inplace';
+  } catch (e) {
+    try { onError(e); } catch { /* 知らせられなくても読み直す */ }
+    rememberRetryCity(session, cityPick);
+    markRetry(session);
+    reload();
+    return 'reload';
+  }
 }
 
 // els: { button, panel }（panel の中に [data-act="resume"]・[data-act="retry"]・input[name="bgm"]・input[name="sfx"]）。

@@ -80,19 +80,36 @@ test('R1f / fix1: タブ・アプリの切り替えの一時停止とメニュ�
   expect(bgm.log).toEqual(['pause', 'resume']);
 });
 
-test('R1f: リトライは同じ街（今日の街は 0 時をまたいでも）で、導入を飛ばして読み直す（覚える → 印 → 読み直す の順）', () => {
+// 持ち主 2026-11-23 08:41（「リトライ押したら暗い画面に操作説明」「TAPの文字がかなりデカく」）: リトライはページを読み直さず、その場で遊び直す
+// （restart）。読み直しは、その場の遊び直しが投げたときだけの控え（同じ街を覚える → 導入を飛ばす印 → 読み直す の順。R1f のまま）
+test('リトライはその場で遊び直す（restart）。読み直さず、印も置かない', () => {
+  const s = store();
+  const pick = pickCity({ params: new URLSearchParams(''), now: Date.UTC(2026, 10, 21, 14, 59, 0), storage: s });
+  const order = [];
+  const r = retryRound({ restart: () => order.push('restart'), session: s, cityPick: pick, rememberRetryCity: () => order.push('remember'), markRetry: () => order.push('mark'), reload: () => order.push('reload') });
+  expect(r).toBe('inplace');
+  expect(order).toEqual(['restart']);
+  expect(s.m.size).toBe(0);
+});
+
+test('控え: その場の遊び直しが投げたら、同じ街（0 時をまたいでも）で導入を飛ばして読み直す（覚える → 印 → 読み直す の順）', () => {
   const s = store();
   const before = Date.UTC(2026, 10, 21, 14, 59, 0); // 日本時間 11/21 23:59
   const pick = pickCity({ params: new URLSearchParams(''), now: before, storage: s });
   expect(pick.key).toBe('20261121');
-  const order = [];
-  retryRound({ session: s, cityPick: pick, rememberRetryCity: (st, c) => { order.push('remember'); rememberRetryCity(st, c); }, markRetry: (st) => { order.push('mark'); markRetry(st); }, reload: () => order.push('reload') });
-  expect(order).toEqual(['remember', 'mark', 'reload']);
+  const order = [], errors = [];
+  const r = retryRound({
+    restart: () => { order.push('restart'); throw new Error('cannot'); }, onError: (e) => errors.push(e.message),
+    session: s, cityPick: pick, rememberRetryCity: (st, c) => { order.push('remember'); rememberRetryCity(st, c); }, markRetry: (st) => { order.push('mark'); markRetry(st); }, reload: () => order.push('reload'),
+  });
+  expect(r).toBe('reload');
+  expect(order).toEqual(['restart', 'remember', 'mark', 'reload']);
+  expect(errors).toEqual(['cannot']);
   // 読み直したページ（日本時間 11/22 になっている）
   const after = pickCity({ params: new URLSearchParams(''), now: Date.UTC(2026, 10, 21, 15, 1, 0), storage: s });
   expect(after.key).toBe('20261121');
   expect(after.seed).toBe(citySeed('20261121'));
-  expect(introMode({ params: new URLSearchParams(''), storage: s })).not.toBe('full'); // 導入を飛ばす
+  expect(introMode({ params: new URLSearchParams(''), storage: s })).toBe('retry'); // 導入も説明も飛ばす
   // 新しい一回（同じ種の街で、時間は最初から）
   const g = createGame({ seed: after.seed });
   expect(g.timer.remaining).toBe(60);

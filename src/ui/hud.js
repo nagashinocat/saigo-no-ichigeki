@@ -174,6 +174,12 @@ export function createHud(root, { threshold = clearThreshold(), total = 60 } = {
       shortTimer = setTimeout(() => shortEl.classList.remove('show'), 900);
     },
     setVisible(v) { root.style.visibility = v ? 'visible' : 'hidden'; },
+    // 持ち主 2026-11-23 08:41: その場のリトライ。前の一回の短い知らせ（まだ足りない・足りない・×k・大物が来る）を消す。吸われた分の影も戻す
+    clearNotices() {
+      for (const t of [hintTimer, shortTimer, comboTimer, annTimer]) clearTimeout(t);
+      for (const el of [hintEl, shortEl, comboEl, annEl]) el.classList.remove('show');
+      ghostF = 0;
+    },
     // R1: 「×k」を主人公の画面の位置（sx, sy px）の少し上に出す（同じ払うで数が増えれば書き換えて跳ねる）
     combo(k, sx, sy) {
       if (!layoutNow) return;

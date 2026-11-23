@@ -68,6 +68,7 @@ import { drainMulOf } from './game/enemies.js';
 import { toLocal } from './render/blastFrame.js';
 
 const MAX_FRAME_DT = 0.1;
+const RETRY_TAP_TEXT = 'タップでスタート'; // 控えの読み直し（タッチの端末）の小さな案内
 const GRABBED_STEADY = 0.15; // 掴まれている間の手の画面の光の安定（弱く瞬く）
 
 const params = new URLSearchParams(location.search);
@@ -94,7 +95,9 @@ const touchDevice = (() => { try { return matchMedia('(pointer: coarse)').matche
 const tierParam = params.get('tier');
 // 導入（S6）の始め方: 'full'（最初の読み込み: TAP → 導入 → 題字 → TAP START）・'retry'（リトライ: 導入も説明もなし。PC はすぐ遊べ、タッチの端末は遊ぶ画面の上の TAP を一つ。C1）・'short'（?intro=short 撮影用）・
 // 'bypass'（撮影の ?debug で ?intro がないとき: 今までどおりすぐ遊べる）
-const startMode = introMode({ params, storage: session });
+// 持ち主 2026-11-23 08:41: sessionStorage が使えない iframe では、控えの読み直しの印は URL の #retry（読んだら消す）
+const retryPage = { location, history };
+const startMode = introMode({ params, storage: session, page: retryPage });
 let tier = tierParam in TIERS ? tierParam : pickTier({ isMobile, deviceMemory: navigator.deviceMemory, cores: navigator.hardwareConcurrency });
 
 const canvas = document.getElementById('game');
@@ -136,7 +139,7 @@ const bgm = createBgm(() => audio.bgmOutput);
 // M1（持ち主 09:15）: 払うのボタンはなくした。溜めている間の 2 本目の指の短いタップ、PC は Space か右クリックで払う
 const hud = createHud(document.getElementById('hud'), { total: CONFIG.roundSeconds });
 // R1c: 残り 10 秒から 1 秒ごとの刻みの音（遊んでいる間だけ。演出・リプレイ・結末・導入では鳴らさない）
-const timeTicks = createTimeTicks();
+let timeTicks = createTimeTicks(); // その場のリトライで作り直す
 // 払う。力が払える量に足りなければ、押した所（キーなら主人公の画面の位置）に小さく「足りない」（持ち主 08:24 の制作側の判断）。
 // 溜めていない（1 本目の指がない）ときは払えない（spec §16 09:15）
 // R1f（持ち主 18:14「払うの反応を確実に」）: 前の払うが広がっている間（busy）のタップは覚えておき、広がり終わったら払う（input/puffBuffer.js）
@@ -156,12 +159,8 @@ const drainFx = createDrainFx();
 let drainedSeen = 0;
 const startHint = document.getElementById('start');
 const result = createResult(document.getElementById('result'), {
-  // 壊れた街や地面のえぐれは作り直せないので、ページを読み直す。R3: 同じ街（今日の街・リンクの街・試しの種）にもう一度挑む
-  onRetry() {
-    markRetry(session); // 読み直したページは導入も遊び方の説明も飛ばして、すぐ遊べる（R1g）
-    rememberRetryCity(session, cityPick); // fix1: 0 時をまたいでも同じ今日の街
-    location.reload();
-  },
+  // R3: 同じ街（今日の街・リンクの街・試しの種）にもう一度挑む。持ち主 2026-11-23 08:41: ページを読み直さず、その場で（requestRetry）
+  onRetry() { requestRetry(); },
   // 最後の一発をもう一度見る（放つ直前の街へ戻して起こし直す。何度でも同じリプレイ）
   onReplay() { startReplay(); },
   // R4（spec §15）: その人の一撃を縦動画にして共有（共有できなければ保存）
@@ -180,7 +179,7 @@ const controls = createControls({
   hideHit: (x, y) => lookoutView.hit(x, y),
 });
 // R1e（持ち主 16:55）: 見つかりそうなときの「LOOK OUT!」と、隠れられる物陰の向きの矢印（音は出さない）。R1f: 矢印は大きな当たり（タップで隠れる）
-const lookout = createLookout();
+let lookout = createLookout(); // その場のリトライで作り直す
 const lookoutView = createLookoutView(document.getElementById('lookout'));
 let lookoutNow = null; // 今のフレームの LOOK OUT!（createLookout().update の戻り値の写し）
 const hideMark = createHideMark(document.getElementById('hideMark')); // R1f fix1: 物陰にいる間の印
@@ -243,8 +242,8 @@ const menu = createMenu({ button: document.getElementById('menuBtn'), panel: doc
   storage: local,
   onOpen() { pause.set('menu', true); },
   onClose() { pause.set('menu', false); },
-  // R1f（R3 の見直しの持ち越し）: 同じ街（0 時をまたいでも）で、導入を飛ばしてすぐ遊び直す
-  onRetry() { retryRound({ session, cityPick, rememberRetryCity, markRetry, reload: () => location.reload() }); },
+  // R1f（R3 の見直しの持ち越し）: 同じ街で、導入も説明も飛ばしてすぐ遊び直す（持ち主 2026-11-23 08:41: その場で。requestRetry）
+  onRetry() { requestRetry(); },
   // fix1（見直し Minor 6）: 動かしたスライダーの道で短い試し音（一時停止の間も聞こえる。0.15 秒に一度まで）
   onVolume(v, kind) {
     audio.setVolumes(v);
@@ -471,10 +470,12 @@ const introGesture = createIntroGesture({ audio, flow: introFlow });
 introGesture.attach(window, canvas);
 if (introFlow.blocksInput) hud.setVisible(false); // HUD はゲームが始まってから
 if (introFlow.state === 'gate') overlay.showGate(true);
-// C1: タッチのリトライは、遊ぶ画面の上に大きな「TAP」を一つ（導入・題字・遊び方の説明は出さない）
-if (introFlow.state === 'tap') { overlay.gate.classList.add('retry', 'ready'); overlay.showGate(true); }
+// C1: タッチの端末の読み直しのリトライ（その場の遊び直しが投げたときの控えだけ）は、遊ぶ画面の上に小さな「タップでスタート」の一行
+// （持ち主 2026-11-23 08:41「TAPの文字がかなりデカく」: 大きな TAP はやめた。導入・題字・遊び方の説明は出さない）
+if (introFlow.state === 'tap') { overlay.gate.classList.add('retry', 'ready'); overlay.gate.firstElementChild.textContent = RETRY_TAP_TEXT; overlay.showGate(true); }
 if (!introFlow.playsIntro) overlay.fadeOut(0);
-if (introFlow.state !== 'game') startHint.hidden = true;
+// 遊び方の説明（#start）は HTML ではじめから隠してある（JS が動く前の暗い画面に出さない。持ち主 08:41）。出すのは TAP START（onStart）と撮影の bypass
+if (startMode === 'bypass') startHint.hidden = false;
 if (startMode === 'retry') startHint.hidden = true; // R1g: リトライは遊び方の説明も飛ばして、すぐ遊べる
 // 浮き上がり: 0 から上がって（前半）ゆっくり宙の高さ 0 へ降りる。どの時刻も ≥ 0
 const heroLiftAt = (u) => HERO_LIFT.up * Math.sin(Math.PI * Math.min(1, Math.max(0, u))) ** 2;
@@ -644,7 +645,7 @@ game.on('hit', (e) => {
   hitFeed.gameHit(e, { replayPending: !!replaySnap });
 });
 // このフレームの命中（瓦礫の崩れる音へ。小爆発（払う）はビルを壊さないので、ここには来ない）
-const hitFeed = createHitFeed();
+let hitFeed = createHitFeed(); // その場のリトライで作り直す
 const burstSeen = new Set();
 
 // S8: 高架で起きたこと（電車が脱線した・溶けた・落ちた）: 溶ける見た目、落ちた車両の破片、崩れる音（画面の出来事の位置から）
@@ -661,13 +662,15 @@ function onTransit(events) {
 // 最後の一発の直前の街を覚えておき、同じ一発を決まった刻みで起こし直す（同じ種なら同じリプレイ。何度でも見せ直せる）。
 // 街の姿（ビルと props の置き場所・つぶれ）は、最後の一発より前には変わらない（小爆発は軍勢だけを払う）ので、
 // 起動したときに写しておく（放つ瞬間に写すと、両手が玉を握り込む間に止まる）。念のため、変わっていたら放つ瞬間に写し直す。
-let citySnap = cityView.snapshot();
+// 持ち主 2026-11-23 08:41: その場のリトライは、この起動したときの街（pristineCity。変えない）へ戻す
+const pristineCity = cityView.snapshot();
+let citySnap = pristineCity;
 const _focusAt = [0, 0, 0]; // 手前の物理の焦点（毎フレーム使い回す。destruction は値を写して持つ）
 let replaySnap = null; // { shot, targets, enemies, buildings }
 let replaySim = null;
 function takeReplaySnapshot(shot) {
-  if (standing.size !== game.city.buildings.length) citySnap = cityView.snapshot();
-  citySnap.transit = cityView.transitState(); // 高速の車と電車は、放った瞬間の位置から（リプレイでも同じ所を走っている）
+  const base = standing.size !== game.city.buildings.length ? cityView.snapshot() : citySnap;
+  citySnap = { ...base, transit: cityView.transitState() }; // 高速の車と電車は、放った瞬間の位置から（リプレイでも同じ所を走っている）。起動したときの写しは変えない
   replaySnap = {
     shot,
     targets: replayTargets(game.city, shot.centre), // M1: 距離は爆心から
@@ -837,6 +840,60 @@ const clipSession = createClipSession({
   deliver: (file, text) => deliverClip(file, { nav: navigator, text, download: downloadFile, framed: framedPage }),
 });
 const startClip = (info) => { clipRestored(); return clipSession.start(info); }; // fix2: 遅くとも次の録画の前に瓦礫の音の道を戻す
+
+// ---- その場のリトライ（持ち主 2026-11-23 08:41「リトライ押したら暗い画面に操作説明が出てる」「TAPの文字がかなりデカく出てるのは仕様？」）----
+// メニューのリトライと結果の「もう一度」は、ページを読み直さず、同じ街（同じ種）の新しい一回をその場で始める。AudioContext はそのまま
+// （音の許可が残るので TAP が要らない）、sessionStorage にもよらない（artifact の iframe で投げても同じ）。導入・題字・遊び方の説明は出さない。
+// 新しい一回は、読み直したページの同じ街と同じ（game.restart。軍勢の湧き方・種類・見回り・演出の乱数まで）。最初の押下が溜め。
+// 作り直すのは一回ぶんの状態だけで、GPU の形・材質・描き先は作らない（街は起動したときの写し pristineCity へ restore。何度リトライしても増えない）
+function restartRound() {
+  if (debugMode && debugHooks.failRestart) throw new Error('debug: failRestart'); // 撮影・試し: 控えの読み直しを起こす
+  // 録画・演出・リプレイ・結末・結果を閉じる
+  if (clipSession.busy) clipSession.cancel();
+  clipRestoring = false; clipKind = null;
+  cinematic.stop(); replay.stop(); blackhole.stop();
+  result.hide(); replayTag.hidden = true;
+  pendingResult = null; lastResult = null; finaleDone = false;
+  replaySnap = null; replaySim = null; finalBlastSize = 0; whiteWarmed = false;
+  // 音: 前の一回の音と予約を止める（唸り・吸われる・無音とこもり・地響き・地鳴り・ブラックホールの唸り・爆発・BGM）。BGM は最初の押下で鳴り始める
+  audio.resetRound(); bgm.reset();
+  timeTicks = createTimeTicks(); hitFeed = createHitFeed(); burstSeen.clear();
+  // ゲーム（同じ種の新しい一回。'ready' で、最初の押下で始まる）と、演出の撮る場所の乱数
+  game.restart();
+  shotRng.reseed();
+  standing.clear(); for (const b of game.city.buildings) standing.add(b.id);
+  // 街: 粗い箱・爆心なし・起動したときの姿（つぶれ・隠し・高架の車と電車）。破片・瓦礫・地面のえぐれ・爆発の見た目・生き残りの光
+  cityView.setDetail('coarse'); cityView.setBlastCentre(null); cityView.restore(pristineCity); citySnap = pristineCity;
+  destruction.reset(); destruction.setCentre(null); destruction.setPhysicsFocus(null);
+  explosionView.reset(); fronts.reset();
+  patrolGlow.reset(); patrolGlow.setSurvivors(null);
+  debrisView.update(); rubbleView.update();
+  // 主人公と手の見た目、上空カメラ
+  enemyView.setFocus?.(null); enemyView.setHeroYaw(0); enemyView.setHeroLift(0); enemyView.setHeroLean(0); enemyView.setHeroCrouch(0); enemyView.setHeroHop(0);
+  heroMoved = false; liftT = 0;
+  hand.reset(); hand.setCollapse(0);
+  dashStreak.update(game.hero, 1e3); hideAction.update({ ...game.hero, action: null }, 1e3); // 滑り込みの筋・跳ぶ見た目を消しきる
+  views.resetCamera(game.hero);
+  // 入力・HUD・知らせ
+  controls.reset(); keysDown.clear(); keyFlick.reset(); puffBuffer.clear();
+  lookout = createLookout(); lookoutNow = null;
+  drainFx.reset(); drainedSeen = 0; lineKey = NaN;
+  hud.clearNotices();
+  startHint.hidden = true;
+  if (menu.isOpen) menu.close(); // 一時停止を外す（音を戻し、BGM・ゲームが動く）
+  last = performance.now();
+}
+// その場で遊び直す。投げたら（ふつうは起きない）控えとして、同じ街を覚えて導入を飛ばす印を置き、読み直す
+// （印は sessionStorage、だめなら URL の #retry。タッチの端末は小さな「タップでスタート」の一行だけ）
+function requestRetry() {
+  return retryRound({
+    restart: restartRound,
+    onError: (e) => console.error('その場のリトライに失敗したので読み直す', e),
+    session, cityPick, rememberRetryCity,
+    markRetry: (s) => markRetry(s, retryPage),
+    reload: () => location.reload(),
+  });
+}
 
 // 画質の自動調整。ここでは画素比だけを下げる（破片数などの他の値は後の Task が TIERS[tier] から読む）
 const governor = createFpsGovernor({ target: isMobile ? 30 : 55 });
@@ -1135,6 +1192,8 @@ requestAnimationFrame(frame);
 
 // 撮影スクリプト用: 実時間を止め、決まった dt で進めてから描く（ヘッドレスは実時間より遅いため）
 const debugHooks = {
+  failRestart: false, // 撮影・試し: true でその場のリトライを投げさせる（控えの読み直し）
+  retry() { return requestRetry(); }, // メニューのリトライと同じ
   pause() { paused = true; },
   resume() { paused = false; last = performance.now(); },
   // sec 秒ぶん dt 刻みで進め、最後に1回描く。1フレームあたりの JS の時間（ms、描画は最後の1回）を返す
@@ -1262,4 +1321,7 @@ if (debugMode) {
   window.__blackhole = blackhole;
   window.__bgm = bgm;
   window.__intro = intro;
+  window.__audio = audio; // その場のリトライ: AudioContext が running のままか（撮影で確かめる）
+  window.__pristineCity = pristineCity; // その場のリトライ: 戻す先の街の写し（撮影で確かめる）
+  window.__bgmState = () => bgm.state;
 }

@@ -319,9 +319,10 @@
     #intro-gate.on { display: flex; }
     #intro-gate span { font-family: "SaigoMincho", serif; font-weight: 900; font-size: clamp(15px, 4vw, 20px); letter-spacing: 0.6em; padding-left: 0.6em; color: #fff; opacity: 0.25; transition: opacity 0.4s; }
     #intro-gate.ready span { opacity: 1; animation: intro-pulse 1.5s ease-in-out infinite; }
-    /* 最終レビュー C1: タッチのリトライは、遊ぶ画面の上に大きな「TAP」を一つ（このタップで音を鳴らせるようになる） */
-    #intro-gate.retry { background: rgba(0, 0, 0, 0.38); }
-    #intro-gate.retry span { font-size: clamp(56px, 20vw, 120px); letter-spacing: 0.3em; padding-left: 0.3em; text-shadow: 0 0 24px rgba(0, 0, 0, 0.6); }
+    /* 持ち主 2026-11-23 08:41「TAPの文字がかなりデカく出てるのは仕様？」: 控えの読み直しのリトライ（タッチの端末）は、遊ぶ画面を暗くせず、
+       説明と同じ高さに HUD の知らせの大きさの「タップでスタート」の一行だけ（ふだんのリトライはその場で遊び直すので出ない） */
+    #intro-gate.retry { background: transparent; align-items: flex-start; padding-top: 30vh; box-sizing: border-box; }
+    #intro-gate.retry span { font-family: system-ui, "Hiragino Sans", "Noto Sans JP", sans-serif; font-weight: 800; font-size: clamp(14px, 4vw, 20px); letter-spacing: 0.08em; padding-left: 0; text-shadow: 0 1px 3px rgba(20, 10, 30, 0.9), 0 0 10px rgba(20, 10, 30, 0.6); }
     #intro-start { position: fixed; left: 50%; bottom: max(8.5vh, 44px); transform: translateX(-50%); margin: 0; padding: 0.85em 2.1em 0.85em 2.55em; font-family: "SaigoMincho", serif; font-weight: 900; font-size: clamp(15px, 4.2vw, 20px); letter-spacing: 0.45em; white-space: nowrap; color: #0a080c; background: rgba(255, 255, 255, 0.55); border: 1px solid rgba(10, 8, 12, 0.8); border-radius: 2px; opacity: 0; pointer-events: none; cursor: pointer; touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
     #intro-start.on { pointer-events: auto; }
     #intro-start.pulse { animation: intro-btn 2.2s ease-in-out infinite; }
@@ -347,7 +348,7 @@
   </div>
   <div id="hideMark" hidden><div class="hm-ring"></div><div class="hm-tag">かくれ中</div></div>
   <div id="lookout" hidden><div class="lo-hit"></div><div class="lo-arrow"><b></b><i></i></div><div class="lo-text"></div></div>
-  <div id="start">長押しで力を貯め、離して最後の一撃<br><small>貯めながら、もう一本の指を長押しで動く・短くタップで払う（3 回まで）<br>LOOK OUT! が出たら 矢印をタップで物陰に隠れる<br>払うは まわりの者を はがす（重い者・大物は倒れず よろめく）</small></div>
+  <div id="start" hidden>長押しで力を貯め、離して最後の一撃<br><small>貯めながら、もう一本の指を長押しで動く・短くタップで払う（3 回まで）<br>LOOK OUT! が出たら 矢印をタップで物陰に隠れる<br>払うは まわりの者を はがす（重い者・大物は倒れず よろめく）</small></div>
   <div id="replay" hidden><span class="replay-tag">リプレイ</span><span class="replay-hint">タップでとばす</span></div>
   <div id="result" hidden></div>
   <div id="clip" role="dialog" aria-label="動画で共有" hidden></div>
