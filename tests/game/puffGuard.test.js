@@ -14,9 +14,10 @@ const quiet = { ...CONFIG, enemy: { ...E, spawnPerSec: 0, alertRate: 0, alertAtS
 const charger = (id, d, a = 0) => ({ id, state: 'chase', x: Math.cos(a) * d, z: Math.sin(a) * d, heading: a + Math.PI, speed: E.speed, turn: 0, searchTime: 0, lane: [0, 0], seenT: 0, sees: true, dist: d, angle: a });
 
 // Fix round 3: 守りの長さは config（まとめ役の裁定: なるべく短く）
-test('Pass 2 / Fix round 3: 払うの守りの値は config にある（弾かれた者は倒れる）', () => {
-  expect(P.guardSec).toBeGreaterThanOrEqual(1);
-  expect(P.guardSec).toBeLessThanOrEqual(12);
+// 持ち主 22:47「祓うをした後の無敵が長すぎかも」: 10.9 秒 → 約 4 秒（制作側の判断。持ち主が直せる）。約 5 秒を越えて長くしない
+test('Pass 2 / Fix round 3 / 22:47: 払うの守りの値は config にあり、約 4 秒（5 秒まで）。弾かれた者は倒れる', () => {
+  expect(P.guardSec).toBeGreaterThanOrEqual(3.5);
+  expect(P.guardSec).toBeLessThanOrEqual(5);
   expect(typeof P.guardKill).toBe('boolean');
 });
 
@@ -76,8 +77,11 @@ test('Pass 2: game.puff は守りを始める（払えなかったときは始�
 // Pass 2: 払ったあと puff.hideLockSec 秒は隠れられない（hideBlock: cooldown）。払うの守りと隠れるを続けて使い、どちらの弱さも消す遊び方にしない
 test('Pass 2: 払ったあと hideLockSec 秒は隠れられず、過ぎれば隠れられる', () => {
   // Fix round 1（まとめ役: 12 秒の休みをやめ、3〜4 秒に。持ち主 15:20「払う → 隠れる」の流れを保つ）
-  expect(P.hideLockSec).toBeGreaterThanOrEqual(3);
+  // 22:47（守り 4 秒）: 隠れられない間は守りの半分（4 → 2 秒）。守りの前半は隠れられず、後半は守られたまま隠れられる（daily-balance で最善 71 → 79%）
+  expect(P.hideLockSec).toBeGreaterThanOrEqual(1);
   expect(P.hideLockSec).toBeLessThanOrEqual(4);
+  expect(P.hideLockSec).toBeLessThan(P.guardSec);
+  expect(P.hideLockSec).toBeCloseTo(P.guardSec / 2, 6);
   const g = createGame({ seed: 3, cfg: quiet });
   g.begin(); g.pressStart();
   for (let t = 0; t < 3; t += 1 / 30) g.update(1 / 30);

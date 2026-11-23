@@ -95,7 +95,9 @@ function run(seed, sec = 45, cfg = UNLIMITED) {
         if (['chase', 'grab', 'cling'].includes(e.state)) { staggerRecovered++; r.recoverAt = i; } else staggerBad++;
       }
       if (r.recoverAt != null && i - r.recoverAt === 6) {
-        if (clear && !reacquired(e, H)) staggerBad++;
+        // 22:47（守り 4 秒）: 立ち直ってすぐ（0.2 秒の内）に輪へ着き、まだ残っている守りでまたよろめいた者（主人公から離れる向き）は数えない
+        // （向き直りの誤りではなく、守りの当たり。種 3 の重い者: 33.4 秒、主人公から 7.5 m、守りの残り 0.33 秒）
+        if (clear && e.state !== 'stagger' && !reacquired(e, H)) staggerBad++;
         r.recoverAt = null;
       }
       // 掴む者・群がる者は今の主人公の群がる輪の内
