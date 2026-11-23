@@ -365,7 +365,8 @@ export function createReplay(views, { scene, lights = null, fog = null, blastLig
     // 画面をタップ: 暗くして最後まで早送りし、結果へ
     skip() {
       if (phase === 'play') { phase = 'skip'; skipK = 0; emit('skip'); }
-      else if (phase === 'held') end(); // 撃退失敗の引きの絵の間: すぐ結果へ
+      // 撃退失敗の引きの絵の間: すぐ結果へ。Fix round 1: このときも 'skip' を知らせる（main.js がリプレイの音を止める）。見せ終えたあとは知らせない
+      else if (phase === 'held' && !ended) { emit('skip'); end(); }
     },
     update(dt) {
       if (phase === 'off') return;

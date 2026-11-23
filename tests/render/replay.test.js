@@ -218,3 +218,19 @@ test('持ち主 23:01: 真上のカット（top）は引いている: 光の円�
     }
   }
 });
+
+// Fix round 1（見直し Minor 2）: 撃退失敗の引きの絵（held）の間に飛ばしたときも 'skip' を知らせる（main.js がリプレイの音を止める: audio.cutReplay）
+test('Fix round 1: 引きの絵（held）の間に飛ばしても、replayEnd の前に skip を一度だけ知らせる。最後まで見せ終えたあとの skip は知らせない', () => {
+  const survivors = [{ x: 620, z: 30 }, { x: -40, z: -650 }];
+  const { r, log } = make();
+  r.on('skip', () => log.events.push('skip'));
+  r.play({ shot, buildings: city.buildings, heroYaw: 0.5, survivors });
+  let i = 0;
+  while (!log.events.includes('aftermath') && i++ < 60 * 16) r.update(1 / 60);
+  r.update(1 / 60);
+  expect(log.events).not.toContain('skip');
+  r.skip();
+  expect(log.events.slice(-2)).toEqual(['skip', 'replayEnd']);
+  r.skip(); r.update(1 / 60); r.skip();
+  expect(log.events.filter((e) => e === 'skip')).toHaveLength(1);
+});

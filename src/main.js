@@ -317,6 +317,7 @@ function updateResult(dt) {
   pendingResult.wait -= dt;
   if (pendingResult.wait > 0) return;
   result.show(pendingResult.total, pendingResult.reason, pendingResult.outcome, { replay: !!replaySnap, clip: canClip(pendingResult.reason), extra: pendingResult.extra });
+  audio.restoreWorld(); // Fix round 1: 飛ばしたリプレイ（cutReplay）で 0 にした世界の音を、結果画面で戻す
   lastResult = pendingResult;
   pendingResult = null;
 }
@@ -799,6 +800,7 @@ const clipHost = {
         const o = game.outcome;
         clipRestoring = restoreReplayAfterClip({ audio, replay, args: replayArgs(), onSurvivors: o && !o.clear ? () => patrolGlow.setSurvivors(survivorIds(o)) : null });
       }
+      audio.restoreWorld(); // Fix round 1: 結果画面へ戻る。録画の終わりの silence で 0 にした世界の音を戻す（瓦礫の音の黙らせはそのまま）
       bgm.quiet();
     } finally {
       clipping = false; clipKind = null;

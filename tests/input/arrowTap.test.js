@@ -154,3 +154,46 @@ test('22:47: 覚えておいた払う（前の払うが広がり終わる間際�
   q.game.busy = false;
   expect(q.buffer.take(q.dom.ms / 1000, true)).toBeNull();
 });
+
+// Fix round 1（見直し Important 1）: `#lookout .lo-tap { display: flex }` が [hidden] に勝ち、字だけの LOOK OUT!（待ち時間の間。矢印なし）でも
+// 「TAP」の字が残っていた。LOOK OUT! の部品で display を決めるものは、どれも [hidden] で display: none に戻す規則を持つ
+import { readFileSync } from 'node:fs';
+test('Fix round 1: 字だけの LOOK OUT! では「TAP」の字も丸も矢印も隠れる（JS の hidden と、それを CSS が消す規則）', () => {
+  const r = rig();
+  const at = { sx: 195, sy: 500 };
+  r.view.update({ show: true, deg: 0 }, at);
+  expect(r.parts['.lo-tap'].hidden).toBe(false);
+  r.view.update({ show: true, deg: null }, at); // 字だけ
+  for (const k of ['.lo-tap', '.lo-hit', '.lo-arrow']) expect(r.parts[k].hidden, k).toBe(true);
+  expect(r.el.hidden).toBe(false);
+  const css = readFileSync(new URL('../../index.html', import.meta.url), 'utf8');
+  for (const cls of ['lo-tap', 'lo-hit', 'lo-arrow', 'lo-text']) {
+    const sets = [...css.matchAll(new RegExp(`#lookout \\.${cls}\\s*\\{([^}]*)\\}`, 'g'))].some((m) => /(^|[;\s])display\s*:/.test(m[1]));
+    if (!sets) continue; // display を決めない部品は、ブラウザの [hidden] の規則で消える
+    expect(css, `#lookout .${cls}[hidden]`).toMatch(new RegExp(`#lookout \\.${cls}\\[hidden\\][^{]*\\{[^}]*display\\s*:\\s*none`));
+  }
+});
+
+// Fix round 1（見直し Minor 3）: 覚えておいた払うは、矢印に触れた瞬間（離す前）に捨てる。触れてから離すまでの間のフレームで
+// main.js の puffBuffer.take が払ってしまわない
+test('Fix round 1: 矢印に触れた瞬間（pointerdown）に、覚えておいた払うを捨てる（離すまで待たない）', () => {
+  const at = { sx: 195, sy: 500 }, t = arrowTarget(at, 0, VIEW);
+  const q = rig({ busy: true });
+  q.view.update({ show: true, deg: 0 }, at);
+  q.tap(40, 760);
+  expect(q.buffer.pending).not.toBeNull();
+  q.dom.advance(0.05);
+  q.dom.fire('pointerdown', { pointerId: 2, clientX: t.cx, clientY: t.cy });
+  expect(q.buffer.pending).toBeNull(); // まだ離していない
+  q.game.busy = false;
+  expect(q.buffer.take(q.dom.ms / 1000, true)).toBeNull();
+  q.dom.advance(0.08);
+  q.dom.fire('pointerup', { pointerId: 2, clientX: t.cx, clientY: t.cy });
+  expect(q.log).toEqual(['hide']);
+  // 矢印の外に触れたときは捨てない
+  const o = rig({ busy: true });
+  o.view.update({ show: true, deg: 0 }, at);
+  o.tap(40, 760);
+  o.dom.fire('pointerdown', { pointerId: 2, clientX: 40, clientY: 700 });
+  expect(o.buffer.pending).not.toBeNull();
+});

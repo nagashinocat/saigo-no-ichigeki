@@ -170,3 +170,27 @@ test('22:47: 飛ばしたあとのその場のリトライ（resetRound）でも
   audio.collapse(hits(2, 700));
   expect(ctx.sources.length).toBeGreaterThan(n0);
 });
+
+// Fix round 1（見直し Minor 4）: cutReplay は master を 0 にしたままにする。結果画面を出すとき（restoreWorld）に戻し、結果画面の音（master を通る音）が
+// また鳴るようにする。瓦礫の音の黙らせ（早送りの間）は解かない（次のリプレイ・リトライで解く）
+test('Fix round 1: 飛ばしたあと結果画面で restoreWorld すると master は約 50 ms で元の大きさへ。爆発の音も鳴る。瓦礫の音は黙ったまま', () => {
+  const r = rig();
+  playIntoReplay(r);
+  const { ctx, audio, master } = r;
+  audio.cutReplay();
+  ctx.currentTime += 0.5;
+  expect(master.gain.at(ctx.currentTime)).toBeLessThan(1e-3);
+  audio.restoreWorld();
+  const t = ctx.currentTime;
+  expect(master.gain.at(t + 0.1)).toBeCloseTo(0.8, 5);
+  expect(master.gain.at(t + 7)).toBeCloseTo(0.8, 5);
+  const n0 = ctx.sources.length;
+  audio.collapse(hits(3, 900));
+  expect(ctx.sources.length).toBe(n0);
+  audio.boom(0.3);
+  expect(ctx.sources.slice(n0).some((s) => s.startT != null && s.startT < t + 0.5)).toBe(true);
+  // 演出の無音（silence）のあとの結果画面（録画のあと）でも戻る
+  audio.silence();
+  audio.restoreWorld();
+  expect(master.gain.at(ctx.currentTime + 0.1)).toBeCloseTo(0.8, 5);
+});

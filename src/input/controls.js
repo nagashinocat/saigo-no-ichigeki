@@ -47,7 +47,7 @@ export function screenToWorld(sx, sy, azimuthDeg = 0) {
   return { x: sx * c + sy * s, z: -sx * s + sy * c };
 }
 
-export function createControls({ onChargeStart = () => {}, onChargeEnd = () => {}, onChargeCancel = () => {}, onPuff = () => {}, onHide = () => {}, hideHit = null, cfg = CONFIG } = {}) {
+export function createControls({ onChargeStart = () => {}, onChargeEnd = () => {}, onChargeCancel = () => {}, onPuff = () => {}, onHide = () => {}, onArrowDown = () => {}, hideHit = null, cfg = CONFIG } = {}) {
   const C = cfg.controls;
   const slop = C.tapSlopPx ?? C.tapMovePx;
   let charge = null; // 溜めの指の id
@@ -93,6 +93,7 @@ export function createControls({ onChargeStart = () => {}, onChargeEnd = () => {
       if (id === charge || second || dead.has(id)) return; // 3 本目は無視
       // 持ち主 22:47: 矢印の当たりかは触れたときに決める（離すまでに矢印が消えた・動いた・字だけに変わっても、矢印を押した指は払わない）
       second = { id, x0: x, y0: y, t0: t, x, y, far: 0, stick: false, dir: ZERO, onArrow: !!hideHit?.(x, y) };
+      if (second.onArrow) onArrowDown(x, y); // Fix round 1: 矢印に触れた瞬間（覚えておいた払うを捨てる）
     },
     move(id, x, y, t) {
       if (!second || id !== second.id) return;

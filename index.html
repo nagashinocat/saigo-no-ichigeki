@@ -154,6 +154,8 @@
       box-shadow: 0 0 0 4px #2a0f3a, 0 0 18px rgba(255, 140, 60, 0.9); animation: lookoutRing 0.6s ease-in-out infinite alternate; }
     #lookout .lo-tap { position: absolute; display: flex; align-items: center; justify-content: center; transform: rotate(-6deg);
       font: italic 900 17px/1 system-ui, -apple-system, "Arial Black", sans-serif; color: #fff4c2; -webkit-text-stroke: 4px #2a0f3a; paint-order: stroke fill; }
+    /* Fix round 1: display: flex が [hidden] に勝たないように（字だけの LOOK OUT! で「TAP」が残っていた） */
+    #lookout .lo-tap[hidden] { display: none; }
     @keyframes lookoutRing { from { transform: scale(0.94); } to { transform: scale(1.06); } }
     #lookout .lo-arrow { position: absolute; left: -28px; top: -21px; width: 56px; height: 42px; transform-origin: 50% 50%; }
     #lookout .lo-arrow i { position: absolute; inset: 0; background: #ffe14a; clip-path: polygon(0 32%, 52% 32%, 52% 0, 100% 50%, 52% 100%, 52% 68%, 0 68%);

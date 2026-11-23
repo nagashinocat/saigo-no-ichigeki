@@ -836,6 +836,17 @@ export function createAudio({ nav = globalThis.navigator, makeMedia = (src) => n
       shots.clear();
       rumbleSrcs = null; drone = null;
     },
+    // Fix round 1（見直し Minor 4）: 結果画面を出したとき。cutReplay（飛ばした）・silence（録画の終わり）が 0 にしたままの世界の音（master）を
+    // fade 秒で元の大きさへ戻し、先の予約も取り消す（結果画面の音が master を通っても鳴る）。無音の終わり（silenceEnd）も今へ。
+    // 瓦礫の音の道（debrisMode）・演出の道・BGM は触らない
+    restoreWorld(fade = 0.05) {
+      if (!ctx) return;
+      const t = now();
+      silenceEnd = Math.min(silenceEnd, t);
+      master.gain.cancelScheduledValues(t);
+      master.gain.setValueAtTime(master.gain.value, t);
+      master.gain.linearRampToValueAtTime(0.8, t + fade);
+    },
     // 瓦礫の音の道の状態（リプレイの始まりで 'replay'、遊びに戻ったら 'open'）
     debrisMode(mode) {
       if (mode !== 'off') debrisCut = false; // 22:47: 飛ばしたリプレイの黙らせは、次のリプレイ・遊び（'replay' / 'open'）で解く
