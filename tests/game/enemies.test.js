@@ -34,7 +34,9 @@ test('軍勢は spawnPerSec で、spawnDist ほどの距離の道路の上に湧
 
 test('探す: 道路に沿って searchSpeed で飛び、交差点で曲がる（建物の間の道からはみ出さない）', () => {
   const city = generateCity(7);
-  const e = createEnemies(createRng(7), CONFIG, { buildings: city.buildings });
+  // 持ち主 10:06 の釣り合いの直し（序盤の湧く速さ 0.5 → 0.28/秒）で、40 秒に湧く者が約半分になり、曲がった者の割合の数が少なすぎるので、
+  // ここは前の湧く速さ（0.5/秒・surgeMul 11）で同じ数を見る（確かめるのは道に沿って走り、曲がること）
+  const e = createEnemies(createRng(7), { ...CONFIG, enemy: { ...E, spawnPerSec: 0.5, surgeMul: 11 } }, { buildings: city.buildings });
   const seen = new Map(); // id → { dx, dz }（縦にも横にも動いたか）
   let maxOff = 0, n = 0, fast = 0;
   for (let i = 0; i < 40 * 30; i++) {

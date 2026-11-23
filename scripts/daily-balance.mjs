@@ -7,19 +7,20 @@
 //  - 立て直し（recovery）: 掴まれた（掴む者がいた）ときに払い、そのあと力が 80 以上に届いた回 / 掴まれて払った回
 //  - 払わない・隠れない（動くだけ）: 満タンに届いた数（0 のはず）と 60 秒の力の最大
 //  - 見つかった回数・見失わせた回数（追う者が見失った）の p50
-// ENEMY / HIDE / POWER='{...}' で CONFIG の一部を差し替えられる（balance-sim と同じ）
+//  - 持ち主 10:06: 払うを 3 回とも使って隠れない遊び方（bot.js POLICY.puffNoHide）の撃退成功（時期ごと。NOPNH=1 で省く）
+// ENEMY / HIDE / POWER / PUFF / ALERT / CHASE / STAGGER / PATROL / BOSS='{...}' で CONFIG の一部を、BEST / PNH='{...}' で遊び方を差し替えられる
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const root = path.resolve(process.argv[2] ?? path.join(path.dirname(new URL(import.meta.url).pathname), '..'));
 const imp = (p) => import(pathToFileURL(path.join(root, p)).href);
 const { createGame } = await imp('src/game/game.js');
-const { steerBot, actBot } = await imp('src/game/bot.js');
+const { steerBot, actBot, POLICY } = await imp('src/game/bot.js');
 const { CONFIG: BASE } = await imp('src/config.js');
 const { radiusFor } = await imp('src/game/charge.js');
 const { citySeed } = await imp('src/game/daily.js');
 const J = (k) => JSON.parse(process.env[k] ?? '{}');
-const CONFIG = { ...BASE, enemy: { ...BASE.enemy, ...J('ENEMY'), alert: { ...BASE.enemy.alert, ...J('ALERT') }, chase: { ...BASE.enemy.chase, ...J('CHASE') } }, hide: { ...BASE.hide, ...J('HIDE') }, power: { ...BASE.power, ...J('POWER') }, puff: { ...BASE.puff, ...J('PUFF') } };
+const CONFIG = { ...BASE, enemy: { ...BASE.enemy, ...J('ENEMY'), alert: { ...BASE.enemy.alert, ...J('ALERT') }, chase: { ...BASE.enemy.chase, ...J('CHASE') }, stagger: { ...BASE.enemy.stagger, ...J('STAGGER') }, patrol: { ...BASE.enemy.patrol, ...J('PATROL') }, kinds: { ...BASE.enemy.kinds, boss: { ...BASE.enemy.kinds.boss, ...J('BOSS') } } }, hide: { ...BASE.hide, ...J('HIDE') }, power: { ...BASE.power, ...J('POWER') }, puff: { ...BASE.puff, ...J('PUFF') } };
 const DT = 1 / 30;
 const dayKeys = (from, n) => Array.from({ length: n }, (_, i) => { const d = new Date(Date.UTC(+from.slice(0, 4), +from.slice(4, 6) - 1, +from.slice(6, 8)) + i * 864e5); return `${d.getUTCFullYear()}${String(d.getUTCMonth() + 1).padStart(2, '0')}${String(d.getUTCDate()).padStart(2, '0')}`; });
 // fix2: 既定は三つの時期（2026-07-01・2026-11-01・2027-03-01 から DAYS 日ずつ）。FROMS=YYYYMMDD,… か FROM=YYYYMMDD（一つ）で変えられる
@@ -29,8 +30,10 @@ const SEEDS = process.env.CITIES === 'ints'
   ? Array.from({ length: Number(process.env.SEEDS ?? 30) }, (_, i) => i + 1)
   : FROMS.flatMap((f) => dayKeys(f, Number(process.env.DAYS ?? 120)).map((k) => { PERIOD.push(f); return citySeed(k); }));
 const QUICK = !!process.env.QUICK;
-const BEST = { grab: 2, trigger: 0, crowd: Infinity, hide: true, ...J('BEST') };
-const NO = { grab: Infinity, trigger: 0, crowd: Infinity, hide: false };
+const BEST = { ...POLICY.best, ...J('BEST') };
+const NO = POLICY.none;
+// 持ち主 10:06: 払うを 3 回とも使って隠れない遊び方（撃退成功 5 割以上が目標）
+const PNH = { ...POLICY.puffNoHide, ...J('PNH') };
 const LEVELS = [95, 96, 97, 98, 99, 100];
 const q = (xs, p) => { const s = [...xs].sort((a, b) => a - b); return s.length ? s[Math.min(s.length - 1, Math.floor(p * s.length))] : NaN; };
 
@@ -62,6 +65,7 @@ function run(seed, st) {
 const t0 = Date.now();
 const best = SEEDS.map((s) => run(s, BEST));
 const no = QUICK ? [] : SEEDS.map((s) => run(s, NO));
+const pnh = process.env.NOPNH ? [] : SEEDS.map((s) => run(s, PNH));
 const N = SEEDS.length;
 const got = best.map((r) => r.full).filter(Number.isFinite);
 console.log(`街 ${N}（${process.env.CITIES === 'ints' ? `seed 1〜${N}` : `今日の街 ${FROMS.join('・')} から ${process.env.DAYS ?? 120} 日ずつ`}）`);
@@ -82,5 +86,12 @@ console.log(`満タンで放った回 ${at100.length}: 撃退成功 ${at100.filt
 const gp = best.filter((r) => r.grabPuff);
 console.log(`立て直し: 掴まれて払った回 ${gp.length}、そのあと力 80 以上 ${gp.filter((r) => r.recovered).length}（${gp.length ? (100 * gp.filter((r) => r.recovered).length / gp.length).toFixed(0) : '-'}%）`);
 console.log(`見つかった回数 p50=${q(best.map((r) => r.spotted), 0.5)}  隠れた回数 p50=${q(best.map((r) => r.hides), 0.5)}  見失わせた（lose）p50=${q(best.map((r) => r.lost), 0.5)}`);
+if (pnh.length) {
+  // 撃退成功は、best と同じく力が L に届いた瞬間に放つ（一番よい L）
+  let bl = null;
+  for (const [i, L] of LEVELS.entries()) { const ok = pnh.filter((r) => r.lv[i]?.clear).length; if (!bl || ok > bl.ok) bl = { L, i, ok }; }
+  console.log(`払う 3 回・隠れない: 満タンに届いた ${pnh.filter((r) => Number.isFinite(r.full)).length}/${N}  撃退成功 L=${bl.L} で ${bl.ok}/${N}（${(100 * bl.ok / N).toFixed(0)}%）`);
+  if (PERIOD.length) for (const f of FROMS) { const rs = pnh.filter((_, i) => PERIOD[i] === f); const ok = rs.filter((r) => r.lv[bl.i]?.clear).length; console.log(`  ${f} から: ${ok}/${rs.length}（${(100 * ok / rs.length).toFixed(1)}%）`); }
+}
 if (!QUICK) console.log(`払わない・隠れない: 満タンに届いた ${no.filter((r) => Number.isFinite(r.full)).length}/${N}  60 秒の力 p50=${q(no.map((r) => r.end), 0.5).toFixed(1)} 最大=${Math.max(...no.map((r) => r.end)).toFixed(1)}`);
 console.log(`（${((Date.now() - t0) / 1000).toFixed(0)} 秒）`);

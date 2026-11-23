@@ -11,6 +11,14 @@ import { createLookout } from './lookout.js';
 // R1f（持ち主 18:14「LOOK OUT!の矢印をタップ」）: 遊ぶ人と同じく、LOOK OUT! の矢印が出たら、その物陰へ隠れる（st.lookout）。ゲームごとに一つの見張り
 const lookouts = new WeakMap();
 
+// 持ち主 10:06（「払う全部使って隠れる無しでもクリアできないから…85パーセントくらい」）: 釣り合いを測る遊び方（actBot の st）
+//  best: 最善（掴まれ 2 人で払う・追われたら隠れる）。puffNoHide: 払うは 3 回とも使う（掴まれ 2 人で）が、隠れる・LOOK OUT! は使わない。
+//  none: 払わない・隠れない（動くだけ）
+export const POLICY = {
+  best: { grab: 2, trigger: 0, crowd: Infinity, hide: true },
+  puffNoHide: { grab: 2, trigger: 0, crowd: Infinity, hide: false, lookout: false },
+  none: { grab: Infinity, trigger: 0, crowd: Infinity, hide: false },
+};
 export const BOT = { holdR: 40, holdDist: 45, centreSlack: 6, dodgeDist: 16, dodgeW: 1.6, coneW: 1.2, coneSlack: 8 };
 const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
 

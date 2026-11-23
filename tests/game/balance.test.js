@@ -1,6 +1,6 @@
 import { test, expect } from 'vitest';
 import { createGame } from '../../src/game/game.js';
-import { steerBot, actBot } from '../../src/game/bot.js';
+import { steerBot, actBot, POLICY } from '../../src/game/bot.js';
 import { radiusFor } from '../../src/game/charge.js';
 import { CONFIG } from '../../src/config.js';
 import { citySeed } from '../../src/game/daily.js';
@@ -42,8 +42,10 @@ test('R0 / M2: 最善の操作（動くボット）でも、満タンは終わ�
   const ts = SEEDS.map((s) => play(s).full);
   const got = ts.filter(Number.isFinite);
   // R1f: 24 の街の 16〜21（前は 12 の種の 8〜11。fix1: 下限は前の割合 8/12 より緩めない）
-  expect(got.length).toBeGreaterThanOrEqual(16);
-  expect(got.length).toBeLessThanOrEqual(Math.floor(SEEDS.length * 0.9)); // 上手に遊んでも失敗することがある
+  // 持ち主 10:06（「数値で85パーセントくらいのクリア確率に」。最善の撃退成功 約 85%、時期ごと 80〜90%）: 24 の街の 20〜22
+  // （下限 80%。上限は 90% を丸めた 22/24。今日の街 360 では 85%、この 24 の街では 20/24 が満タン・p50 52.1 秒）
+  expect(got.length).toBeGreaterThanOrEqual(Math.ceil(SEEDS.length * 0.8));
+  expect(got.length).toBeLessThanOrEqual(Math.round(SEEDS.length * 0.9)); // 上手に遊んでも失敗することがある
   expect(median(got)).toBeGreaterThanOrEqual(52);
   expect(median(got)).toBeLessThanOrEqual(56);
 }, 120000);
@@ -100,7 +102,8 @@ test('S9 / R0 fix1 / M2: 最善の操作で満タンで放てば必ず撃退成�
   // R1f: 今日の街 24（前は種 1〜16 で 9 回以上）
   const seeds = SEEDS;
   const full = seeds.map((s) => releaseAtLevel(s, CONFIG.power.max));
-  expect(full.filter((o) => o?.clear).length).toBeGreaterThanOrEqual(Math.ceil(seeds.length * 0.6));
+  // 持ち主 10:06: 最善の撃退成功の下限 60% → 80%（約 85% の目標）
+  expect(full.filter((o) => o?.clear).length).toBeGreaterThanOrEqual(Math.ceil(seeds.length * 0.8));
   for (const o of full) if (o) { expect(o.clear).toBe(true); expect(Math.hypot(o.at.x, o.at.z)).toBeLessThan(60); } // 中心のそば
   for (const level of [70, 90, 96]) {
     for (const s of seeds.slice(0, 8)) {
@@ -123,4 +126,25 @@ test('M2: 中心から 200 m の所へ寄って放つ操作は、中心のそば
   for (const o of far) if (o && Math.hypot(o.at.x, o.at.z) > 150) expect(o.clear).toBe(false);
   // 半径だけを比べる: 満タンの半径は、中心から 200 m の点からでは街の反対の端に届かない
   expect(radiusFor(CONFIG.power.max)).toBeLessThan(CONFIG.cityRadius + 200 - 40);
+}, 120000);
+
+// 持ち主 10:06（「払う全部使って隠れる無しでもクリアできない」）: 払うを 3 回とも使い、隠れない遊び方（bot.js POLICY.puffNoHide）の撃退成功を 5 割以上に。
+// 許された値（払う費用・吸う・よろめき・loseSec・軍勢の数と時刻表・知らせの輪・大物の時刻・湧く距離）の範囲では、最善を 9 割以下に保ったまま
+// 5 割に届く組み合わせが見つからなかった（今日の街 360 で 0%。調べた組み合わせは lookout-timing-report.md）。下限は持ち主・まとめ役の判断を待つ
+test.todo('持ち主 10:06: 払う 3 回・隠れない遊び方の撃退成功は 5 割以上（まとめ役の判断待ち）');
+
+test('持ち主 10:06: 払う 3 回・隠れない遊び方は、払うを 3 回まで使い、隠れない（遊び方の決まり）', () => {
+  expect(POLICY.puffNoHide.hide).toBe(false);
+  expect(POLICY.puffNoHide.lookout).toBeFalsy();
+  for (const seed of SEEDS.slice(0, 4)) {
+    const g = createGame({ seed });
+    g.begin(); g.pressStart();
+    let puffs = 0;
+    for (let t = 0; g.phase === 'playing' && t < CONFIG.roundSeconds - DT / 2; t += DT) {
+      steerBot(g); if (actBot(g, POLICY.puffNoHide) === 'puff') puffs++; g.update(DT);
+      expect(g.hero.hidden).toBeFalsy();
+    }
+    expect(puffs).toBeLessThanOrEqual(CONFIG.puff.uses);
+    expect(g.runStats.hides).toBe(0);
+  }
 }, 120000);

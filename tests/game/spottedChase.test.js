@@ -46,7 +46,7 @@ function run(seed, sec = 45) {
   const spottedIds = new Set();
   let lostOk = 0, lostEarly = 0;
   let backToSearch = 0, maxGrowSec = 0, ringOut = 0, staggerRecovered = 0, staggerBad = 0, meanBumps = 0, maxMeanBump = 0, moved = 0;
-  let prevMean = null, prevIds = null;
+  let prevMean = null, prevIds = null, maxR = 0;
   for (let i = 0; i < sec / DT && g.phase === 'playing'; i++) {
     const [mx, mz] = LEGS[Math.floor((i * DT) / 1.5) % LEGS.length];
     g.setMove(mx, mz);
@@ -57,6 +57,7 @@ function run(seed, sec = 45) {
     g.update(DT);
     const H = g.hero;
     if (Math.hypot(H.x - hx, H.z - hz) > 0.3 * CONFIG.hero.speed * DT) moved++;
+    maxR = Math.max(maxR, Math.hypot(H.x, H.z));
     const ids = [];
     let sum = 0;
     for (const e of g.enemies.list) {
@@ -117,14 +118,16 @@ function run(seed, sec = 45) {
     prevIds = g.enemies.list.filter((e) => ids.includes(e.id)).map((e) => ({ id: e.id, d: Math.hypot(e.x - H.x, e.z - H.z) }));
     prevMean = ids.length ? sum / ids.length : prevMean;
   }
-  return { spotted: spottedIds.size, lostOk, lostEarly, backToSearch, maxGrowSec, ringOut, staggerRecovered, staggerBad, meanBumps, maxMeanBump, moved, hero: g.hero };
+  return { spotted: spottedIds.size, lostOk, lostEarly, backToSearch, maxGrowSec, ringOut, staggerRecovered, staggerBad, meanBumps, maxMeanBump, moved, maxR, hero: g.hero };
 }
 
 for (const seed of [1, 2, 3]) {
   test(`R1d / M2 / R1f seed ${seed}: 28 m/s で通りを渡り角を曲がる主人公を、見つけた軍勢は見えている間と見えなくなって loseSec の間は見失わない（それより早く search に戻らず、見える間は距離が増え続けず、掴む者は今の主人公の輪の内）`, () => {
     const r = run(seed);
     expect(r.moved).toBeGreaterThan(300); // 主人公はずっと動いていた（10 秒以上）
-    expect(Math.hypot(r.hero.x, r.hero.z)).toBeGreaterThan(30);
+    // 持ち主 10:06 の釣り合いの直し（序盤の湧く速さ 0.3/秒）で、seed 3 の主人公は終わりに中心から 21 m の所へ戻っていた。
+    // 確かめたいのは「中心から離れて通りを走った」ことなので、終わりの位置ではなく、走った間の中心からの一番遠い距離で見る
+    expect(r.maxR).toBeGreaterThan(30);
     expect(r.spotted).toBeGreaterThan(10);
     expect(r.backToSearch).toBe(0);
     expect(r.maxGrowSec).toBeLessThanOrEqual(0.3); // 角の一瞬・よろめきから加速し直す間まで

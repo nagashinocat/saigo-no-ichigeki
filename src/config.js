@@ -63,7 +63,11 @@ export const CONFIG = {
     // 払う 3 → 2.8、吸う 1.4 → 1.5/秒（tests/game/balance.test.js の範囲に戻す。数は task-R1-report.md）
     // R1f: 吸う 1.5 → 1.2/秒（6 人で 7.2/秒）。fix1 で 0.8 にしたのは、まとめ役の判断で 1.2 に戻した
     // fix2（まとめ役の判断）: 0.8 → 1.2 に戻す
-    spawnPerSec: 0.5, surgeStart: 40, surgeEnd: 52, surgeMul: 11, drainPerSec: 1.2, maxGrabbing: 6,
+    // 持ち主 10:06（「数値で85パーセントくらいのクリア確率にしたらいいかも」）: 吸う 1.2 → 0.6/秒、序盤の湧く速さ 0.5 → 0.28/秒
+    // （surgeMul 11 → 22.2 で、60 秒で湧く数は約 100 のまま。終盤の山 5.5 → 6.2/秒）。三つの時期の今日の街 360 で最善の撃退成功 75 → 85%
+    // （時期ごと 85.0 / 84.2 / 86.7%）。払うを 3 回とも使って隠れない遊び方は 0% のまま（この値の範囲では 5 割に届かない。
+    // machi-hakai-shots/round5/lookout-timing-report.md）
+    spawnPerSec: 0.28, surgeStart: 40, surgeEnd: 52, surgeMul: 22.2, drainPerSec: 0.6, maxGrabbing: 6,
     spawnDist: [50, 66], roamDist: 75, laneSpread: 1.6, // 湧く輪（主人公から m）は R1g のカメラでは画面のほぼ外
     searchSpeed: 30, inwardBias: 0.8, turnRate: 16, lookAhead: 2.5, accel: 30, brake: 70,
     // M2（持ち主 09:11「敵の前方ライトを少し広くして」）: 見つけるのは前を照らすライトの中だけ。前の 28 m の丸 → 前向きの扇
@@ -159,6 +163,6 @@ export const CONFIG = {
   // 持ち主 10:02（「隠れるの矢印を押すタイミングがない」。制作側の判断、持ち主が直せる）: 早めに知らせる nearK 1.4 → 1.8・angleK 1.2 → 1.4・
   // predictSec 0.6 → 1.2（道を走る者は次の交差点で曲がる道すじも predictStep m ごとに先読み。lookout.js inDanger）、確かめる checkEvery 0.2 → 0.1 秒、
   // 最低 minShowSec 0.4 → 1.0 秒は出す。見つかった直後も graceSec 秒は矢印を出す（掴まれていない・隠れられるとき）。
-  // 今日の街 60 で、その前 1.5 秒見つかっていなかった回の知らせの先は p50 0.60 → 1.57 秒・1.0 秒以上 6% → 95%（scripts/lookout-lead.mjs）
+  // 今日の街 60 で、その前 1.5 秒見つかっていなかった回の知らせの先は p50 0.40 → 1.23 秒・1.0 秒以上 4% → 95%（scripts/lookout-lead.mjs）
   lookout: { nearK: 1.8, angleK: 1.4, predictSec: 1.2, predictStep: 6, checkEvery: 0.1, minShowSec: 1.0, holdK: 1.15, graceSec: 0.8, dirs: 8, agreeDeg: 15, nearBuildings: 80 },
 };
