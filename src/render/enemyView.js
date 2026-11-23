@@ -671,6 +671,8 @@ export function createEnemyView(scene, tier, { sunDir = new THREE.Vector3(0.8, 0
     // 演出の一人: { id, pose: { x, y, z, yaw, pitch, roll, reach, thrust, keep, head } }（pose は毎フレーム読む）。null でやめる。
     // id が null（軍勢がいない）でも、名もない一人を描く
     // R0b: f.group（[{ id, pose }]）があれば、その乗り手たちも演出の姿勢で描く（本当の場所には描かない）
+    // その場のリトライ（restartRound）: 一回ごとに覚えている見た目（大物の探照灯の現れた瞬間）を忘れる
+    resetRound() { searchlight.reset(); },
     setFocus(f) { focus = f; focusIds = f?.group ? new Set(f.group.map((g) => g.id).filter((x) => x !== null && x !== undefined)) : null; },
     // 演出の一人の専用の体（riderBody の戻り値）。大きく映っても箱の寄せ集めに見えない
     setRiderBody(b) {

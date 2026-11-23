@@ -80,7 +80,7 @@ const debugMode = params.has('debug');
 // 街の作り・軍勢の乱数・種類・見回り・演出の乱数のすべてがこの種から（game.js・下の各部品）
 const session = (() => { try { return window.sessionStorage; } catch { return null; } })();
 // fix1: もう一度の街（sessionStorage、日本時間の 0 時をまたいでも同じ街）を一度だけ使う
-const cityPick = pickCity({ params, storage: session });
+const cityPick = pickCity({ params, storage: session, hash: location.hash }); // 見直し Minor 2: sessionStorage が使えないときの #retry=<鍵>（introMode が読んで消す）
 const seed = cityPick.seed;
 // fix1: artifact の iframe の中なら、共有のリンクは正式な URL（SHARE_BASE_URL）。無ければリンクを出さない
 const framedPage = (() => { try { return window.self !== window.top; } catch { return true; } })();
@@ -848,8 +848,7 @@ const startClip = (info) => { clipRestored(); return clipSession.start(info); };
 // 作り直すのは一回ぶんの状態だけで、GPU の形・材質・描き先は作らない（街は起動したときの写し pristineCity へ restore。何度リトライしても増えない）
 function restartRound() {
   if (debugMode && debugHooks.failRestart) throw new Error('debug: failRestart'); // 撮影・試し: 控えの読み直しを起こす
-  // 録画・演出・リプレイ・結末・結果を閉じる
-  if (clipSession.busy) clipSession.cancel();
+  // 演出・リプレイ・結末・結果を閉じる（録画の途中のリトライは requestRetry が断る。見直し Minor 1）
   clipRestoring = false; clipKind = null;
   cinematic.stop(); replay.stop(); blackhole.stop();
   result.hide(); replayTag.hidden = true;
@@ -869,7 +868,7 @@ function restartRound() {
   patrolGlow.reset(); patrolGlow.setSurvivors(null);
   debrisView.update(); rubbleView.update();
   // 主人公と手の見た目、上空カメラ
-  enemyView.setFocus?.(null); enemyView.setHeroYaw(0); enemyView.setHeroLift(0); enemyView.setHeroLean(0); enemyView.setHeroCrouch(0); enemyView.setHeroHop(0);
+  enemyView.resetRound(); enemyView.setFocus?.(null); enemyView.setHeroYaw(0); enemyView.setHeroLift(0); enemyView.setHeroLean(0); enemyView.setHeroCrouch(0); enemyView.setHeroHop(0);
   heroMoved = false; liftT = 0;
   hand.reset(); hand.setCollapse(0);
   dashStreak.update(game.hero, 1e3); hideAction.update({ ...game.hero, action: null }, 1e3); // 滑り込みの筋・跳ぶ見た目を消しきる
@@ -887,10 +886,11 @@ function restartRound() {
 // （印は sessionStorage、だめなら URL の #retry。タッチの端末は小さな「タップでスタート」の一行だけ）
 function requestRetry() {
   return retryRound({
+    busy: () => clipping || clipSession.busy, // 録画の途中は断る（後始末の clipHost.end が新しい一回を無音にしない）
     restart: restartRound,
     onError: (e) => console.error('その場のリトライに失敗したので読み直す', e),
     session, cityPick, rememberRetryCity,
-    markRetry: (s) => markRetry(s, retryPage),
+    markRetry: (s) => markRetry(s, retryPage, cityPick.source === 'daily' ? cityPick.key : null), // #retry=<今日の街の鍵>（0 時をまたいでも同じ街）
     reload: () => location.reload(),
   });
 }

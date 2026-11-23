@@ -92,6 +92,16 @@ test('リトライはその場で遊び直す（restart）。読み直さず、�
   expect(s.m.size).toBe(0);
 });
 
+// リトライの見直し Minor 1: 録画（動画で共有）の途中はリトライを断る。録画の後始末（clipHost.end）が、あとから新しい一回を無音にしないように
+test('録画の途中（busy）はリトライを断る（遊び直さず、読み直しもしない）', () => {
+  const order = [];
+  const r = retryRound({ busy: () => true, restart: () => order.push('restart'), session: store(), cityPick: null, rememberRetryCity: () => order.push('remember'), markRetry: () => order.push('mark'), reload: () => order.push('reload') });
+  expect(r).toBe('busy');
+  expect(order).toEqual([]);
+  expect(retryRound({ busy: () => false, restart: () => order.push('restart'), session: store(), cityPick: null, rememberRetryCity() {}, markRetry() {}, reload() {} })).toBe('inplace');
+  expect(order).toEqual(['restart']);
+});
+
 test('控え: その場の遊び直しが投げたら、同じ街（0 時をまたいでも）で導入を飛ばして読み直す（覚える → 印 → 読み直す の順）', () => {
   const s = store();
   const before = Date.UTC(2026, 10, 21, 14, 59, 0); // 日本時間 11/21 23:59

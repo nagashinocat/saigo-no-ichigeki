@@ -45,9 +45,11 @@ function takeRetryCity(storage) {
 
 // どの街で遊ぶか。{ source: 'debug' | 'link' | 'daily', key: 'YYYYMMDD' | null, seed, today }
 // 今日の日付のリンクは今日の街と同じ（見出しも「今日の街」）。storage: sessionStorage（もう一度の街を一度だけ使う。?seed=・?city= が先）
-export function pickCity({ params, now = Date.now(), storage = null }) {
+// hash: location.hash。控えの読み直しで sessionStorage が使えないときの印 '#retry=<鍵>'（introFlow の markRetry が置き、introMode が読んで消す）
+export function pickCity({ params, now = Date.now(), storage = null, hash = '' }) {
   const today = jstDayKey(now);
-  const retry = takeRetryCity(storage); // 先に読んで消す（?seed=・?city= のときも残さない）
+  const m = typeof hash === 'string' ? /^#retry=(\d{8})$/.exec(hash) : null;
+  const retry = takeRetryCity(storage) ?? (m ? parseCityKey(m[1]) : null); // 先に読んで消す（?seed=・?city= のときも残さない）
   const seedParam = Number.parseInt(params.get('seed') ?? '', 10);
   if (Number.isFinite(seedParam)) return { source: 'debug', key: null, seed: seedParam, today };
   const link = parseCityKey(params.get('city'));

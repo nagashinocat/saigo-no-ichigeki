@@ -153,3 +153,28 @@ test('R3: 同じ日の街は同じ街・同じ軍勢の時刻表（見回り・�
   const c = schedule(citySeed('20261122'), 5);
   expect(c.city.buildings.map((x) => [x.x, x.z])).not.toEqual(a.city.buildings.map((x) => [x.x, x.z]));
 }, 60000);
+
+// リトライの見直し Minor 2: 控えの読み直しで sessionStorage が使えない（artifact の iframe）ときも、日本時間の 0 時をまたいで同じ今日の街。
+// 印は URL の #retry=<鍵>（markRetry）。pickCity はそれを一度だけ使う（introMode が読んだら消す）
+test('pickCity: #retry=<鍵> の今日の街を使う（0 時をまたいでも）。?seed=・?city= が先。壊れた鍵は使わない', async () => {
+  const { markRetry, introMode } = await import('../../src/ui/introFlow.js');
+  const P = (s) => new URLSearchParams(s);
+  const throwing = { getItem() { throw new DOMException('x', 'SecurityError'); }, setItem() { throw new DOMException('x', 'SecurityError'); }, removeItem() {} };
+  const location = { pathname: '/index.html', search: '', hash: '' };
+  const page = { location, history: { state: null, replaceState(_s, _t, url) { const u = new URL(url, 'https://x.test'); location.search = u.search; location.hash = u.hash; } } };
+  const before = Date.UTC(2026, 10, 21, 14, 59, 0), after = Date.UTC(2026, 10, 21, 15, 1, 0); // 日本時間 11/21 23:59 → 11/22 0:01
+  const pick = pickCity({ params: P(''), now: before, storage: throwing });
+  expect(markRetry(throwing, page, pick.key)).toBe('hash');
+  expect(location.hash).toBe('#retry=20261121');
+  // 読み直したページ（main.js と同じ順: pickCity → introMode）
+  const again = pickCity({ params: P(location.search), now: after, storage: throwing, hash: location.hash });
+  expect(again).toEqual({ source: 'daily', key: '20261121', seed: citySeed('20261121'), today: '20261122' });
+  expect(introMode({ params: P(location.search), storage: throwing, page })).toBe('retry');
+  expect(location.hash).toBe(''); // 一度だけ
+  expect(pickCity({ params: P(''), now: after, storage: throwing, hash: location.hash }).key).toBe('20261122');
+  // ?seed=・?city= が先。壊れた鍵・鍵なしの #retry は今日の街
+  expect(pickCity({ params: P('?seed=7'), now: after, hash: '#retry=20261121' }).seed).toBe(7);
+  expect(pickCity({ params: P('?city=20261101'), now: after, hash: '#retry=20261121' }).key).toBe('20261101');
+  expect(pickCity({ params: P(''), now: after, hash: '#retry=2026xx21' }).key).toBe('20261122');
+  expect(pickCity({ params: P(''), now: after, hash: '#retry' }).key).toBe('20261122');
+});

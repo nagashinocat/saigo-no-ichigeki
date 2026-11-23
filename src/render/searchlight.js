@@ -106,6 +106,8 @@ export function createSearchlight(group) {
   let bornId = null, bornAt = 0;
   return {
     beam, spot,
+    // その場のリトライ（restartRound）: 大物の「現れた瞬間」を忘れる（新しい一回の大物も来た直後の掃きから。読み直したページと同じ）
+    reset() { bornId = null; bornAt = 0; beam.visible = spot.visible = false; },
     // heroPos: 主人公の位置 { x, z }（既定は原点）
     update(boss, time, heroPos = { x: 0, z: 0 }) {
       const on = !!boss && boss.e.state !== 'dead';

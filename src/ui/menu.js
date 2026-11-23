@@ -22,8 +22,10 @@ export function saveVolumes(storage, v) {
 // R1f（R3 の見直しの持ち越し）: メニューのリトライ（と結果の「もう一度」）は、同じ街で、導入も説明も飛ばしてすぐ遊び直す。
 // 持ち主 2026-11-23 08:41: ふだんはページを読み直さず、その場で遊び直す（restart。音の許可が残るので TAP が要らない。sessionStorage にもよらない）。
 // restart が投げたときだけ控えとして読み直す: 今日の街を覚え（rememberRetryCity）、導入を飛ばす印（markRetry）を置き、読み直す（この順）。
-// 戻り値: 'inplace'（その場で）か 'reload'（読み直した）
-export function retryRound({ restart, onError = () => {}, session, cityPick, rememberRetryCity, markRetry, reload }) {
+// 戻り値: 'inplace'（その場で）・'reload'（読み直した）・'busy'（録画の途中なので断った）
+// busy: 断る間（録画の途中。録画の後始末があとから新しい一回の音を黙らせないように）なら 'busy' を返し、何もしない
+export function retryRound({ busy = () => false, restart, onError = () => {}, session, cityPick, rememberRetryCity, markRetry, reload }) {
+  if (busy()) return 'busy';
   try {
     restart();
     return 'inplace';

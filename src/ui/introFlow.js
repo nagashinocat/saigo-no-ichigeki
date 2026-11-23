@@ -28,7 +28,8 @@ export function introMode({ params, storage, page = null }) {
     if (retry) storage.removeItem(RETRY_KEY);
   } catch { /* 保存できない環境では #retry を見る */ }
   try {
-    if (page?.location?.hash === RETRY_HASH) {
+    const h = page?.location?.hash ?? '';
+    if (h === RETRY_HASH || h.startsWith(RETRY_HASH + '=')) { // '#retry' か '#retry=<今日の街の鍵>'（鍵は pickCity が読む）
       retry = true;
       page.history.replaceState(page.history.state ?? null, '', page.location.pathname + page.location.search);
     }
@@ -38,14 +39,16 @@ export function introMode({ params, storage, page = null }) {
 
 // 読み直しの控えの直前に呼ぶ（読み直したページが導入も説明も飛ばす）。sessionStorage に置けて読み返せれば 'storage'、
 // だめなら（投げる・無い・置いても読めない）URL の #retry（履歴は増やさない）で 'hash'。どちらもだめなら null（導入から）
-export function markRetry(storage, page = null) {
+// cityKey: 今日の街の鍵（'YYYYMMDD'。#retry=<鍵> で運び、読み直したページの pickCity が日本時間の 0 時をまたいでも同じ街にする）
+export function markRetry(storage, page = null, cityKey = null) {
   try {
     storage?.setItem(RETRY_KEY, '1');
     if (storage?.getItem(RETRY_KEY) === '1') return 'storage';
   } catch { /* #retry へ */ }
   try {
     if (page) {
-      page.history.replaceState(page.history.state ?? null, '', page.location.pathname + page.location.search + RETRY_HASH);
+      const key = typeof cityKey === 'string' && /^\d{8}$/.test(cityKey) ? '=' + cityKey : '';
+      page.history.replaceState(page.history.state ?? null, '', page.location.pathname + page.location.search + RETRY_HASH + key);
       return 'hash';
     }
   } catch { /* 導入から */ }
