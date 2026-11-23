@@ -148,10 +148,11 @@
     #lookout.pop .lo-text { animation: lookoutPop 0.42s cubic-bezier(0.2, 1.6, 0.4, 1) both; }
     @keyframes lookoutPop { 0% { transform: translate(-50%, -50%) rotate(-18deg) scale(0.2); opacity: 0; } 55% { transform: translate(-50%, -50%) rotate(-5deg) scale(1.22); opacity: 1; }
       80% { transform: translate(-50%, -50%) rotate(-10deg) scale(0.92); } 100% { transform: translate(-50%, -50%) rotate(-8deg) scale(1); } }
-    #lookout .lo-hit { position: absolute; width: 88px; height: 88px; margin: -44px 0 0 -44px; border-radius: 50%;
+    /* 持ち主 22:47: 丸は border-box（大きさ・置き場所と当たりは lookoutView.js の RING_R・HIT_R・TAP_BOX から JS が置く） */
+    #lookout .lo-hit { position: absolute; box-sizing: border-box; width: 88px; height: 88px; margin: -44px 0 0 -44px; border-radius: 50%;
       background: radial-gradient(circle, rgba(255, 225, 74, 0.28) 0 55%, rgba(255, 225, 74, 0) 72%); border: 4px solid #ffe14a;
       box-shadow: 0 0 0 4px #2a0f3a, 0 0 18px rgba(255, 140, 60, 0.9); animation: lookoutRing 0.6s ease-in-out infinite alternate; }
-    #lookout .lo-hit::after { content: 'TAP'; position: absolute; left: 50%; bottom: -24px; transform: translateX(-50%) rotate(-6deg);
+    #lookout .lo-tap { position: absolute; display: flex; align-items: center; justify-content: center; transform: rotate(-6deg);
       font: italic 900 17px/1 system-ui, -apple-system, "Arial Black", sans-serif; color: #fff4c2; -webkit-text-stroke: 4px #2a0f3a; paint-order: stroke fill; }
     @keyframes lookoutRing { from { transform: scale(0.94); } to { transform: scale(1.06); } }
     #lookout .lo-arrow { position: absolute; left: -28px; top: -21px; width: 56px; height: 42px; transform-origin: 50% 50%; }
@@ -351,7 +352,7 @@
     </div>
   </div>
   <div id="hideMark" hidden><div class="hm-ring"></div><div class="hm-tag">かくれ中</div></div>
-  <div id="lookout" hidden><div class="lo-hit"></div><div class="lo-arrow"><b></b><i></i></div><div class="lo-text"></div></div>
+  <div id="lookout" hidden><div class="lo-hit"></div><div class="lo-tap" hidden>TAP</div><div class="lo-arrow"><b></b><i></i></div><div class="lo-text"></div></div>
   <div id="start" hidden>長押しで力を貯め、離して最後の一撃<br><small>貯めながら、もう一本の指を長押しで動く・短くタップで払う（3 回まで）<br>LOOK OUT! が出たら 矢印をタップで物陰に隠れる<br>払うは まわりの者を はがす（重い者・大物は倒れず よろめく）</small></div>
   <div id="replay" hidden><span class="replay-tag">リプレイ</span><span class="replay-hint">タップでとばす</span></div>
   <div id="result" hidden></div>

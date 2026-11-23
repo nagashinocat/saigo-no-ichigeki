@@ -25,3 +25,12 @@ export function createPuffBuffer({ windowSec = 0.25 } = {}) {
     clear() { pending = null; },
   };
 }
+
+// 持ち主 22:47「隠れるより先に払うが反応して爆発してる」: 溜めている間の 2 本目の指のタップの行き先（controls の onPuff / onHide）。
+// 矢印のタップ（隠れる）は払うの道（puff と覚えておく払う）を通らず、覚えておいた払うも捨てる（隠れたあとに前のタップの払うが出ない）
+export function secondFingerTaps({ buffer, puff, hide }) {
+  return {
+    onPuff(x, y) { puff(x, y); },
+    onHide(x, y) { buffer.clear(); hide(x, y); },
+  };
+}

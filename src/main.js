@@ -26,7 +26,7 @@ import { createRng } from './rng.js';
 import { createControls, keyVector, MOVE_KEYS, screenToWorld } from './input/controls.js';
 import { createJoystickView } from './ui/joystick.js';
 import { createKeyTwice } from './input/keyTwice.js';
-import { createPuffBuffer } from './input/puffBuffer.js';
+import { createPuffBuffer, secondFingerTaps } from './input/puffBuffer.js';
 import { createMenu, retryRound } from './ui/menu.js';
 import { createPause } from './ui/pause.js';
 import { bindPageLeave } from './ui/pageLeave.js';
@@ -174,9 +174,9 @@ const controls = createControls({
   onChargeStart() { startHint.hidden = true; game.pressStart(); },
   onChargeEnd() { game.pressEnd(); },
   onChargeCancel() { game.pressCancel(); },
-  onPuff(x, y) { tryPuff(x, y); },
   // R1f（持ち主 18:14「LOOK OUT!の矢印をタップ」）: 2 本目の指のタップが LOOK OUT! の矢印の当たりに触れたら、その物陰へ隠れる（シュッはやめた）
-  onHide() { tryHideArrow(); },
+  // 持ち主 22:47: 矢印のタップは払うの道を通らず、覚えておいた払うも捨てる（input/puffBuffer.js secondFingerTaps）
+  ...secondFingerTaps({ buffer: puffBuffer, puff: (x, y) => tryPuff(x, y), hide: () => tryHideArrow() }),
   hideHit: (x, y) => lookoutView.hit(x, y),
 });
 // R1e（持ち主 16:55）: 見つかりそうなときの「LOOK OUT!」と、隠れられる物陰の向きの矢印（音は出さない）。R1f: 矢印は大きな当たり（タップで隠れる）

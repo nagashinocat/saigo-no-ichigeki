@@ -8,6 +8,7 @@ import { CONFIG } from '../config.js';
 //    R1f（持ち主 18:14「払うが反応し辛いのかスワイプと誤認識してるのか…似た操作はやめよう」）: R1e のシュッ（なぞって隠れる）はやめた。
 //    タップ: 触れてから longPressSec 秒より前に離し、触れた所からの動きがいちばん遠くでも tapSlopPx px 未満（10 px で仮のスティックが出ていてもよい）。
 //      タップが hideHit(x, y)（LOOK OUT! の矢印の当たり。触れた所で見る）に入れば onHide(x, y)、外なら払う（onPuff(x, y)。押した所に「足りない」を出せるように）
+//      持ち主 22:47: 当たりは触れたとき（down）に見て覚える。離すときに矢印が消えていても、矢印に触れた指は払わない
 //    M2 のスティックを同じ向きに 2 回倒して隠れるはやめた（R1e。溜めながらでは使えなかった。PC の向きのキーの 2 回押しは keyTwice.js）
 //  3 本目からの指は無視する。溜めの指が離れたら、2 本目（スティック）は消え、その指は離れるまで何もしない
 //  溜めていない（1 本目がない）ときは、動きも払うもない（最初の指は必ず溜め）
@@ -90,7 +91,8 @@ export function createControls({ onChargeStart = () => {}, onChargeEnd = () => {
         return;
       }
       if (id === charge || second || dead.has(id)) return; // 3 本目は無視
-      second = { id, x0: x, y0: y, t0: t, x, y, far: 0, stick: false, dir: ZERO };
+      // 持ち主 22:47: 矢印の当たりかは触れたときに決める（離すまでに矢印が消えた・動いた・字だけに変わっても、矢印を押した指は払わない）
+      second = { id, x0: x, y0: y, t0: t, x, y, far: 0, stick: false, dir: ZERO, onArrow: !!hideHit?.(x, y) };
     },
     move(id, x, y, t) {
       if (!second || id !== second.id) return;
@@ -107,7 +109,7 @@ export function createControls({ onChargeStart = () => {}, onChargeEnd = () => {
       dropSecond();
       // R1f: タップ（0.18 秒より前に離し、触れた所から slop 未満）。仮のスティックが出ていてもタップ。矢印の当たりなら隠れる、外なら払う
       if (t - s.t0 >= C.longPressSec || s.far >= slop) return;
-      if (hideHit?.(s.x0, s.y0)) onHide(s.x0, s.y0);
+      if (s.onArrow || hideHit?.(s.x0, s.y0)) onHide(s.x0, s.y0);
       else onPuff(x, y);
     },
     cancel(id) {
