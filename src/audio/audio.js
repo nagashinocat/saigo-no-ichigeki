@@ -103,6 +103,8 @@ export function finaleBoomOpts(tl) {
 export const RUMBLE = { gain: 0.42, slow: { rate: 0.85, depth: 0.32 }, shake: { rate: 6.5, depth: 0.12 }, grit: 0.16 };
 // 瓦礫の崩れる音の道の大きさ（ふつう・リプレイ・宇宙でこもったとき）。重くした最後の一発と地響きの上でリミッターの余裕を残す
 export const DEBRIS_LEVEL = { open: 0.8, replay: 0.6, muffled: 0.35 };
+// 持ち主 22:47「リプレイ飛ばすと音が残ってる」: リプレイを飛ばしたとき、リプレイの音を 0 へ落とす秒（cutReplay。急に切るとプツッと鳴る）
+export const REPLAY_CUT_SEC = 0.06;
 export function rumbleKeys(tl) {
   const snap = tl.snap;
   const r0 = Math.min(tl.erupt ?? tl.resume ?? tl.beatEnd, snap - 0.3);
@@ -340,6 +342,21 @@ export function createAudio({ nav = globalThis.navigator, makeMedia = (src) => n
     return collapseBufs[v];
   }
 
+  // 持ち主 22:47: 止める時刻を決めた一発の音（崩れる音・地鳴り・地響き・爆発の層・唸り・心臓の鼓動など）を覚えておく（cutReplay がまとめて止める）。
+  // 鳴りっぱなしの声（貯めの唸り・じわじわ期の脈動・電車と高速・吸われる音）は stop を呼ばないので入らない。止める時刻を過ぎたものは捨てる
+  const shots = new Set();
+  function one(n) {
+    const stop = n.stop.bind(n);
+    n.stop = (t = 0) => {
+      stop(t);
+      n.stopAt = t;
+      if (shots.size > 256) { const t0 = now(); for (const s of shots) if (!(s.stopAt > t0)) shots.delete(s); }
+      shots.add(n);
+    };
+    return n;
+  }
+  // 飛ばしたリプレイの瓦礫の音（早送りの間の命中）は鳴らさない。次の debrisMode（'off' 以外）で戻る
+  let debrisCut = false;
   // 瓦礫の音の道の状態: open（ふつう）・off（演出の無音）・muffled（宇宙。こもって弱く）・replay（リプレイ。少し控えめ）
   function setDebris(mode) {
     if (!debrisBus) return;
@@ -356,7 +373,7 @@ export function createAudio({ nav = globalThis.navigator, makeMedia = (src) => n
 
   function noiseBurst({ dur, freq, gain, attack = 0.005, when = 0, q = 0.7, dest = null }) {
     const t = now() + when;
-    const src = ctx.createBufferSource(); src.buffer = noiseBuf;
+    const src = one(ctx.createBufferSource()); src.buffer = noiseBuf;
     const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.Q.value = q;
     lp.frequency.setValueAtTime(freq, t);
     lp.frequency.exponentialRampToValueAtTime(Math.max(30, freq * 0.15), t + dur);
@@ -371,7 +388,7 @@ export function createAudio({ nav = globalThis.navigator, makeMedia = (src) => n
   // 低い正弦波の一打（周波数は f0 から f1 へ下がる）
   function thump({ f0, f1, dur, gain, when = 0, dest, attack = 0.008 }) {
     const t = now() + when;
-    const o = ctx.createOscillator(); o.type = 'sine';
+    const o = one(ctx.createOscillator()); o.type = 'sine';
     o.frequency.setValueAtTime(f0, t); o.frequency.exponentialRampToValueAtTime(f1, t + dur);
     const g = ctx.createGain();
     g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(gain, t + attack);
@@ -413,6 +430,7 @@ export function createAudio({ nav = globalThis.navigator, makeMedia = (src) => n
     // AudioContext は止めも閉じもしない（音の許可が残る）。止まっている間（演出中のメニュー）でも効く
     resetRound() {
       silenceEnd = 0;
+      debrisCut = false; // 22:47: 飛ばしたリプレイの瓦礫の音の黙らせも解く
       collapseGate.reset();
       if (!ctx) return;
       const t = now();
@@ -437,7 +455,7 @@ export function createAudio({ nav = globalThis.navigator, makeMedia = (src) => n
       const r = comboRecipe(k), t0 = now(), bus = panner(pan);
       for (const tn of r.tones) {
         const t = t0 + (tn.when ?? 0);
-        const o = ctx.createOscillator(); o.type = tn.type; o.frequency.setValueAtTime(tn.f, t);
+        const o = one(ctx.createOscillator()); o.type = tn.type; o.frequency.setValueAtTime(tn.f, t);
         const g = ctx.createGain(); env(g.gain, t, tn.attack, tn.gain, tn.dur);
         o.connect(g); g.connect(bus); o.start(t); o.stop(t + tn.dur + 0.05);
       }
@@ -456,7 +474,7 @@ export function createAudio({ nav = globalThis.navigator, makeMedia = (src) => n
       const r = timeTickRecipe(n), t0 = now();
       for (const tn of r.tones) {
         const t = t0 + (tn.when ?? 0);
-        const o = ctx.createOscillator(); o.type = tn.type; o.frequency.setValueAtTime(tn.f, t);
+        const o = one(ctx.createOscillator()); o.type = tn.type; o.frequency.setValueAtTime(tn.f, t);
         const g = ctx.createGain(); env(g.gain, t, tn.attack, tn.gain, tn.dur);
         o.connect(g); g.connect(master); o.start(t); o.stop(t + tn.dur + 0.05);
       }
@@ -468,7 +486,7 @@ export function createAudio({ nav = globalThis.navigator, makeMedia = (src) => n
       const r = guardRecipe(), t0 = now(), bus = panner(pan);
       for (const tn of r.tones) {
         const t = t0 + (tn.when ?? 0);
-        const o = ctx.createOscillator(); o.type = 'sine'; o.frequency.setValueAtTime(tn.f, t);
+        const o = one(ctx.createOscillator()); o.type = 'sine'; o.frequency.setValueAtTime(tn.f, t);
         const g = ctx.createGain(); env(g.gain, t, 0.004, tn.gain, tn.dur);
         o.connect(g); g.connect(bus); o.start(t); o.stop(t + tn.dur + 0.05);
       }
@@ -487,7 +505,7 @@ export function createAudio({ nav = globalThis.navigator, makeMedia = (src) => n
         const g = ctx.createGain(); env(g.gain, t, h.attack, h.gain, h.dur);
         lp.connect(g); g.connect(bus);
         for (const f of h.f) {
-          const o = ctx.createOscillator(); o.type = 'sawtooth'; o.frequency.setValueAtTime(f, t);
+          const o = one(ctx.createOscillator()); o.type = 'sawtooth'; o.frequency.setValueAtTime(f, t);
           o.frequency.linearRampToValueAtTime(f * 0.97, t + h.dur);
           o.connect(lp); o.start(t); o.stop(t + h.dur + 0.05);
         }
@@ -664,9 +682,9 @@ export function createAudio({ nav = globalThis.navigator, makeMedia = (src) => n
       if (!ready()) return;
       this.rumbleStop();
       const keys = rumbleKeys(tl), t0 = now() - keys[0].t, end = keys[keys.length - 1].t;
-      const src = ctx.createBufferSource(); src.buffer = brownBuf; src.loop = true;
+      const src = one(ctx.createBufferSource()); src.buffer = brownBuf; src.loop = true;
       const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.Q.value = 0.8;
-      const grit = ctx.createBufferSource(); grit.buffer = noiseBuf; grit.loop = true;
+      const grit = one(ctx.createBufferSource()); grit.buffer = noiseBuf; grit.loop = true;
       const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 230; bp.Q.value = 1.1;
       const gg = ctx.createGain(); gg.gain.value = RUMBLE.grit;
       const g = ctx.createGain();
@@ -677,7 +695,7 @@ export function createAudio({ nav = globalThis.navigator, makeMedia = (src) => n
       }
       const wob = ctx.createGain(); wob.gain.value = 1;
       const lfos = [RUMBLE.slow, RUMBLE.shake].map(({ rate, depth }) => {
-        const o = ctx.createOscillator(); o.frequency.value = rate;
+        const o = one(ctx.createOscillator()); o.frequency.value = rate;
         const og = ctx.createGain(); og.gain.value = depth;
         o.connect(og); og.connect(wob.gain);
         return o;
@@ -698,12 +716,12 @@ export function createAudio({ nav = globalThis.navigator, makeMedia = (src) => n
     // 瓦礫の崩れる音。hits: このフレームの命中（collapseHitInfo の { id, size, near, pan }）。毎フレーム呼んでよい
     // （空でも、ためた命中を間隔が空いたら鳴らす）。頻度の上限（collapse.js）を超えた分は、いちばん大きい一つにまとめる
     collapse(hits) {
-      if (!ready() || !collapseBufs.length) return;
+      if (!ready() || !collapseBufs.length || debrisCut) return;
       const pick = collapseGate.take(hits, now());
       if (!pick) return;
       const v = collapseVoice(pick.hit, pick.merged);
       const t = now();
-      const src = ctx.createBufferSource(); src.buffer = collapseBuf(v.variant);
+      const src = one(ctx.createBufferSource()); src.buffer = collapseBuf(v.variant);
       src.playbackRate.value = v.rate;
       // 遠いほどこもる（遠くの崩落は高い粒が抜けて低い地鳴りに）
       const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = v.lp; lp.Q.value = 0.6;
@@ -794,8 +812,33 @@ export function createAudio({ nav = globalThis.navigator, makeMedia = (src) => n
       n.lp.frequency.setTargetAtTime(v.lp, t, 0.1);
       n.pan.pan.setTargetAtTime(Math.max(-0.95, Math.min(0.95, s.pan ?? 0)), t, 0.05);
     },
+    // 持ち主 22:47「リプレイ飛ばすと音が残ってる」: リプレイを飛ばした（replay の 'skip'）。リプレイの間に鳴っている音
+    // （瓦礫の崩れる音・演出のあとの低い地鳴りと地響き・爆発の音の尾）と、先に予約した音を fade 秒で 0 へ落として止める:
+    //  - 瓦礫の音の道（debrisBus）・演出の道（cine）・爆発の音の道（boomBus）・世界の音（master）を fade 秒で 0 へ。先の予約
+    //    （地鳴りが引いたあとに master を戻す）も取り消す。演出の道と爆発の音の道は作り直す（次のリプレイ・録画で鳴らせる）
+    //  - 止める時刻を決めた一発の音は fade 秒で止める（ループの地響き・唸りも）
+    //  - このあとの早送り（暗いうちに最後まで）の崩れる音は鳴らさない（debrisMode の 'replay' / 'open' で戻る）
+    // BGM（静かな変奏は結果画面でも続く）と、メニューの門（worldGate・bgmGate）、AudioContext は触らない
+    cutReplay(fade = REPLAY_CUT_SEC) {
+      debrisCut = true;
+      collapseGate.reset();
+      if (!ctx) return;
+      const t = now(), end = t + fade;
+      const down = (p) => { p.cancelScheduledValues(t); p.setValueAtTime(p.value, t); p.linearRampToValueAtTime(0, end); };
+      down(debrisBus.gain);
+      down(master.gain);
+      // 古い演出の道・爆発の音の道は 0 へ落ちたまま捨てる（そこへつながる音は fade 秒で止まる）
+      down(cine.gain);
+      down(boomBus.gain);
+      cine = ctx.createGain(); cine.gain.value = 0.9; cine.connect(out);
+      boomBus = ctx.createGain(); boomBus.gain.value = 1 / BOOM_CLIP.range; boomBus.connect(boomClip);
+      for (const n of shots) { if (n.stopAt > end) { try { n.stop(end); } catch { /* 済み */ } } }
+      shots.clear();
+      rumbleSrcs = null; drone = null;
+    },
     // 瓦礫の音の道の状態（リプレイの始まりで 'replay'、遊びに戻ったら 'open'）
     debrisMode(mode) {
+      if (mode !== 'off') debrisCut = false; // 22:47: 飛ばしたリプレイの黙らせは、次のリプレイ・遊び（'replay' / 'open'）で解く
       if (!ready()) return;
       if (mode === 'replay') collapseGate.reset(); // リプレイは同じ崩落を最初から（演出の終わりにためた命中・上限の数を持ち越さない）
       setDebris(mode);
@@ -806,7 +849,7 @@ export function createAudio({ nav = globalThis.navigator, makeMedia = (src) => n
       const t = now();
       out.frequency.cancelScheduledValues(t);
       out.frequency.setValueAtTime(400, t);
-      const src = ctx.createBufferSource(); src.buffer = noiseBuf; src.loop = true;
+      const src = one(ctx.createBufferSource()); src.buffer = noiseBuf; src.loop = true;
       const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 70; lp.Q.value = 0.9;
       const g = ctx.createGain();
       g.gain.setValueAtTime(0.0001, t);
@@ -840,7 +883,7 @@ export function createAudio({ nav = globalThis.navigator, makeMedia = (src) => n
       lp.connect(g);
       const srcs = [];
       const osc = (type, f0, f1, gain, dest) => {
-        const o = ctx.createOscillator(); o.type = type;
+        const o = one(ctx.createOscillator()); o.type = type;
         o.frequency.setValueAtTime(f0, t); o.frequency.exponentialRampToValueAtTime(f1, end);
         const og = ctx.createGain(); og.gain.value = gain;
         o.connect(og); og.connect(dest); o.start(t); o.stop(end + 3);
@@ -850,7 +893,7 @@ export function createAudio({ nav = globalThis.navigator, makeMedia = (src) => n
       osc('sawtooth', 29.4, 52.9, 0.35, lp);
       osc('sine', 43.5, 78, 0.25, g); // 五度上の薄い倍音
       // 吸い込む風: 帯域のノイズが細く高くなる
-      const n = ctx.createBufferSource(); n.buffer = noiseBuf; n.loop = true;
+      const n = one(ctx.createBufferSource()); n.buffer = noiseBuf; n.loop = true;
       const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 6;
       bp.frequency.setValueAtTime(180, t); bp.frequency.exponentialRampToValueAtTime(1600, end);
       const ng = ctx.createGain();
@@ -889,7 +932,7 @@ export function createAudio({ nav = globalThis.navigator, makeMedia = (src) => n
         send.connect(d); d.connect(lp); lp.connect(g); g.connect(pan); pan.connect(bus);
       }
       const noise = (buf, end, loop = false) => {
-        const src = ctx.createBufferSource(); src.buffer = buf; src.loop = loop;
+        const src = one(ctx.createBufferSource()); src.buffer = buf; src.loop = loop;
         src.start(t, Math.random() * (loop ? buf.duration ?? 1 : 0.5)); src.stop(t + end + 0.05);
         return src;
       };
@@ -904,7 +947,7 @@ export function createAudio({ nav = globalThis.navigator, makeMedia = (src) => n
         crackShaper = ctx.createWaveShaper(); crackShaper.curve = punchCurve; crackShaper.connect(bus); crackShaper.connect(send);
       }
       crackSrc.connect(hp); hp.connect(cg); cg.connect(crackShaper);
-      const p = r.punch, o = ctx.createOscillator(); o.type = 'sine';
+      const p = r.punch, o = one(ctx.createOscillator()); o.type = 'sine';
       o.frequency.setValueAtTime(p.f0, t); o.frequency.exponentialRampToValueAtTime(p.f1, t + p.dur * 0.6);
       const pg = ctx.createGain(); env(pg.gain, t, p.attack, p.gain, p.dur);
       o.connect(pg); pg.connect(shaper); o.start(t); o.stop(t + p.dur + 0.05);
@@ -920,7 +963,7 @@ export function createAudio({ nav = globalThis.navigator, makeMedia = (src) => n
       }
       // 1b. 胴（最後の一発だけ）: 80〜180 Hz の下がる正弦波と帯域ノイズを、一打と同じ強い歪みに通す
       if (r.body) {
-        const y = r.body, bO = ctx.createOscillator(); bO.type = 'sine';
+        const y = r.body, bO = one(ctx.createOscillator()); bO.type = 'sine';
         bO.frequency.setValueAtTime(y.f0, t); bO.frequency.exponentialRampToValueAtTime(y.f1, t + y.dur * 0.7);
         const bG = ctx.createGain(); env(bG.gain, t, y.attack, y.gain, y.dur);
         const nz = y.noise, bSrc = noise(noiseBuf, nz.dur);
@@ -968,14 +1011,14 @@ export function createAudio({ nav = globalThis.navigator, makeMedia = (src) => n
       if (b.hold > b.attack) sg.gain.exponentialRampToValueAtTime(b.gain * 0.7, t + b.hold);
       sg.gain.exponentialRampToValueAtTime(0.0001, t + b.dur);
       const wob = ctx.createGain(); wob.gain.value = 1;
-      const lfo = ctx.createOscillator(); lfo.frequency.value = b.wobble.rate;
+      const lfo = one(ctx.createOscillator()); lfo.frequency.value = b.wobble.rate;
       const lg = ctx.createGain(); lg.gain.value = b.wobble.depth;
       lfo.connect(lg); lg.connect(wob.gain); lfo.start(t); lfo.stop(t + b.dur + 0.05);
       const ss = ctx.createWaveShaper(); ss.curve = subCurve;
       subSrc.connect(slp); slp.connect(sg); sg.connect(wob); wob.connect(ss); ss.connect(bus);
       // 4b. 腹に響く層（最後の一発だけ）: ゆっくり下がる低い正弦波を、地響きと同じ揺れと歪みに通す
       if (r.deep) {
-        const q = r.deep, dO = ctx.createOscillator(); dO.type = 'sine';
+        const q = r.deep, dO = one(ctx.createOscillator()); dO.type = 'sine';
         dO.frequency.setValueAtTime(q.f0, t); dO.frequency.exponentialRampToValueAtTime(q.f1, t + q.dur * 0.8);
         const dG = ctx.createGain(); env(dG.gain, t, q.attack, q.gain, q.dur);
         const dHp = ctx.createBiquadFilter(); dHp.type = 'highpass'; dHp.frequency.value = q.hp; dHp.Q.value = 0.7;

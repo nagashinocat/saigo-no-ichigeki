@@ -715,7 +715,9 @@ replay.on('aftermath', () => {
   if (o && !o.clear) patrolGlow.setSurvivors(survivorIds(o));
 });
 replay.on('replayEnd', () => { clipRestored(); replayTag.hidden = true; finaleDone = true; });
-replay.on('skip', () => { replayTag.hidden = true; });
+// 持ち主 22:47「リプレイ飛ばすと音が残ってる」: 飛ばしたら、リプレイの音（瓦礫・演出のあとの地鳴りと地響き・爆発の尾・先の予約）を約 60 ms で落として止め、
+// 早送りの間の崩れる音も鳴らさない（audio.cutReplay。次のリプレイの 'replayStart' の debrisMode('replay') で戻る。BGM の静かな変奏はそのまま）
+replay.on('skip', () => { replayTag.hidden = true; audio.cutReplay(); });
 function startReplay() {
   if (!replaySnap) return;
   cinematic.stop();
