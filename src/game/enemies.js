@@ -11,8 +11,11 @@ const P = GRID.PITCH;
 const DIRS = [[1, 0], [0, 1], [-1, 0], [0, -1]];
 const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
 
+// 持ち主 2026-11-24: 払うの衝撃波で弾かれる者（主人公を追う・近づく・掴む・群がる・よろめく者）
+const SHOCKED = new Set(['chase', 'approach', 'grab', 'cling', 'stagger']);
 // 湧く速さ（体/秒）。持ち主の決定（2026-11-21「終盤ほど一気に増やす」）: 序盤は spawnPerSec で平ら、surgeStart 秒から surgeEnd 秒へ
 // なめらかに（smoothstep）一気に surgeMul 倍まで増え、その後は保つ
+
 export function spawnRateAt(t, cfg = CONFIG) {
   const E = cfg.enemy;
   const k = Math.min(1, Math.max(0, (t - E.surgeStart) / (E.surgeEnd - E.surgeStart)));
@@ -166,6 +169,7 @@ export function createEnemies(rng, cfg = CONFIG, { buildings = [], patrolRng = n
   let nextId = 1;
   let acc = 0;
   let time = 0;
+  let haze = null; // 持ち主 2026-11-24: 払うの閃光の残り { x, z, r, until }（その内の探す者は主人公を見つけられない）
   // Pass 2（まとめ役、持ち主 10:06）: 払ったあとの守りの残り秒（guard）。その間に掴む輪・群がる輪に着いた者は掴まず弾かれる
   let guardLeft = 0;
   // Fix round 1: 守りで弾いた者（{ id, x, z, killed }）。game が読んで guardHit を知らせる（輪の脈・弾く音）
@@ -266,6 +270,15 @@ export function createEnemies(rng, cfg = CONFIG, { buildings = [], patrolRng = n
     return e.sees;
   }
   // 見失う: 最後に見た所を探す者へ（知らせは伝えない）
+  // 持ち主 2026-11-24: 払うの衝撃波で目がくらんだ者。主人公を見失い、知らされた所も忘れて、ふつうの探す者に戻る（blindUntil まで見つけない）
+  function forget(e) {
+    e.forgotAt = time; // 見失わせた時刻（テストが「早く見失った」と分けるため）
+    e.state = 'search'; e.alert = false; e.searchTime = 0; e.relayAt = null;
+    delete e.heard; delete e.sees; e.seenT = null; e.reachedAt = null;
+    e.speed = Math.max(e.speed ?? 0, E.searchSpeed * speedMulOf(e, cfg) * 0.6);
+    resumeRoad(e);
+    lostCount++;
+  }
   function lose(e) {
     e.state = 'search'; e.alert = true; e.searchTime = 0; e.relayAt = null;
     const K = known ?? e.lastSeen ?? H;
@@ -470,6 +483,8 @@ export function createEnemies(rng, cfg = CONFIG, { buildings = [], patrolRng = n
     // Fix round 3（見直し Important B）: 物陰にいる主人公は毎フレーム確かめる（確かめの位相というさいころで見つかる・見つからないが決まらない）
     if (e.spotClock > 0 && !H.hidden) return;
     if (e.spotClock <= 0) e.spotClock += E.spotEvery;
+    if (e.blindUntil != null && time < e.blindUntil) return; // 持ち主 2026-11-24: 衝撃波で目がくらんでいる間は見つけない
+    if (haze && time < haze.until && Math.hypot(e.x - haze.x, e.z - haze.z) <= haze.r) return; // 閃光の残り（haze）の内からは見つけない
     if (e.dist <= E.spotDist && seesHero(e, H, nearBuildings(), cfg)) {
       e.state = 'chase'; e.spotT = 0;
       e.sees = true; e.seenT = time; e.lastSeen = { x: H.x, z: H.z, vx: H.vx ?? 0, vz: H.vz ?? 0 }; if (CH) seeHero();
@@ -492,6 +507,7 @@ export function createEnemies(rng, cfg = CONFIG, { buildings = [], patrolRng = n
     const R2 = AL.radius * AL.radius;
     for (const o of list) {
       if (o === from || o.state !== 'search') continue;
+      if (o.blindUntil != null && time < o.blindUntil) continue; // 持ち主 2026-11-24: 目がくらんでいる間は知らせも届かない
       if (o.heard && o.heard.t >= known.t) continue;
       const dx = o.x - from.x, dz = o.z - from.z;
       if (dx * dx + dz * dz > R2) continue;
@@ -583,7 +599,8 @@ export function createEnemies(rng, cfg = CONFIG, { buildings = [], patrolRng = n
   // よろめく者（R1）: 主人公から外へ push m/s（stagger.sec 秒でなめらかに 0 へ）押し戻されながら、左回りに spin m/s で回る。
   // 終われば chase へ戻り、そのまま突っ込み直す（速さは今の速さから上げる）
   function staggerStep(e, dt) {
-    const S = E.stagger;
+    // 持ち主 2026-11-24「払うを強く」: 払うの衝撃波（shock）で弾かれた者は、その一回だけ長く遠くへ（e.stg: { sec, push }）
+    const S = e.stg ? { ...E.stagger, ...e.stg } : E.stagger;
     e.staggerT += dt;
     if (e.x == null) { e.x = H.x + Math.cos(e.angle) * e.dist; e.z = H.z + Math.sin(e.angle) * e.dist; }
     const u = Math.min(1, e.staggerT / S.sec);
@@ -603,6 +620,10 @@ export function createEnemies(rng, cfg = CONFIG, { buildings = [], patrolRng = n
     // 主人公が物陰に隠れていれば（hidden）、見失って最後に見えた所を探す
     if (u >= 1) {
       delete e.layer; e.unpile = null; e.alert = true;
+      const blind = !!e.stg?.blind;
+      delete e.stg;
+      // 持ち主 2026-11-24: 衝撃波で目がくらんだ者（blind）は主人公を見失い、知らされた所も忘れて探し直す（もう一度見つけるまで突っ込めない）
+      if (blind) { forget(e); return; }
       if (H.hidden) { e.state = 'search'; e.heard = { ...(H.lastSeen ?? { x: H.x, z: H.z }), t: time }; e.hops = AL?.hops ?? 0; e.relayAt = null; e.searchTime = 0; resumeRoad(e); }
       else if (CH && time - e.seenT > CH.loseSec) lose(e); // R1f: よろめいている間に見えなくなって loseSec 秒たった（撒かれた）
       else { e.state = 'chase'; e.spotT = 0; e.speed = Math.max(e.speed, E.searchSpeed * speedMulOf(e, cfg)); }
@@ -758,6 +779,36 @@ export function createEnemies(rng, cfg = CONFIG, { buildings = [], patrolRng = n
     get guardLeft() { return guardLeft; },
     // Fix round 1: 守りで弾いた者（読んだら空にする）
     takeGuardHits() { return guardHits.splice(0); },
+    // 持ち主 2026-11-24「無敵は短く、払うを強く」: 払った瞬間の衝撃波。centre から sh.radius m の内の、主人公を追う・掴む・群がる・よろめく者
+    // （見回るだけの者と、まだ探している者は除く）を、外へ sh.knock m ほど sh.sec 秒で弾き飛ばし（よろめき。掴む・群がるからも外れる）、
+    // sh.blind なら弾かれ終わったとき主人公を見失わせる（探し直し）。倒すのは払うの前線（applyBlastFront）のまま。弾いた数を返す
+    shock(centre, sh) {
+      if (!sh || !(sh.radius > 0)) return 0;
+      const C = centre ?? H;
+      // 押し戻しの道のり = push × sec × ∫(1 − u)(1 − u/2) du = push × sec × 5/12
+      const push = (sh.knock ?? 0) / (Math.max(1e-3, sh.sec) * (5 / 12));
+      if (sh.hazeSec > 0) haze = { x: C.x, z: C.z, r: sh.hazeR ?? sh.radius, until: time + sh.hazeSec };
+      let n = 0;
+      for (const e of list) {
+        if (e.state === 'dead' || e.x == null) continue;
+        if (Math.hypot(e.x - C.x, e.z - C.z) > sh.radius) continue;
+        // 知らされて向かってくる探す者（alert・heard）は、弾かず、目をくらませて忘れさせる
+        if (e.state === 'search') {
+          if (!sh.blind) continue;
+          if (e.alert || e.heard) { forget(e); n++; }
+          e.blindUntil = time + (sh.blindSec ?? 0); // 探している者もみな、しばらく見つけない（閃光）
+          continue;
+        }
+        if (!SHOCKED.has(e.state)) continue;
+        if (sh.blind) e.blindUntil = time + sh.sec + (sh.blindSec ?? 0);
+        if (e.state === 'grab' || e.state === 'cling') { delete e.layer; e.unpile = null; }
+        e.state = 'stagger'; e.staggerT = 0;
+        e.stg = { sec: sh.sec, push: Math.max(E.stagger.push, push), blind: !!sh.blind };
+        n++;
+      }
+      if (n) relayer();
+      return n;
+    },
     // 前線 front m の内の者に当てる。当たった数（倒れた者とよろめいた者）を返す。
     // blast: { id, small }。small（払う）なら、hp の残る者（重い者・大物）は倒れずによろめき、同じ一発（id）には二度当たらない。
     // 省けば（最後の一発）、当たった者はみな倒れる

@@ -325,6 +325,9 @@ export function createGame({ seed, cfg = CONFIG }) {
       hideCool = Math.max(hideCool, cfg.puff.hideLockSec ?? 0); // Pass 2: 払ったあと hideLockSec 秒は隠れられない（払うと隠れるを続けて使えない）
       const shot = { amount: cfg.puff.cost, radius: cfg.puff.radius, isBig: false, small: true, centre: { x: hero.x, z: hero.z } };
       startBlast(shot);
+      // 持ち主 2026-11-24「払うを強く」: 衝撃波（追う・掴む者を遠くへ弾き、目をくらませる）
+      const shocked = enemies.shock(shot.centre, cfg.puff.shock);
+      if (cfg.puff.shock) shot.shock = { radius: cfg.puff.shock.radius, hits: shocked };
       emit('puff', shot);
       return true;
     },

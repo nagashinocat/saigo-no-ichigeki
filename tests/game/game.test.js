@@ -371,8 +371,9 @@ test('minRelease 未満で離すと fizzle（不発の知らせ）を一度出�
   expect(log).toHaveLength(1);
 });
 
-test('払う（小爆発）の半径は 22m（軍勢が遅くなった分、持ち主が選んだ釣り合いに戻す）', () => {
-  expect(CONFIG.puff.radius).toBe(22);
+// 持ち主 2026-11-24「無敵は短く、払うを強く」: 22 → 40 m（巻き込む範囲を広く。tests/game/puffShock.test.js）
+test('払う（小爆発）の半径は 40m（持ち主 2026-11-24「払うを強く」）', () => {
+  expect(CONFIG.puff.radius).toBe(40);
 });
 
 test('settle: 最後の一発を放ったあと（演出・爆発の途中）なら、一発を最後まで進めて over(released) にする。同じ破壊額、命中は settled つきで一度ずつ', () => {

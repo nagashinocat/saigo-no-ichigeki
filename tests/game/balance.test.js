@@ -51,9 +51,9 @@ test('R0 / M2: 最善の操作（動くボット）でも、満タンは終わ�
   // 下限 85%・上限 96% で 1 ずつ余りを置く）。Fix round 3: この 24 の街では 23/24 が満タン・p50 53.4 秒（上限ちょうど）。
   // 今日の街 360 では 99%（時期ごと 99.2 / 98.3 / 99.2%）で、目標の 95% を越える（隠れても守りが消えなくなったため。報告 Fix round 3）
   // 持ち主 19:50 の直しのあとも 360 で 99%（99.2 / 98.3 / 99.2%）、この 24 の街で 23/24（上限 99% = 23 ちょうど。下限 90% − 1 = 21 で余り 2）
-  // 持ち主 22:47（守り 10.9 → 4 秒・隠れられない間 4 → 2 秒）: 360 で 79%（81.7 / 76.7 / 80.0%）。目標の 90〜95% に届かない（2247-fix-report.md）。
-  // この 24 の街で 19/24。下限は今の 79% から余り 1 の 18（75%）に下げた（目標ではなく、今より悪くしないための線）
-  expect(got.length).toBeGreaterThanOrEqual(Math.ceil(SEEDS.length * 0.75));
+  // 持ち主 22:47（守り 4 秒）でいったん 79% に下がり、持ち主 2026-11-24「無敵は短く、払うを強く」（前線 40 m・衝撃波・閃光の残り）で
+  // 360 で 99%（100 / 99.2 / 98.3%）に戻った（2247-fix-report.md Fix round 1）。この 24 の街で 23。下限は目標 90% から余り 1（21）、上限 99%（23）
+  expect(got.length).toBeGreaterThanOrEqual(Math.ceil(SEEDS.length * 0.9) - 1);
   expect(got.length).toBeLessThanOrEqual(Math.floor(SEEDS.length * 0.99)); // 上手に遊んでも失敗することがある（99% まで）
   expect(median(got)).toBeGreaterThanOrEqual(52);
   expect(median(got)).toBeLessThanOrEqual(56);
@@ -116,8 +116,8 @@ test('S9 / R0 fix1 / M2: 最善の操作で満タンで放てば必ず撃退成�
   const seeds = SEEDS;
   const full = seeds.map((s) => releaseAtLevel(s, CONFIG.power.max));
   // 持ち主 10:06: 最善の撃退成功の下限 60% → 80%（約 85% の目標）
-  // 22:47（守り 4 秒）: 24 の街で 19（79%）。下限 80% → 75%（18。余り 1）。満タンで放った回がみな撃退成功なのは前のまま（下）
-  expect(full.filter((o) => o?.clear).length).toBeGreaterThanOrEqual(Math.ceil(seeds.length * 0.75));
+  // 2026-11-24（払うを強く）: 下限は 80% に戻す（目標 90〜95% の下から余りを置いた線）
+  expect(full.filter((o) => o?.clear).length).toBeGreaterThanOrEqual(Math.ceil(seeds.length * 0.8));
   for (const o of full) if (o) { expect(o.clear).toBe(true); expect(Math.hypot(o.at.x, o.at.z)).toBeLessThan(60); } // 中心のそば
   for (const level of [70, 90, 96]) {
     for (const s of seeds.slice(0, 8)) {
@@ -154,11 +154,9 @@ test('M2: 中心から 200 m の所へ寄って放つ操作は、中心のそば
 // 4 割以上は撃退できる（目標 5 割）。力が 99% に届いた瞬間に放つ（daily-balance と同じ。満タンを待つより撃退が多い）。
 // Fix round 1・2: sim（今日の街 360）: 51%（時期ごと 50.8 / 53.3 / 47.5%）。この 24 の街で 12/24（下限 10 から 2 の余り）
 // 持ち主 19:50 の直し（掴まれている間は貯まらない・吸う 1.2・守り 10.9 秒）: 360 で 46%（40.8 / 49.2 / 46.7%）。この 24 の街で 11/24（下限 10 から余り 1）
-// 持ち主 22:47（守り 10.9 → 4 秒）: 360 で 0%（0 / 0 / 0%）、この 24 の街で 0。持ち主 10:06 の目標（4 割以上）に届かない。
-// 守り 4 秒のまま数（湧く速さ）で 4 割にすると、隠れるだけが 4 割を越える（湧く 0.025/秒で 払う 3 回・隠れない 57%・隠れるだけ 42%・最善 96%）。
-// 守りの長さは持ち主が決める（2247-fix-report.md）。目標は todo に残し、守りが 4 割に届く長さ（10 秒ほど）に戻ったら、下の本体を戻す
-test.todo('Pass 2 / 持ち主 10:06: 払う 3 回・隠れない遊び方でも、24 の街の 4 割以上（10 以上）で撃退成功（22:47 守り 4 秒では 0/24。持ち主の判断待ち）');
-test.skip('Pass 2: 払う 3 回・隠れない遊び方でも、24 の街の 4 割以上（10 以上）で撃退成功（22:47 守り 4 秒の間は止める。上の todo）', () => {
+// 持ち主 22:47（守り 10.9 → 4 秒）で 0% に落ち、持ち主 2026-11-24「無敵は短く、払うを強く」（守り 4 秒のまま、前線 40 m・衝撃波で 35 m 弾いて目をくらませる・
+// 閃光の残り 9.75 秒）で 360 で 46%（44.2 / 45.0 / 47.5%）。この 24 の街で 11。下限は目標の 4 割（10。余り 1）
+test('Pass 2 / 2026-11-24: 払う 3 回・隠れない遊び方でも、24 の街の 4 割以上（10 以上）で撃退成功', () => {
   const runs = SEEDS.map((s) => {
     const g = createGame({ seed: s });
     g.begin(); g.pressStart();
@@ -224,8 +222,7 @@ test('Fix round 3: 隠れるだけで最後まで待って放つと、S ラン�
 
 // 持ち主 19:50 の直し（「間をとる」の目標）: LOOK OUT! の矢印に従って隠れる遊び方（最善 + st.lookout）は、払う 3 回・隠れないより撃退が多い。
 // sim（今日の街 360）: 矢印に従う 94%（95.0 / 94.2 / 93.3%）、払う 3 回・隠れない 46%。この 24 の街で 23 と 11
-// 22:47（守り 4 秒）: 360 で矢印に従う 53%（56.7 / 57.5 / 45.0%）、払う 3 回・隠れない 0%。この 24 の街で 13 と 0。
-// 「最善に近い」の下限 85% → 45%（11。余り 2）。矢印に従う ≥ 払う 3 回・隠れないは保つ
+// 2026-11-24（払うを強く）: 360 で矢印に従う 93%（95.0 / 94.2 / 90.8%）、払う 3 回・隠れない 46%。この 24 の街で 24 と 11。「最善に近い」の下限は 85% に戻す
 test('持ち主 19:50: LOOK OUT! の矢印に従う遊び方は、払う 3 回・隠れない遊び方より撃退成功が少なくない', () => {
   const clears = (st) => SEEDS.filter((s) => {
     const g = createGame({ seed: s });
@@ -238,5 +235,5 @@ test('持ち主 19:50: LOOK OUT! の矢印に従う遊び方は、払う 3 回�
   }).length;
   const arrow = clears({ ...POLICY.best, lookout: true }), pnh = clears(POLICY.puffNoHide);
   expect(arrow).toBeGreaterThanOrEqual(pnh);
-  expect(arrow).toBeGreaterThanOrEqual(Math.ceil(SEEDS.length * 0.45)); // 22:47: 13/24（守り 4 秒で最善 79% から下がる）
+  expect(arrow).toBeGreaterThanOrEqual(Math.ceil(SEEDS.length * 0.85)); // 最善に近い
 }, 240000);

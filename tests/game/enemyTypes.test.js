@@ -8,7 +8,8 @@ import { CONFIG } from '../../src/config.js';
 // （2 回払わないとはがれない重い者・吸う力の強い者・終盤に 1 体だけ来る大物）。どれも撃退の数に入る
 const E = CONFIG.enemy, K = E.kinds;
 // Pass 2: 払ったあとの守り（guardSec。tests/game/puffGuard.test.js）は、ここでは外す（払うの当たり・数え方だけを見る）
-const quiet = { ...CONFIG, enemy: { ...E, spawnPerSec: 0 }, puff: { ...CONFIG.puff, guardSec: 0 } };
+// 2026-11-24: 払うの衝撃波（puff.shock。弾いて目をくらませる。tests/game/puffShock.test.js）もここでは外す（重い者は 2 回で倒れる、を見る）
+const quiet = { ...CONFIG, enemy: { ...E, spawnPerSec: 0 }, puff: { ...CONFIG.puff, guardSec: 0, shock: null } };
 // 力の動きだけを見る（掴む者に吸われない）
 const still = { ...quiet, enemy: { ...quiet.enemy, drainPerSec: 0 } };
 const DT = 1 / 30;

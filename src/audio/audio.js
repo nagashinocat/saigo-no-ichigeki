@@ -105,6 +105,9 @@ export const RUMBLE = { gain: 0.42, slow: { rate: 0.85, depth: 0.32 }, shake: { 
 export const DEBRIS_LEVEL = { open: 0.8, replay: 0.6, muffled: 0.35 };
 // 持ち主 22:47「リプレイ飛ばすと音が残ってる」: リプレイを飛ばしたとき、リプレイの音を 0 へ落とす秒（cutReplay。急に切るとプツッと鳴る）
 export const REPLAY_CUT_SEC = 0.06;
+// 持ち主 2026-11-24「払うを強く」: 払った瞬間の衝撃波の重い低音の一打（puffThump）。f0 → f1 Hz へ下がる正弦波 dur 秒と、低いざらつき（noise）。
+// gain は弾いた数 hits ごとに perHit ずつ、max まで強く
+export const PUFF_THUMP = { f0: 95, f1: 38, dur: 0.55, gain: 0.55, perHit: 0.05, max: 0.85, noise: { freq: 260, gain: 0.35, dur: 0.4 } };
 export function rumbleKeys(tl) {
   const snap = tl.snap;
   const r0 = Math.min(tl.erupt ?? tl.resume ?? tl.beatEnd, snap - 0.3);
@@ -467,6 +470,14 @@ export function createAudio({ nav = globalThis.navigator, makeMedia = (src) => n
       const r = hideRecipe(kind), bus = panner(pan);
       if (r.whoosh) for (const w of r.whoosh) noiseBurst({ ...w, dest: bus });
       if (r.thud) { thump({ ...r.thud, dest: bus }); noiseBurst({ ...r.grit, dest: bus }); }
+    },
+    // 持ち主 2026-11-24: 払った瞬間の衝撃波の音（重い低音の一打 + 低いざらつき）。世界の音（master）を通る（演出の無音に従う）
+    puffThump({ hits = 0, pan = 0 } = {}) {
+      if (!ready()) return;
+      const T = PUFF_THUMP, k = Math.min(T.max, T.gain + T.perHit * Math.max(0, hits));
+      const p = panner(pan);
+      thump({ f0: T.f0, f1: T.f1, dur: T.dur, gain: k, dest: p, attack: 0.006 });
+      noiseBurst({ dur: T.noise.dur, freq: T.noise.freq, gain: T.noise.gain * (k / T.gain), attack: 0.004, dest: p });
     },
     // R1c: 残り n 秒（10〜1）の刻みの音。世界の音（master）を通る（演出・導入の無音に従う。main.js は遊んでいる間だけ呼ぶ）
     timeTick(n) {

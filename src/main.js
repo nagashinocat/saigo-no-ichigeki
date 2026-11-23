@@ -36,6 +36,7 @@ import { createLookoutView } from './ui/lookoutView.js';
 import { createDashStreak } from './render/dashStreak.js';
 import { createHideAction } from './render/hideAction.js';
 import { createGuardRing } from './render/guardRing.js';
+import { createShockRing } from './render/shockRing.js';
 import { stickMarks } from './ui/stickMarks.js';
 import { bindPointerInput, eventMs } from './input/bindDom.js';
 import { clearThreshold } from './game/charge.js';
@@ -370,7 +371,11 @@ game.on('shot', (shot) => {
 // 小爆発: 両手が玉を鷲掴みに押さえ込んで弾け、主人公のまわりに小さな光の球（貯めの唸りは止めない）
 // 足りずに離した: 放たず、両手がびくっと震え、ひとこと知らせる
 game.on('fizzle', () => { hand.fizzle(); hud.hint('まだ足りない。もっと貯めてから離して'); });
-game.on('puff', (shot) => { explosionView.begin(shot); hand.release(shot); });
+game.on('puff', (shot) => {
+  explosionView.begin(shot); hand.release(shot);
+  // 持ち主 2026-11-24「払うを強く」: 衝撃波の輪（前線から衝撃波の半径まで一気に広がる）と、重い低音の一打
+  if (shot.shock) { shockRing.begin(shot.centre, shot.shock.radius); audio.puffThump({ hits: shot.shock.hits, pan: screenCue(shot.centre.x, 1, shot.centre.z).pan }); }
+});
 // R1: まとめて払った「×k」を上空の画面の主人公の少し上に出し、主人公の画面の左右から澄んだ音（k が増えるたびに一段上がる）
 const _cueV = new THREE.Vector3();
 // 世界の点 (x, y, z) を、今の街のカメラの画面の px（左上原点）と、音の左右・近さへ
@@ -877,7 +882,7 @@ function restartRound() {
   heroMoved = false; liftT = 0;
   hand.reset(); hand.setCollapse(0);
   dashStreak.update(game.hero, 1e3); hideAction.update({ ...game.hero, action: null }, 1e3); // 滑り込みの筋・跳ぶ見た目を消しきる
-  guardRing.reset();
+  guardRing.reset(); shockRing.reset();
   views.resetCamera(game.hero);
   // 入力・HUD・知らせ
   controls.reset(); keysDown.clear(); keyFlick.reset(); puffBuffer.clear();
@@ -954,6 +959,7 @@ function syncHide(dt) {
 game.on('hide', () => audio.hideCue('jump', screenCue(game.hero.x, 1, game.hero.z).pan));
 // Fix round 1（見直し Important 5）: 払うの守りの輪（守りの間だけ、主人公のまわりの地面）と、弾いた瞬間の脈・音
 const guardRing = createGuardRing(cityScene);
+const shockRing = createShockRing(cityScene); // 持ち主 2026-11-24: 払うの衝撃波の輪
 const guardCueLimit = createRateLimit(GUARD_CUE_MAX_PER_SEC); // Fix round 3: 弾く音は 1 秒に 6 回まで
 game.on('guardHit', (h) => { guardRing.hit(); if (guardCueLimit(performance.now() / 1000)) audio.guardCue(screenCue(h.x, 1, h.z).pan); });
 views.follow(game.hero, { snap: true });
@@ -1026,6 +1032,7 @@ function simulate(dt) {
   syncHero();
   syncHide(dt);
   guardRing.update(dt, game.hero, game.phase === 'playing' ? game.guardLeft : 0, CONFIG.puff.guardSec);
+  shockRing.update(dt);
   const wdt = cinematic.active ? cinematic.worldDt : dt;
   explosionView.setBirthScale(cinematic.active ? cinematic.blastBirthScale : 1);
   explosionView.setCoreScale(cinematic.active ? cinematic.blastCoreScale : 1);

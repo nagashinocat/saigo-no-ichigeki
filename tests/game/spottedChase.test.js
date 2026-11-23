@@ -38,7 +38,8 @@ function reacquired(e, H) {
 
 // M2: 払うは 3 回までになったが、ここはよろめきからの立ち直りも確かめたいので回数の制限を外す（見失わないことは回数によらない）
 // Pass 2: 軍勢の数・払うの守りは前のまま（tests/game/prePass2.js。確かめるのは見失わないこと）
-const UNLIMITED = prePass2({ ...CONFIG, puff: { ...CONFIG.puff, uses: Infinity, guardSec: 0 } });
+// 2026-11-24: 払うの衝撃波（弾いて目をくらませ、見失わせる。tests/game/puffShock.test.js）と広い前線も外す（前の払う 22 m。確かめるのは追い方）
+const UNLIMITED = prePass2({ ...CONFIG, puff: { ...CONFIG.puff, uses: Infinity, guardSec: 0, radius: 22, shock: null } });
 function run(seed, sec = 45, cfg = UNLIMITED) {
   const g = createGame({ seed, cfg });
   g.begin(); g.pressStart();
@@ -47,7 +48,7 @@ function run(seed, sec = 45, cfg = UNLIMITED) {
   const LOSE = CONFIG.enemy.chase.loseSec;
   const spottedIds = new Set();
   let lostOk = 0, lostEarly = 0;
-  let backToSearch = 0, maxGrowSec = 0, ringOut = 0, staggerRecovered = 0, staggerBad = 0, meanBumps = 0, maxMeanBump = 0, moved = 0;
+  let backToSearch = 0, maxGrowSec = 0, ringOut = 0, staggerRecovered = 0, staggerBad = 0, meanBumps = 0, maxMeanBump = 0, moved = 0, blinded = 0;
   let prevMean = null, prevIds = null, maxR = 0;
   for (let i = 0; i < sec / DT && g.phase === 'playing'; i++) {
     const [mx, mz] = LEGS[Math.floor((i * DT) / 1.5) % LEGS.length];
@@ -66,13 +67,15 @@ function run(seed, sec = 45, cfg = UNLIMITED) {
       if (e.state === 'dead') continue;
       const d = Math.hypot(e.x - H.x, e.z - H.z);
       let r = rec.get(e.id);
-      if (!r && SPOTTED.has(e.state)) { rec.set(e.id, (r = { growSec: 0, blind: 0 })); spottedIds.add(e.id); }
+      if (!r && SPOTTED.has(e.state)) { rec.set(e.id, (r = { growSec: 0, blind: 0, forgotAt: e.forgotAt })); spottedIds.add(e.id); }
       if (!r) continue;
       const b = before.get(e.id);
       // R1f: 見えない秒（追う者の見え方: ライト（扇・ごく近く・見通し）か、chase.hearDist の内の見通し）。掴む者・群がる者は主人公の上にいる（見失わない）
       const sees = (e.state === 'grab' || e.state === 'cling') || seesHero(e, H, g.city.buildings, CONFIG) || (d <= CONFIG.enemy.chase.hearDist && lineOfSight(e.x, e.z, g.city.buildings, 0, H.x, H.z));
       const blindBefore = r.blind;
       r.blind = sees ? 0 : r.blind + DT;
+      // 2026-11-24: 払うの衝撃波で目がくらんで見失った者（forgotAt が変わった）は、ゲームの決まりどおりの見失い（早すぎる見失いではない）
+      if (r && e.state === 'search' && e.forgotAt != null && e.forgotAt !== r.forgotAt) { blinded++; rec.delete(e.id); continue; }
       if (e.state === 'search') {
         // 見失ったのは、見通しが loseSec 秒より長く切れたときだけ（それより早く search に戻った者はいない）。また見つければ数え直す
         // （ゲームは動く前に見え方を確かめ、ここは動いたあとに確かめるので、数フレームのずれは許す）
@@ -122,7 +125,7 @@ function run(seed, sec = 45, cfg = UNLIMITED) {
     prevIds = g.enemies.list.filter((e) => ids.includes(e.id)).map((e) => ({ id: e.id, d: Math.hypot(e.x - H.x, e.z - H.z) }));
     prevMean = ids.length ? sum / ids.length : prevMean;
   }
-  return { spotted: spottedIds.size, lostOk, lostEarly, backToSearch, maxGrowSec, ringOut, staggerRecovered, staggerBad, meanBumps, maxMeanBump, moved, maxR, hero: g.hero };
+  return { spotted: spottedIds.size, lostOk, lostEarly, blinded, backToSearch, maxGrowSec, ringOut, staggerRecovered, staggerBad, meanBumps, maxMeanBump, moved, maxR, hero: g.hero };
 }
 
 for (const seed of [1, 2, 3]) {
@@ -147,7 +150,8 @@ for (const seed of [1, 2, 3]) {
 
 test('R1d: 払いでよろめいた重い者は、よろめきが終わったそのフレームで chase へ戻り、動いている今の主人公へ突っ込み直す（探す道へそれない）', () => {
   // Fix round 1: 払うの守り（10.5 秒）があると、よろめきから戻った者が守りでまたよろめくので、ここは守りなし（よろめきからの戻りを見る）
-  const cfg = { ...CONFIG, enemy: { ...CONFIG.enemy, spawnPerSec: 0, patrol: { ...CONFIG.enemy.patrol, count: 0 } }, puff: { ...CONFIG.puff, guardSec: 0 } };
+  // 2026-11-24: 衝撃波（弾かれ終わると見失う）も外す。衝撃波のない よろめき（守りに当たった者など）の戻りを見る
+  const cfg = { ...CONFIG, enemy: { ...CONFIG.enemy, spawnPerSec: 0, patrol: { ...CONFIG.enemy.patrol, count: 0 } }, puff: { ...CONFIG.puff, guardSec: 0, shock: null } };
   const g = createGame({ seed: 7, cfg });
   g.begin(); g.pressStart();
   // 主人公の 6 m 先で突っ込んでくる重い者 3 人（x, z を直に置く）
@@ -315,9 +319,10 @@ test('R1f fix1: 開けた所で 12 m 後ろの追う者は撒けない（見え�
 // Fix round 1（見直し Important 6）: 出荷する設定そのまま（払うの守りあり・序盤 0.1/秒）でも、見つけた軍勢は loseSec の間は見失わず、
 // 掴む者は今の主人公の輪の内（数が少ないので、見つけた数の下限は小さく）
 test('Fix round 1: 出荷の設定（払うの守りあり）でも、見つけた軍勢は早く見失わず、掴む者は輪の内', () => {
-  let spotted = 0;
+  let spotted = 0, blinded = 0;
   for (const seed of [1, 2, 3]) {
     const r = run(seed, 45, { ...CONFIG, puff: { ...CONFIG.puff, uses: Infinity } });
+    blinded += r.blinded;
     if (process.env.R1D_LOG) console.log(seed, r);
     expect(r.backToSearch).toBe(0);
     expect(r.ringOut).toBe(0);
@@ -326,4 +331,5 @@ test('Fix round 1: 出荷の設定（払うの守りあり）でも、見つけ�
     spotted += r.spotted;
   }
   expect(spotted).toBeGreaterThan(5);
+  expect(blinded).toBeGreaterThan(0); // 2026-11-24: 出荷の設定では、払うの衝撃波で見失わせた者がいる
 }, 120000);
