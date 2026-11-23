@@ -6,6 +6,7 @@
 // で取れた割合を見て決めた（制作側の判断。持ち主が直せる。ボットの遊び方は人より狭いので目安）
 import { createRng } from '../rng.js';
 import { formatYen } from '../ui/format.js';
+import { CONFIG } from '../config.js';
 
 // ctx: { reason: 'released' | 'blackhole', outcome（game.outcome。時間切れは null）, stats（game.runStats）, damage（被害額）, cityValue（街の値打ちの合計）,
 //        firstClearToday（今日の街で初めての撃退成功）, newBest（前の自己ベストを塗り替えた）, hour（日本時間の時。分からなければ undefined） }
@@ -16,6 +17,43 @@ const R = (c) => c.stats?.release ?? null;
 const puffsOf = (c) => rel(c)?.puffsUsed ?? c.stats?.puffs ?? null;
 const ratio = (c) => (rel(c) && c.cityValue > 0 ? c.damage / c.cityValue : null);
 const inHours = (h, from, to) => Number.isInteger(h) && h >= from && h <= to;
+
+// R1i（持ち主 2026-11-23 10:29「称号も豆電球とか花火職人とか世界の破壊者とか規模のやつも」・10:39「規模の称号も色々作ってくれると助かる」）:
+// 規模の称号。放った一撃の力（%。HUD のゲージと同じ）で段を刻む。放った回にはちょうど一つ付き、ほかの称号と同じく
+// いちばん珍しい一つを出す仕組みに入る。from: その段の始まり（%、この値ちょうどから）。世界の破壊者は満タンちょうど（半径が最大）だけ。
+// 宇宙の段（finaleTimeline.js spaceTierFor、CONFIG.spaceTier）とそろえる: 小 = 豆電球〜爆竹（力 50% 未満）、中 = 花火職人〜
+// 地図を書き換えた者（50〜97%）、最大 = 国を消した者・世界の破壊者（97% = 膝から）。
+// 珍しさ（制作側の判断。持ち主が直せる）: いちばん上の段（世界の破壊者、満タン）だけが珍しい（★3）、ほかはふつう〜すこし珍しい。
+// 国を消した者を ★3 にすると撃退成功のほとんどが ★3 になり、★2 の撃退の称号（ギリギリの英雄・紙一重・先手必勝・今日の初撃退）が
+// title-sim で一度も出なくなるので ★2。いちばん多く出る称号は 35% 以下のまま（task-R1i-report.md）
+// ブラックホール（時間切れ）は一撃を放っていないので付けない（その結末には「すべてを飲み込んだ者」がある）
+const SCALE_BANDS = [
+  { id: 'scaleBulb', name: '豆電球', from: 0, rarity: 1 },
+  { id: 'scaleSparkler', name: '線香花火', from: 20, rarity: 1 },
+  { id: 'scaleCracker', name: '爆竹', from: 35, rarity: 1 },
+  { id: 'scaleFireworks', name: '花火職人', from: 50, rarity: 1 },
+  { id: 'scaleLauncher', name: '打ち上げ師', from: 65, rarity: 2 },
+  { id: 'scaleWrecker', name: '街の解体屋', from: 80, rarity: 2 },
+  { id: 'scaleMapmaker', name: '地図を書き換えた者', from: 90, rarity: 2 },
+  { id: 'scaleNation', name: '国を消した者', from: 97, rarity: 2 },
+  { id: 'scaleWorld', name: '世界の破壊者', from: 100, rarity: 3 },
+];
+// amount: 放った力（power.max と同じ単位）。満タンちょうどだけが最後の段、ほかは from ≤ 力% の段のうちいちばん上
+export function scaleTitleFor(amount, cfg = CONFIG) {
+  const M = cfg.power.max;
+  if (amount >= M - 1e-9) return SCALE_BANDS.at(-1);
+  const pct = (100 * amount) / M;
+  let band = SCALE_BANDS[0];
+  for (const b of SCALE_BANDS.slice(0, -1)) if (pct >= b.from - 1e-9) band = b;
+  return band;
+}
+const scaleOfCtx = (c) => (c.reason === 'released' && Number.isFinite(R(c)?.power) ? scaleTitleFor(R(c).power) : null);
+const scaleCond = (i) => {
+  const b = SCALE_BANDS[i], next = SCALE_BANDS[i + 1];
+  if (!next) return '力 100%（満タン）で放った';
+  if (!SCALE_BANDS[i + 2]) return `力 ${b.from}% 以上・満タン未満で放った`;
+  return i === 0 ? `力 ${next.from}% 未満で放った` : `力 ${b.from}〜${next.from}% 未満で放った`;
+};
 
 export const TITLES = [
   // 前からの 5 つ（brief のまま）
@@ -62,7 +100,11 @@ export const TITLES = [
   { id: 'newBest', name: '記録を塗り替えた者', rarity: 3, cond: '前の自己ベストを塗り替えて撃退成功', test: (c) => clear(c) && !!c.newBest },
   { id: 'nightOwl', name: '夜ふかしの破壊者', rarity: 2, cond: '日本時間 0〜4 時に遊んだ', test: (c) => inHours(c.hour, 0, 4) },
   { id: 'dawn', name: '夜明けの一撃', rarity: 2, cond: '日本時間 5〜8 時に遊んだ', test: (c) => inHours(c.hour, 5, 8) },
+  // 規模（R1i、下の SCALE_TITLES）
+  ...SCALE_BANDS.map((b, i) => ({ id: b.id, name: b.name, rarity: b.rarity, cond: scaleCond(i), test: (c) => scaleOfCtx(c)?.id === b.id })),
 ];
+// R1i: 規模の称号（表に並ぶ順 = 小さい順）
+export const SCALE_TITLES = TITLES.filter((t) => SCALE_BANDS.some((b) => b.id === t.id)).map((t) => ({ ...t, from: SCALE_BANDS.find((b) => b.id === t.id).from }));
 
 export const titleName = (id) => TITLES.find((t) => t.id === id)?.name ?? id;
 const rarityOf = (id) => TITLES.find((t) => t.id === id)?.rarity ?? 0;

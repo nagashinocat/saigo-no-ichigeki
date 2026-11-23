@@ -56,6 +56,7 @@ test('R3 fix1: ブラックホールは前のベストを見せ、記録しな�
 });
 
 test('R3 fix1: 何も取れなければ称号なし（空）', () => {
-  const r = settleRun({ records: createRecords(memStorage()), ...base({ cityKey: null, outcome: clearO({ clear: false, survivors: [{}], rank: 'C' }) }) });
+  // R1i: 放った回には規模の称号が必ず付くので、放った記録のない回で試す
+  const r = settleRun({ records: createRecords(memStorage()), ...base({ cityKey: null, outcome: clearO({ clear: false, survivors: [{}], rank: 'C' }), stats: stats({ release: null }) }) });
   expect(r.titles).toEqual([]);
 });

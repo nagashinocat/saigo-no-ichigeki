@@ -100,6 +100,10 @@ const CASES = [
   ['nightOwl', R({}, {}, { hour: 2 }), R({}, {}, { hour: 5 })],
   ['dawn', R({}, {}, { hour: 5 }), R({}, {}, { hour: 9 })],
   ['zorome', R({}, {}, { damage: 2.22e12 }), R({}, {}, { damage: 2.1e12 })],
+  // R1i: 規模の称号（放った力の段。境目ちょうどから上の段。tests/game/scaleTitles.test.js）
+  ...[['scaleBulb', 10, 19.9], ['scaleSparkler', 20, 19.9], ['scaleCracker', 35, 34.9], ['scaleFireworks', 50, 49.9], ['scaleLauncher', 65, 64.9],
+    ['scaleWrecker', 80, 79.9], ['scaleMapmaker', 90, 89.9], ['scaleNation', 97, 96.9], ['scaleWorld', 100, 99.9]]
+    .map(([id, yes, no]) => [id, R({}, { release: { ...S0.release, power: yes } }), id === 'scaleBulb' ? R({}, { release: { ...S0.release, power: 20 } }) : R({}, { release: { ...S0.release, power: no } })]),
 ];
 test('R3 fix1: 新しい称号の条件（境目）', () => {
   const ids = new Set(TITLES.map((t) => t.id));
@@ -127,7 +131,8 @@ test('R3 fix1: 一回に一つ — いちばん珍しいもの。同じ珍しさ
   // 同じ珍しさの組: 種で決まり、同じ種なら同じ。いろいろな種で、両方が出る
   const tie = TITLES.filter((t) => t.rarity === 2).map((t) => t.id);
   expect(tie.length).toBeGreaterThanOrEqual(2);
-  const ctx2 = R({}, { hides: 6, spotted: 6 }); // hermit・wanted
+  // R1i: 放った回には規模の称号が付くので、ここは ★1 の段（力 60%、花火職人）にして ★2 の組を試す
+  const ctx2 = R({}, { hides: 6, spotted: 6, release: { ...S0.release, power: 60 } }); // hermit・wanted
   const r2 = (id) => TITLES.find((t) => t.id === id).rarity;
   expect(r2('hermit')).toBe(r2('wanted'));
   const picks = new Set();
@@ -137,8 +142,8 @@ test('R3 fix1: 一回に一つ — いちばん珍しいもの。同じ珍しさ
   }
   expect([...picks].sort()).toEqual(earnedTitles(ctx2).filter((id) => r2(id) === Math.max(...earnedTitles(ctx2).map(r2))).sort());
   expect(picks.size).toBeGreaterThanOrEqual(2);
-  // 取れた称号が無ければ null
-  expect(pickTitle({ reason: 'released', outcome: clearO({ clear: false, survivors: [{}], puffsUsed: 1 }), stats: { ...S0, maxCombo: 0 }, damage: 2.4e12, cityValue: 0.42e12 }, 3)).toBe(null);
+  // 取れた称号が無ければ null（R1i: 放った回には規模の称号が必ず付くので、放った記録のない回で試す）
+  expect(pickTitle({ reason: 'released', outcome: clearO({ clear: false, survivors: [{}], puffsUsed: 1 }), stats: { ...S0, maxCombo: 0, release: null }, damage: 2.4e12, cityValue: 0.42e12 }, 3)).toBe(null);
 });
 
 test('R3 fix1: その回の種（runSeed）は同じ回なら同じ、違う回なら（たいてい）違う', () => {
