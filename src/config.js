@@ -70,7 +70,7 @@ export const CONFIG = {
     // 持ち主 10:06（「数値で85パーセントくらいのクリア確率にしたらいいかも」）・Fix round 1（まとめ役: 持ち主の決まりへ戻す）:
     // 群れは残り 20 秒（40 → 52 秒）のまま。数で釣り合いを取る: 序盤の湧く速さ 0.5 → 0.1/秒（隠れない主人公が広場で一人ずつ
     // 見つかり、払う 3 回を序盤で使い切っていた）、surgeMul 11 → 68（60 秒で約 100 のまま、終盤の山 5.5 → 6.8/秒）、吸う 1.2 → 0.85/秒。
-    // 三つの時期の今日の街 360 で最善 90%（90.8 / 92.5 / 87.5%）、払う 3 回・隠れない 51%（lookout-timing-report.md Fix round 1）
+    // 三つの時期の今日の街 360 で最善 94%（93.3 / 95.0 / 93.3%）、払う 3 回・隠れない 51%、隠れるだけ 23%（lookout-timing-report.md Fix round 2）
     spawnPerSec: 0.1, surgeStart: 40, surgeEnd: 52, surgeMul: 68, drainPerSec: 0.85, maxGrabbing: 6,
     spawnDist: [50, 66], roamDist: 75, laneSpread: 1.6, // 湧く輪（主人公から m）は R1g のカメラでは画面のほぼ外
     searchSpeed: 30, inwardBias: 0.8, turnRate: 16, lookAhead: 2.5, accel: 30, brake: 70,
@@ -146,11 +146,11 @@ export const CONFIG = {
   // 物陰に着くのは dashSec 秒（前のまま）。そのあと landSec 秒、着地のしゃがみ（見た目だけ）。残像・光の尾・着地の光は render/hideAction.js
   hideAction: { crouchSec: 0.06, crouchCreep: 0.04, leapH: 4, kickMinLen: 6, kickNear: 3.5, landSec: 0.16 },
   // fix2: 同じ物陰にいられる秒 holdSec 12 → 16（三つの時期の今日の街で 7 割を保つ。task-R1f-report.md Fix round 2）
-  // Pass 2・Fix round 1（まとめ役）: 序盤が静かになって、隠れるだけで 73% 撃退でき、払うの守りと合わせた最善は 98〜100% になった。
-  // 持ち主の決まり（物陰 16 秒・待ち時間 約 3 秒）のままでは最善を 9 割以下にできない（物陰 10 秒・3 秒で 100%）ので、物陰にいられる
-  // holdSec 16 → 6 秒・追われていて撒いた隠れるの待ち時間 cooldown 3 → 8 秒（持ち主が直せる値）。追われていない間の先回りの隠れる
-  // （LOOK OUT! の矢印に従う）は evadeCooldown 3 秒（矢印に従う人を損させない）
-  hide: { holdSec: 6, evadeCooldown: 3, seeDist: 4, dashSec: 0.3, cooldown: 8, range: 26, minDist: 3, step: 1.5, wallDist: 1.6, offW: 6, leaveDist: 3 },
+  // Fix round 2（持ち主の判断「間をとる」）: 隠れるだけ（払う 0 回、S ランクの道）で 2〜3 割、最善 90〜95%。物陰にいられる holdSec 6 → 10 秒
+  // （持ち主の 16 秒と前の 6 秒の間）、撒いた隠れるの待ち時間 cooldown 8 → 7 秒（3 秒と 8 秒の間）。物陰で見つかる真正面の近さ seeDist 4 → 6.5 m
+  // （holdSec が cooldown より長いと隠れ続けられ、隠れるだけで 5 割を越えるので、物陰を探し回る者に見つかりやすくして 2〜3 割に）。
+  // 追われていない間の先回りの隠れる（LOOK OUT! の矢印に従う）は evadeCooldown 3 秒（矢印に従う人を損させない）
+  hide: { holdSec: 10, evadeCooldown: 3, seeDist: 6.5, dashSec: 0.3, cooldown: 7, range: 26, minDist: 3, step: 1.5, wallDist: 1.6, offW: 6, leaveDist: 3 },
   // M1 の操作（持ち主 09:15、制作側の判断）: 溜めているあいだの 2 本目の指は、longPressSec 秒以上で浮かぶジョイスティック（押した所に出て、
   // 指を離すと消える。stickRadiusPx の輪いっぱいで全速、deadPx より内は止まる）、それより短く tapMovePx px 未満の動きで離せば払う
   // M2（持ち主 15:20）: PC の隠れる操作。向きのキーを同じ向きに素早く 2 回押す（keyTwice: mag より深く・window 秒の内・向きのずれ angleDeg° 以内、

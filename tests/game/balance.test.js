@@ -44,10 +44,10 @@ test('R0 / M2: 最善の操作（動くボット）でも、満タンは終わ�
   const got = ts.filter(Number.isFinite);
   // R1f: 24 の街の 16〜21（前は 12 の種の 8〜11。fix1: 下限は前の割合 8/12 より緩めない）
   // 持ち主 10:06（「数値で85パーセントくらいのクリア確率に」）・Pass 2（まとめ役: 払う 3 回・隠れない 4 割以上を満たす折り合いで、最善は 92% まで）:
-  // Fix round 1（見直し Important 2: 上限は目標に合わせる）: 24 の街の 20〜22（下限 80%、上限は 92% の 22/24 まで）。
-  // この 24 の街では 21/24 が満タン・p50 55.9 秒。今日の街 360 では 90%（時期ごと 90.8 / 92.5 / 87.5%）
-  expect(got.length).toBeGreaterThanOrEqual(Math.ceil(SEEDS.length * 0.8));
-  expect(got.length).toBeLessThanOrEqual(Math.floor(SEEDS.length * 0.92)); // 上手に遊んでも失敗することがある
+  // Fix round 2（持ち主の判断「間をとる」: 最善 90〜95%）: 24 の街の 21〜23（24 の街の刻みでは 90〜95% は 22 の一つだけなので、
+  // 下限 85%・上限 96% で 1 ずつ余りを置く）。この 24 の街では 22/24 が満タン・p50 53.4 秒。今日の街 360 では 94%（時期ごと 93.3 / 95.0 / 93.3%）
+  expect(got.length).toBeGreaterThanOrEqual(Math.ceil(SEEDS.length * 0.85));
+  expect(got.length).toBeLessThanOrEqual(Math.floor(SEEDS.length * 0.96)); // 上手に遊んでも失敗することがある
   expect(median(got)).toBeGreaterThanOrEqual(52);
   expect(median(got)).toBeLessThanOrEqual(56);
 }, 120000);
@@ -120,7 +120,11 @@ test('S9 / R0 fix1 / M2: 最善の操作で満タンで放てば必ず撃退成�
   // 99% なら、届いた回はみな撃退成功（満タンの少し手前で放っても勝てる）。M2 fix1: 消していたのを戻す（sim でも L=99 は 22/22）
   // Fix round 1（見直し Important 4）: Pass 2 でゆるめた所を元に戻す（99% に届いた回はみな撃退成功）。そのうえで、99% に届いた同じフレーム・
   // 同じ所で力を満タンにして放てば必ず撃退成功（「中心のそばの満タンは必ず撃退」をこの場所でも確かめる）
-  for (const s of seeds) { const o = releaseAtLevel(s, 99); if (o) expect(o.clear, `L=99 seed ${s}`).toBe(true); }
+  // Fix round 2: 物陰に 10 秒いられるようになり、24 の街の 2 つで、99% に届いた瞬間に主人公が中心から約 27〜28 m の物陰にいて、反対の端の
+  // 見回る者に 99% の半径が届かない。99% で負けるのは中心から 20 m より遠くで放った回だけ、2 回まで。その同じ所で満タンにすれば撃退成功（下）
+  const miss99 = seeds.map((s) => releaseAtLevel(s, 99)).filter((o) => o && !o.clear);
+  expect(miss99.length).toBeLessThanOrEqual(2);
+  for (const o of miss99) expect(Math.hypot(o.at.x, o.at.z)).toBeGreaterThan(20);
   for (const s of seeds) { const o = releaseAtLevel(s, 99, null, { topUp: true }); if (o) { expect(o.clear, `L=99→満タン seed ${s}`).toBe(true); expect(Math.hypot(o.at.x, o.at.z)).toBeLessThan(60); } }
 }, 300000);
 
@@ -137,7 +141,7 @@ test('M2: 中心から 200 m の所へ寄って放つ操作は、中心のそば
 
 // 持ち主 10:06（「払う全部使って隠れる無しでもクリアできない」）・Pass 2（まとめ役）: 払うを 3 回とも使い、隠れない遊び方（bot.js POLICY.puffNoHide）でも
 // 4 割以上は撃退できる（目標 5 割）。力が 99% に届いた瞬間に放つ（daily-balance と同じ。満タンを待つより撃退が多い）。
-// Fix round 1: sim（今日の街 360）: 51%（時期ごと 50.8 / 53.3 / 47.5%）。この 24 の街で 12/24（下限 10 から 2 の余り）
+// Fix round 1・2: sim（今日の街 360）: 51%（時期ごと 50.8 / 53.3 / 47.5%）。この 24 の街で 12/24（下限 10 から 2 の余り）
 test('Pass 2: 払う 3 回・隠れない遊び方でも、24 の街の 4 割以上（10 以上）で撃退成功', () => {
   const runs = SEEDS.map((s) => {
     const g = createGame({ seed: s });
@@ -167,3 +171,20 @@ test('持ち主 10:06: 払う 3 回・隠れない遊び方は、払うを 3 回
     expect(g.runStats.hides).toBe(0);
   }
 }, 120000);
+
+// Fix round 2（持ち主の判断「間をとる」）: 隠れるだけ（払う 0 回、S ランクの道）でも 2〜3 割は撃退できる。力が 99% に届いた瞬間に放つ。
+// sim（今日の街 360）: 23%（時期ごと 20.8 / 23.3 / 25.0%）。この 24 の街で 4/24（下限 3・上限 9）
+test('Fix round 2: 隠れるだけ（払う 0 回）でも、24 の街の 1 割以上 4 割以下で撃退成功（S ランクの道はあるが、易しすぎない）', () => {
+  const st = { ...POLICY.best, grab: Infinity };
+  let ok = 0;
+  for (const s of SEEDS) {
+    const g = createGame({ seed: s });
+    g.begin(); g.pressStart();
+    for (let t = 0; t < CONFIG.roundSeconds - DT / 2; t += DT) {
+      steerBot(g); actBot(g, st); g.update(DT);
+      if (g.power.value >= 99 - 1e-6) { g.pressEnd(); g.settle(); if (g.outcome.clear) { ok++; expect(g.outcome.rank === undefined || ['S', 'A', 'B'].includes(g.outcome.rank)).toBe(true); } break; }
+    }
+  }
+  expect(ok).toBeGreaterThanOrEqual(Math.ceil(SEEDS.length * 0.1));
+  expect(ok).toBeLessThanOrEqual(Math.floor(SEEDS.length * 0.4));
+}, 240000);
