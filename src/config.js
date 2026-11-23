@@ -156,5 +156,9 @@ export const CONFIG = {
   // ライトに入る）なら「LOOK OUT!」と、シュッで入れる物陰の向きの矢印（画面の dirs 向きで物陰を探す）。確かめるのは checkEvery 秒ごと。
   // 出ている間は nearK・angleK を holdK 倍に広げて出し続け（ヒステリシス）、最低 minShowSec 秒は出す（見つかった・隠れた・隠れられなくなったら
   // すぐ消す）。矢印は、その向きに払えば同じ物陰（agreeDeg° の内）へ入るものだけ
-  lookout: { nearK: 1.4, angleK: 1.2, predictSec: 0.6, checkEvery: 0.2, minShowSec: 0.4, holdK: 1.15, dirs: 8, agreeDeg: 15, nearBuildings: 80 },
+  // 持ち主 10:02（「隠れるの矢印を押すタイミングがない」。制作側の判断、持ち主が直せる）: 早めに知らせる nearK 1.4 → 1.8・angleK 1.2 → 1.4・
+  // predictSec 0.6 → 1.2（道を走る者は次の交差点で曲がる道すじも predictStep m ごとに先読み。lookout.js inDanger）、確かめる checkEvery 0.2 → 0.1 秒、
+  // 最低 minShowSec 0.4 → 1.0 秒は出す。見つかった直後も graceSec 秒は矢印を出す（掴まれていない・隠れられるとき）。
+  // 今日の街 60 で、その前 1.5 秒見つかっていなかった回の知らせの先は p50 0.60 → 1.57 秒・1.0 秒以上 6% → 95%（scripts/lookout-lead.mjs）
+  lookout: { nearK: 1.8, angleK: 1.4, predictSec: 1.2, predictStep: 6, checkEvery: 0.1, minShowSec: 1.0, holdK: 1.15, graceSec: 0.8, dirs: 8, agreeDeg: 15, nearBuildings: 80 },
 };

@@ -1,5 +1,5 @@
 import { CONFIG } from '../config.js';
-import { lineOfSight, seesHero } from './enemies.js';
+import { lineOfSight, seesHero, roadNode } from './enemies.js';
 import { findCover } from './cover.js';
 import { screenToWorld } from '../input/controls.js';
 import { screenBearingDeg } from '../ui/stickMarks.js';
@@ -15,24 +15,47 @@ export function isSpotted(enemies) {
 }
 
 const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
+// 先読みの道すじの上の一点から、ライト（seesHero）に入るか（毎回の写しを作らない）
+const probe = { x: 0, z: 0, heading: 0 };
+function seesFrom(x, z, h, H, buildings, cfg) { probe.x = x; probe.z = z; probe.heading = h; return seesHero(probe, H, buildings, cfg); }
 // 探す者 e のライトが、もうすぐ主人公 H に届くか。k: 広げる倍（出ている間のヒステリシスは lookout.holdK）
 //  - spotDist × nearK × k m の内で、進む向きから spotHalfAngle × angleK × k rad の内（建物にさえぎられない）
-//  - または predictSec 秒後のその者の位置（今の向きにまっすぐ e.speed m/s）から、ライト（seesHero）に入る
+//  - または predictSec 秒の内（e.speed m/s で進む道すじの上、predictStep m ごと）のどこかから、ライト（seesHero）に入る
+// 持ち主 10:02（「隠れるの矢印を押すタイミングがない」）: 道を走る者（ni・nj・di・dj のある者）の道すじは、次の交差点まで道に沿い、
+// そこから先はまっすぐ・左・右のどれか（戻らない。enemies.js chooseNext と同じ）。角を曲がって照らす者も先に知らせる
+// （前は今の向きのまっすぐ先の一点だけ。今日の街で見つかった回の多くは、角を曲がる・建物の陰から出る者で、知らせが 0.4 秒ほどしか先にならなかった）。
+// 道を持たない者は今の向きのまっすぐ先
 export function inDanger(e, H, buildings, cfg = CONFIG, k = 1) {
   if (e.state === 'dead' || e.x == null) return false;
   const E = cfg.enemy, L = cfg.lookout;
   const rx = H.x - e.x, rz = H.z - e.z, d = Math.hypot(rx, rz);
   const v = e.speed ?? 0, ahead = v * L.predictSec;
-  if (d > Math.max(E.spotDist * L.nearK * k, E.spotDist + ahead)) return false; // どちらでも届かない（安い先の打ち切り）
+  // どちらでも届かない（安い先の打ち切り。道すじの長さは ahead までなので、その先の点から主人公までは d − ahead より遠い）
+  if (d > Math.max(E.spotDist * L.nearK * k, E.spotDist + ahead)) return false;
   const h = e.heading ?? 0;
   if (d <= E.spotDist * L.nearK * k) {
     const off = Math.abs(wrap(Math.atan2(rz, rx) - h));
     if (off <= E.spotHalfAngle * L.angleK * k && lineOfSight(e.x, e.z, buildings, E.sightMargin, H.x, H.z)) return true;
   }
-  if (ahead > 0) {
-    const p = { ...e, x: e.x + Math.cos(h) * ahead, z: e.z + Math.sin(h) * ahead };
-    if (seesHero(p, { x: H.x, z: H.z }, buildings, cfg)) return true;
-  }
+  if (!(ahead > 0)) return false;
+  const step = L.predictStep ?? 6;
+  // (x0, z0) から向き (cx, cz) へ len m 進む間（step m ごとと終わりの点）にライトに入るか
+  const leg = (x0, z0, cx, cz, len) => {
+    const hh = Math.atan2(cz, cx);
+    for (let s = Math.min(step, len); len > 0; s = Math.min(s + step, len)) {
+      if (seesFrom(x0 + cx * s, z0 + cz * s, hh, H, buildings, cfg)) return true;
+      if (s >= len) break;
+    }
+    return false;
+  };
+  if (e.ni == null || e.nj == null || !(e.di || e.dj)) return leg(e.x, e.z, Math.cos(h), Math.sin(h), ahead);
+  const [nx, nz] = roadNode(e.ni, e.nj);
+  const tx = nx + (e.lane?.[0] ?? 0), tz = nz + (e.lane?.[1] ?? 0);
+  const s1 = Math.min(ahead, Math.max(0, (tx - e.x) * e.di + (tz - e.z) * e.dj));
+  if (leg(e.x, e.z, e.di, e.dj, s1)) return true;
+  if (s1 >= ahead) return false;
+  const x1 = e.x + e.di * s1, z1 = e.z + e.dj * s1;
+  for (const [bi, bj] of [[e.di, e.dj], [-e.dj, e.di], [e.dj, -e.di]]) if (leg(x1, z1, bi, bj, ahead - s1)) return true;
   return false;
 }
 
@@ -67,14 +90,20 @@ export function lookoutArrow(hero, buildings, watchers, azimuthDeg = 0, threats 
 
 // 出す・消すの決まり（毎フレーム update。危ないかと矢印は checkEvery 秒ごと）:
 //  - 出すのは、見つかっていない・隠れていない・隠れられる（hideBlock が null）・危ない者がいるとき
-//  - 見つかった・隠れた・隠れられなくなった（掴まれた・待ち時間・溜めていない）ら、すぐ消す
+//  - 隠れた・隠れられなくなった（掴まれた・待ち時間・溜めていない）ら、すぐ消す
 //  - 危なくなくなったら、出てから minShowSec 秒を過ぎていれば消す。出ている間の危ないかは holdK 倍に広げて見る（ちらつかない）
+//  - 持ち主 10:02（「隠れるの矢印を押すタイミングがない」）: 見つかった直後（見つかっていない → 見つかったに変わってから graceSec 秒）は、
+//    掴まれていない（掴む・群がる者がいない）・隠れられるなら、矢印を出し続ける（押せば M2 の hide と同じく、追う者は見失って最後に見た所を探す）。
+//    矢印の物陰は hide と同じく、追っている者（chase・approach・stagger）から見えない所。押せる物陰がなければ出さない。猶予を過ぎたら、すぐ消す
 // s: { hero, enemies, buildings, hideBlock, azimuthDeg }。戻り値: { show, deg（矢印の画面の角か null。毎フレーム今の主人公から物陰へ）,
-// spot（矢印の先の物陰 { x, z } か null）, t（出てからの秒） }
+// spot（矢印の先の物陰 { x, z } か null）, t（出てからの秒）, grace（見つかった直後の猶予で出ているか） }
+const WATCH = new Set(['chase', 'approach', 'stagger']); // game.js hide の watchers と同じ
+const GRABBED = new Set(['grab', 'cling']);
 export function createLookout(cfg = CONFIG) {
   const L = cfg.lookout;
   let show = false, shownT = 0, clock = 0, danger = false, arrow = null, checks = 0;
-  const out = { show: false, deg: null, spot: null, t: 0 };
+  let spottedPrev = false, graceLeft = 0, graceArrow = null, graceClock = 0;
+  const out = { show: false, deg: null, spot: null, t: 0, grace: false };
   const near = (H, bs) => bs.filter((b) => Math.abs(b.x - H.x) - b.w / 2 < L.nearBuildings && Math.abs(b.z - H.z) - b.d / 2 < L.nearBuildings);
   function check(s) {
     checks++;
@@ -85,12 +114,33 @@ export function createLookout(cfg = CONFIG) {
     // 矢印: 追っている者はいない（見つかっていない）ので、hide と同じく watchers は空
     arrow = danger ? lookoutArrow(s.hero, bs, [], s.azimuthDeg ?? 0, threats, cfg) : null;
   }
+  // 見つかった直後の矢印: 追っている者から見えない物陰（hide と同じ watchers）。ライトがもうすぐ届く探す者のライトが届かない所を先に
+  function checkGrace(s) {
+    checks++;
+    const bs = near(s.hero, s.buildings);
+    const watchers = s.enemies.filter((e) => WATCH.has(e.state) && e.x != null);
+    const threats = s.enemies.filter((e) => e.state === 'search' && inDanger(e, s.hero, bs, cfg, L.holdK));
+    graceArrow = lookoutArrow(s.hero, bs, watchers, s.azimuthDeg ?? 0, threats, cfg);
+  }
   return {
     // 危ないかを確かめた回数（テスト用）
     get checks() { return checks; },
     update(dt, s) {
-      const blocked = s.hideBlock != null || s.hero.hidden || isSpotted(s.enemies);
-      if (blocked) {
+      const spotted = isSpotted(s.enemies);
+      if (spotted && !spottedPrev) { graceLeft = L.graceSec ?? 0; graceClock = 0; graceArrow = null; }
+      spottedPrev = spotted;
+      if (!spotted) graceLeft = 0; else graceLeft -= dt;
+      const canHide = s.hideBlock == null && !s.hero.hidden && !s.enemies.some((e) => GRABBED.has(e.state));
+      let grace = false;
+      if (spotted && graceLeft > 0 && canHide) {
+        graceClock -= dt;
+        if (graceClock <= 0) { graceClock += L.checkEvery; if (graceClock <= 0) graceClock = L.checkEvery; checkGrace(s); }
+        grace = !!graceArrow;
+      }
+      if (grace) {
+        if (!show) shownT = 0;
+        show = true; arrow = graceArrow; danger = false; clock = 0;
+      } else if (spotted || !canHide) {
         show = false; danger = false; arrow = null; clock = 0;
       } else {
         clock -= dt;
@@ -99,9 +149,9 @@ export function createLookout(cfg = CONFIG) {
         else if (show && shownT >= L.minShowSec) show = false;
       }
       if (show) shownT += dt;
-      // fix1: 物陰は checkEvery ごとに選び直すが、矢印の角は毎フレーム今の主人公の所からその物陰へ（安い。0.2 秒古い角にしない）
+      // fix1: 物陰は checkEvery ごとに選び直すが、矢印の角は毎フレーム今の主人公の所からその物陰へ（安い。checkEvery 秒古い角にしない）
       const on = show && arrow;
-      out.show = show; out.t = show ? shownT : 0;
+      out.show = show; out.t = show ? shownT : 0; out.grace = show && grace;
       out.spot = on ? arrow.spot : null;
       out.deg = on ? screenBearingDeg(arrow.spot.x - s.hero.x, arrow.spot.z - s.hero.z, s.azimuthDeg ?? 0) : null;
       return out;

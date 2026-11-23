@@ -4,12 +4,14 @@ import { findCover } from '../../src/game/cover.js';
 import { screenToWorld } from '../../src/input/controls.js';
 import { screenBearingDeg } from '../../src/ui/stickMarks.js';
 import { createGame } from '../../src/game/game.js';
+import { seesHero, roadNode } from '../../src/game/enemies.js';
 import { CONFIG } from '../../src/config.js';
 
 // R1e（持ち主 16:55「見つかりそうなときに隠れられそうな向きに矢印とLOOK OUT!みたいなのをポップな字で出したら良いかも」）:
 // まだ見つかっていない・隠れられる（掴まれていない・待ち時間でない）ときに、軍勢のライトがもうすぐ主人公に届きそうなら「LOOK OUT!」と、
-// シュッで入れる物陰の向きの矢印。「もうすぐ届く」は、ライトの届く長さの約 1.4 倍の内でライトの角より少し広い扇の内（見通しあり）、
-// または約 0.6 秒後のその者の位置からライトに入る。見つかった・隠れた・危なくなくなったら消える（最低 0.4 秒は出し、少しのヒステリシス）
+// シュッで入れる物陰の向きの矢印。「もうすぐ届く」は、ライトの届く長さの nearK 倍の内でライトの角より少し広い扇の内（見通しあり）、
+// または predictSec 秒の内の道すじの上からライトに入る。隠れた・危なくなくなったら消える（最低 minShowSec 秒は出し、少しのヒステリシス）。
+// 持ち主 10:02: 早め・長め（1.8 倍・扇 × 1.4・1.2 秒・最低 1.0 秒）にし、見つかった直後も graceSec 秒は押せる矢印を出す
 const E = CONFIG.enemy, L = CONFIG.lookout;
 const H = { x: 0, z: 0 };
 // 主人公から向き ang（rad、世界）に d m 離れて、主人公の方（から off rad ずれた向き）を向いて進む探す者
@@ -18,17 +20,19 @@ function rider(d, { ang = Math.PI, off = 0, speed = 0, state = 'search' } = {}) 
   return { id: 1, state, x, z, heading: Math.atan2(H.z - z, H.x - x) + off, speed };
 }
 
-test('R1e: LOOK OUT! の値は config にある（約 1.4 倍・約 0.6 秒・最低 0.4 秒・数回/秒）', () => {
-  expect(L.nearK).toBeCloseTo(1.4, 6);
-  expect(L.predictSec).toBeCloseTo(0.6, 6);
-  expect(L.minShowSec).toBeCloseTo(0.4, 6);
-  expect(L.angleK).toBeGreaterThan(1);
-  expect(L.angleK).toBeLessThan(1.5);
+// 持ち主 10:02（「隠れるの矢印を押すタイミングがない」）: 早めに（約 1.8 倍・扇 × 約 1.4・約 1.2 秒の先読み）、長く（最低約 1.0 秒）、
+// 確かめは 0.1 秒ごと、見つかった直後も約 0.8 秒は押せる
+test('持ち主 10:02: LOOK OUT! の値は config にある（約 1.8 倍・扇 × 約 1.4・約 1.2 秒・最低約 1.0 秒・0.1 秒ごと・見つかった直後の猶予 約 0.8 秒）', () => {
+  expect(L.nearK).toBeCloseTo(1.8, 6);
+  expect(L.angleK).toBeCloseTo(1.4, 6);
+  expect(L.predictSec).toBeCloseTo(1.2, 6);
+  expect(L.minShowSec).toBeCloseTo(1.0, 6);
+  expect(L.checkEvery).toBeCloseTo(0.1, 6);
+  expect(L.graceSec).toBeCloseTo(0.8, 6);
   expect(L.holdK).toBeGreaterThan(1);
-  expect(1 / L.checkEvery).toBeLessThanOrEqual(10);
 });
 
-test('R1e: もうすぐ届く: ライトの届く長さの 1.4 倍のしきいの両側（止まっている者）', () => {
+test('R1e: もうすぐ届く: ライトの届く長さの nearK 倍のしきいの両側（止まっている者）', () => {
   const R = E.spotDist * L.nearK;
   expect(inDanger(rider(R - 0.1), H, [])).toBe(true);
   expect(inDanger(rider(R + 0.1), H, [])).toBe(false);
@@ -43,9 +47,9 @@ test('R1e: もうすぐ届く: 少し広い扇（ライトの半分の角 × ang
   expect(inDanger(rider(10, { off: Math.PI }), H, [])).toBe(false);
 });
 
-test('R1e: もうすぐ届く: 0.6 秒後の位置からライトに入る（速い者は 1.4 倍より遠くても）。しきいの両側', () => {
+test('R1e: もうすぐ届く: predictSec 秒の内の位置からライトに入る（速い者は nearK 倍より遠くても）。しきいの両側', () => {
   const v = 30, ahead = v * L.predictSec;
-  expect(E.spotDist + ahead).toBeGreaterThan(E.spotDist * L.nearK); // 1.4 倍の外の話
+  expect(E.spotDist + ahead).toBeGreaterThan(E.spotDist * L.nearK); // nearK 倍の外の話
   expect(inDanger(rider(E.spotDist + ahead - 0.5, { speed: v }), H, [])).toBe(true);
   expect(inDanger(rider(E.spotDist + ahead + 0.5, { speed: v }), H, [])).toBe(false);
 });
@@ -86,13 +90,14 @@ test('R1e: 危ないときに出る。掴まれている・待ち時間・もう
   const e = threatFor(g);
   expect(e).not.toBe(null);
   g.enemies.list.push(e);
-  const run = (extra) => { const lo = createLookout(); let s; for (let i = 0; i < 10; i++) s = lo.update(DT, st(g, extra)); return s.show; };
+  // 持ち主 10:02: もう見つかっているときは、見つかった直後の猶予（graceSec）を過ぎれば出ない（猶予の間は下の別のテスト）
+  const run = (extra, sec = 10 * DT) => { const lo = createLookout(); let s; for (let i = 0; i < Math.ceil(sec / DT); i++) s = lo.update(DT, st(g, extra)); return s.show; };
   expect(run({})).toBe(true);
   expect(run({ hideBlock: 'grabbed' })).toBe(false);
   expect(run({ hideBlock: 'cooldown' })).toBe(false);
   expect(run({ hideBlock: 'off' })).toBe(false);
   expect(run({ hero: { ...g.hero, hidden: true } })).toBe(false);
-  expect(run({ enemies: [...g.enemies.list, { state: 'chase', x: 500, z: 500 }] })).toBe(false);
+  expect(run({ enemies: [...g.enemies.list, { state: 'chase', x: 500, z: 500 }] }, L.graceSec + 0.2)).toBe(false);
   expect(run({ enemies: [] })).toBe(false); // 危なくない
 });
 
@@ -143,18 +148,18 @@ test('R1e: 矢印は、ライトがもうすぐ届く者のライトが届かな
   expect(seen).toBeGreaterThan(0);
 });
 
-test('R1e: 最低 0.4 秒は出す。危なくなくなってもすぐには消えず、少しのヒステリシス（出ている間は 1.4 倍 × holdK まで出し続ける）', () => {
+test('R1e / 持ち主 10:02: 最低 minShowSec（1.0 秒）は出す。危なくなくなってもすぐには消えず、少しのヒステリシス（出ている間は nearK 倍 × holdK まで出し続ける）', () => {
   const lo = createLookout();
   const base = { hero: H, buildings: [], hideBlock: null, azimuthDeg: 0 };
   const near = rider(E.spotDist * L.nearK - 1);
-  // 一度だけ危ない → 0.4 秒は出たまま、それを過ぎて危なくなければ消える
+  // 一度だけ危ない → minShowSec 秒は出たまま、それを過ぎて危なくなければ消える
   let s = lo.update(DT, { ...base, enemies: [near] });
   expect(s.show).toBe(true);
   let t = DT;
   while (t < L.minShowSec - 2 * DT) { s = lo.update(DT, { ...base, enemies: [] }); t += DT; expect(s.show).toBe(true); }
   for (let i = 0; i < Math.ceil((L.checkEvery + 0.1) / DT) + 4; i++) s = lo.update(DT, { ...base, enemies: [] });
   expect(s.show).toBe(false);
-  // ヒステリシス: 出る前は 1.4 倍の少し外では出ない。出ている間は 1.4 倍の少し外（holdK の内）でも出し続ける
+  // ヒステリシス: 出る前は nearK 倍の少し外では出ない。出ている間は nearK 倍の少し外（holdK の内）でも出し続ける
   const lo2 = createLookout();
   const edge = rider(E.spotDist * L.nearK * (1 + (L.holdK - 1) / 2));
   for (let i = 0; i < 20; i++) s = lo2.update(DT, { ...base, enemies: [edge] });
@@ -168,7 +173,7 @@ test('R1e: 最低 0.4 秒は出す。危なくなくなってもすぐには消�
   expect(s.show).toBe(false);
 });
 
-test('R1e: 見つかった・隠れたら、0.4 秒を待たずにすぐ消える', () => {
+test('R1e: 見つかった（押せる物陰がない）・隠れた・待ち時間なら、minShowSec を待たずにすぐ消える', () => {
   const lo = createLookout();
   const base = { hero: H, buildings: [], hideBlock: null, azimuthDeg: 0 };
   expect(lo.update(DT, { ...base, enemies: [rider(30)] }).show).toBe(true);
@@ -220,4 +225,165 @@ test('R1e fix1: 主人公が動いても、矢印は毎フレームその物陰�
     }
   }
   expect(frames).toBeGreaterThan(5);
+});
+
+// ---- 持ち主 10:02（「隠れるの矢印を押すタイミングがない」）----
+// 前は、見つかる 0.3〜0.5 秒前に出て、見つかった瞬間に消えていた（今日の街 60 で、その前 1.5 秒見つかっていなかった回の p50 0.60 秒。
+// scripts/lookout-lead.mjs）。早めに知らせ（約 1.0 秒以上前）、出ている時間を長くし、見つかった直後も graceSec 秒は押せる
+
+// 何もない所をまっすぐ走ってくる者（主人公は止まっている）: 最初に LOOK OUT! が出た時刻から、ライトに入る（見つかりうる最初の）時刻まで
+function approachLead({ lateral = 0, speed = E.searchSpeed, start = 140, cfg = CONFIG } = {}) {
+  const dt = 1 / 60, lo = createLookout(cfg);
+  const e = { id: 5, state: 'search', x: start, z: lateral, heading: Math.PI, speed };
+  let t = 0, shownAt = null;
+  for (; e.x > -start; t += dt) {
+    const s = lo.update(dt, { hero: H, enemies: [e], buildings: [], hideBlock: null, azimuthDeg: 0 });
+    if (s.show && shownAt == null) shownAt = t;
+    if (!s.show) shownAt = null; // 出続けていた分だけ数える
+    if (seesHero(e, H, [], cfg)) return shownAt == null ? 0 : t - shownAt;
+    e.x -= speed * dt;
+  }
+  return null; // ライトに入らない（横に離れすぎ）
+}
+
+test('持ち主 10:02: まっすぐ走ってくる探す者（正面・横に 8 / 16 m・重い者の速さ）には、ライトに入る 1.0 秒以上前から LOOK OUT! が出続ける', () => {
+  const cases = [{}, { lateral: 8 }, { lateral: -16 }, { speed: E.searchSpeed * E.kinds.heavy.speedMul }, { lateral: 16, speed: E.patrol.speed }];
+  for (const c of cases) {
+    const lead = approachLead(c);
+    expect(lead, JSON.stringify(c)).not.toBe(null);
+    expect(lead, JSON.stringify(c)).toBeGreaterThanOrEqual(1.0);
+  }
+});
+
+test('持ち主 10:02: 角を曲がってくる者（道を走り、次の交差点で主人公の方へ曲がる）にも、ライトに入る前に先に知らせる', () => {
+  // 主人公は x = 0 の道の上。探す者は z = -P·k の横の道を +x へ走ってきて、x = 0 の交差点で +z（主人公の方）へ曲がる。
+  // 角のビルが見通しをさえぎる（曲がるまで主人公は見えない）
+  const node = roadNode(0, -2), cx = node[0], cz = node[1];
+  const Hc = { x: cx, z: cz + 30 };
+  const wall = [{ x: cx - 13, z: cz + 13, w: 18, d: 18 }]; // 角のビル（交差点の -x・+z の角）
+  const e = { id: 9, state: 'search', x: cx - 60, z: cz, heading: 0, speed: E.searchSpeed, ni: 0, nj: -2, di: 1, dj: 0, lane: [0, 0] };
+  expect(seesHero(e, Hc, wall, CONFIG)).toBe(false);
+  // 曲がる 1.0 秒前（交差点まで 30 m）、まっすぐ先だけの先読みでは届かないが、曲がる道すじの先読みで届く
+  const at = { ...e, x: cx - E.searchSpeed * 1.0 };
+  expect(seesHero({ ...at, x: cx, z: cz + 2, heading: Math.PI / 2 }, Hc, wall, CONFIG) || seesHero({ ...at, x: cx, z: cz + 6, heading: Math.PI / 2 }, Hc, wall, CONFIG)).toBe(true);
+  expect(inDanger(at, Hc, wall)).toBe(true);
+  const noRoad = { ...at }; delete noRoad.ni; delete noRoad.nj; delete noRoad.di; delete noRoad.dj;
+  expect(inDanger(noRoad, Hc, wall)).toBe(false); // 道を知らなければ（まっすぐ先だけ）知らせられない
+});
+
+test('持ち主 10:02: LOOK OUT! は一度出たら最低 minShowSec（約 1.0 秒）出ている', () => {
+  const lo = createLookout();
+  const base = { hero: H, buildings: [], hideBlock: null, azimuthDeg: 0 };
+  expect(lo.update(DT, { ...base, enemies: [rider(E.spotDist * 1.2)] }).show).toBe(true);
+  let t = DT, s;
+  for (; t < 1.0 - DT / 2; t += DT) { s = lo.update(DT, { ...base, enemies: [] }); expect(s.show, `t=${t.toFixed(2)}`).toBe(true); }
+});
+
+// 見つかった直後の猶予: 街の中で、主人公の見える所から追ってくる者（chase）を置く
+function spottedScene(seed) {
+  const g = createGame({ seed, cfg: quiet });
+  g.begin(); g.pressStart();
+  for (let t = 0; t < 1; t += DT) g.update(DT);
+  const e = threatFor(g);
+  if (!e) return null;
+  e.state = 'chase'; e.speed = 0;
+  return { g, e };
+}
+
+test('持ち主 10:02: 見つかった直後の猶予（graceSec）の間は矢印が出て、押せば隠れる（追う者は見失い、最後に見た所を探す）', () => {
+  let hid = 0;
+  for (const seed of [1, 2, 3, 4, 5, 6]) {
+    const sc = spottedScene(seed);
+    if (!sc) continue;
+    const { g, e } = sc;
+    const lo = createLookout();
+    // 見つかる前（探す者がいない）→ 見つかった
+    lo.update(DT, st(g, { enemies: [] }));
+    g.enemies.list.push(e);
+    let s = lo.update(DT, st(g));
+    if (!s.show) { expect(s.spot).toBe(null); continue; } // 追う者から見えない物陰がない場所（押せる矢印がないので出さない）
+    for (let t = DT; t < L.graceSec - 0.15; t += DT) {
+      s = lo.update(DT, st(g));
+      expect(s.show, `seed ${seed} t=${t.toFixed(2)}`).toBe(true);
+      expect(s.grace).toBe(true);
+      expect(s.spot).not.toBe(null);
+      expect(s.deg).not.toBe(null);
+    }
+    const from = { x: g.hero.x, z: g.hero.z };
+    expect(g.hideBlock).toBe(null);
+    expect(g.hideToward(s.spot)).toBe(true);
+    expect(g.hero.hidden).toBe(true);
+    expect(e.state).toBe('search'); // 見失った
+    expect(e.heard.x).toBeCloseTo(from.x, 6); // 最後に見た所を探す
+    expect(e.heard.z).toBeCloseTo(from.z, 6);
+    expect(lo.update(DT, st(g)).show).toBe(false); // 隠れたら消える
+    hid++;
+  }
+  expect(hid).toBeGreaterThanOrEqual(3);
+});
+
+test('持ち主 10:02: 猶予を過ぎたら矢印は消える（見つかったまま）。見失われてまた見つかれば、また猶予', () => {
+  let seen = 0;
+  for (const seed of [1, 2, 3, 4, 5, 6]) {
+    const sc = spottedScene(seed);
+    if (!sc) continue;
+    const { g, e } = sc;
+    const lo = createLookout();
+    lo.update(DT, st(g, { enemies: [] }));
+    let s, t = 0;
+    for (; t < L.graceSec - DT / 2; t += DT) s = lo.update(DT, st(g, { enemies: [e] }));
+    if (!s.show) continue; // 押せる物陰がない街の場所
+    for (let i = 0; i < 3; i++) { s = lo.update(DT, st(g, { enemies: [e] })); t += DT; }
+    expect(t).toBeGreaterThan(L.graceSec);
+    expect(s.show).toBe(false);
+    for (let i = 0; i < 60; i++) expect(lo.update(DT, st(g, { enemies: [e] })).show).toBe(false); // 見つかったままなら出ない
+    // 見失われた（見つかっていない）→ また見つかった: また猶予
+    lo.update(DT, st(g, { enemies: [] }));
+    expect(lo.update(DT, st(g, { enemies: [e] })).show).toBe(true);
+    seen++;
+  }
+  expect(seen).toBeGreaterThanOrEqual(3);
+});
+
+test('持ち主 10:02: 掴まれている主人公には（見つかった直後の猶予でも）矢印は出ない。待ち時間・隠れている間も出ない', () => {
+  let n = 0;
+  for (const seed of [1, 2, 3, 4]) {
+    const sc = spottedScene(seed);
+    if (!sc) continue;
+    const { g, e } = sc;
+    const grab = { id: 88, state: 'grab', x: g.hero.x + 1, z: g.hero.z };
+    for (const extra of [{ hideBlock: 'grabbed' }, { enemies: [e, grab] }, { enemies: [e, { ...grab, state: 'cling' }] }, { hideBlock: 'cooldown' }, { hero: { ...g.hero, hidden: true } }]) {
+      const lo = createLookout();
+      lo.update(DT, st(g, { enemies: [] }));
+      for (let t = 0; t < L.graceSec; t += DT) expect(lo.update(DT, st(g, { enemies: [e], ...extra })).show, JSON.stringify(Object.keys(extra))).toBe(false);
+    }
+    // 猶予の途中で掴まれたら、すぐ消える
+    const lo = createLookout();
+    lo.update(DT, st(g, { enemies: [] }));
+    const s0 = lo.update(DT, st(g, { enemies: [e] }));
+    if (s0.show) { expect(lo.update(DT, st(g, { enemies: [e, grab], hideBlock: 'grabbed' })).show).toBe(false); n++; }
+  }
+  expect(n).toBeGreaterThanOrEqual(2);
+});
+
+test('持ち主 10:02: 猶予の矢印も、その向きに払えば（追う者から見えない物陰を探す M2 の hide と同じ探し方で）15° の内の物陰へ入る', () => {
+  let checked = 0;
+  for (const seed of [1, 2, 3, 4, 5, 6, 7, 8]) {
+    const sc = spottedScene(seed);
+    if (!sc) continue;
+    const { g, e } = sc;
+    for (const az of [0, 40]) {
+      const lo = createLookout();
+      lo.update(DT, st(g, { enemies: [], azimuthDeg: az }));
+      const s = lo.update(DT, st(g, { enemies: [e], azimuthDeg: az }));
+      if (!s.show || s.deg == null) continue;
+      const r = (s.deg * Math.PI) / 180, w = screenToWorld(Math.cos(r), Math.sin(r), az);
+      const p = findCover(g.hero, w, g.city.buildings, [e], CONFIG);
+      expect(p).not.toBe(null);
+      const b = screenBearingDeg(p.x - g.hero.x, p.z - g.hero.z, az);
+      expect(Math.abs(((b - s.deg + 540) % 360) - 180)).toBeLessThanOrEqual(15);
+      checked++;
+    }
+  }
+  expect(checked).toBeGreaterThanOrEqual(4);
 });
