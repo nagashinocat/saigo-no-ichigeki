@@ -288,7 +288,8 @@ test('地響きの折れ線（R0b、音は画面に従う）: 白が晴れて爆
     const sp = at(tl.chaseEnd + 0.5);
     expect(sp.f).toBeLessThanOrEqual(80);
     expect(sp.g).toBeLessThan(at(tl.chaseEnd - 0.05).g);
-    expect(sp.g).toBeGreaterThan(0.2);
+    // R1i: 宇宙からあとは宇宙の段の大きさ（spaceSound。最大は 1 のまま）
+    expect(sp.g).toBeGreaterThan(0.2 * (tl.spaceSound ?? 1));
     expect(at(tl.chaseEnd - 0.05).f).toBeGreaterThanOrEqual(140);
     for (const t of [tl.lineEnd, (tl.lineEnd + tl.rumble) / 2, tl.rumble, tl.end]) expect(at(t).g).toBe(0);
   }

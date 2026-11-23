@@ -110,6 +110,8 @@ export function rumbleKeys(tl) {
   const engulf = Math.min(Math.max(tl.engulf ?? (burst + snap) / 2, burst + 0.05), snap - 0.05);
   const ce = Math.max(tl.chaseEnd, snap + 0.6);
   const lineEnd = Math.max(tl.lineEnd, ce + 0.6), flat = Math.min(Math.max(tl.flatten, ce + 0.45), lineEnd - 0.1);
+  // R1i: 宇宙からあと（こもって消えるまで）は宇宙の段の大きさ（finaleTimeline の spaceSound。最大は 1 のまま）
+  const k = tl.spaceSound ?? 1;
   return [
     { t: r0, g: 0, f: 60 },
     { t: burst, g: 0.3, f: 90 },
@@ -118,8 +120,8 @@ export function rumbleKeys(tl) {
     { t: snap + 0.3, g: 1, f: 170 },
     { t: (snap + 0.3 + ce) / 2, g: 0.92, f: 160 },
     { t: ce, g: 0.85, f: 150 },
-    { t: ce + 0.4, g: 0.5, f: 70 },
-    { t: flat, g: 0.3, f: 60 },
+    { t: ce + 0.4, g: 0.5 * k, f: 70 },
+    { t: flat, g: 0.3 * k, f: 60 },
     { t: lineEnd, g: 0, f: 50 },
   ];
 }
@@ -798,8 +800,8 @@ export function createAudio({ nav = globalThis.navigator, makeMedia = (src) => n
       if (mode === 'replay') collapseGate.reset(); // リプレイは同じ崩落を最初から（演出の終わりにためた命中・上限の数を持ち越さない）
       setDebris(mode);
     },
-    // 無音のあとの、低い地鳴り（長くゆっくり来て、ゆっくり引く）
-    deepRumble() {
+    // 無音のあとの、低い地鳴り（長くゆっくり来て、ゆっくり引く）。R1i: level は宇宙の段の大きさ（spaceSound。最大は 1 のまま）
+    deepRumble(level = 1) {
       if (!ready()) return;
       const t = now();
       out.frequency.cancelScheduledValues(t);
@@ -808,11 +810,12 @@ export function createAudio({ nav = globalThis.navigator, makeMedia = (src) => n
       const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 70; lp.Q.value = 0.9;
       const g = ctx.createGain();
       g.gain.setValueAtTime(0.0001, t);
-      g.gain.linearRampToValueAtTime(0.9, t + 1.2);
+      const lv = Math.min(1, Math.max(0.05, level));
+      g.gain.linearRampToValueAtTime(0.9 * lv, t + 1.2);
       g.gain.exponentialRampToValueAtTime(0.0001, t + 6);
       src.connect(lp); lp.connect(g); g.connect(cine);
       src.start(t); src.stop(t + 6.1);
-      thump({ f0: 36, f1: 24, dur: 5, gain: 0.5, dest: cine, attack: 1.0 });
+      thump({ f0: 36, f1: 24, dur: 5, gain: 0.5 * lv, dest: cine, attack: 1.0 });
       // 地鳴りが引いたら、こもりと世界の音量を元に戻す（このあとの音がこもったまま・無音のままにならない）
       const back = t + 6.2;
       out.frequency.setValueAtTime(400, back);

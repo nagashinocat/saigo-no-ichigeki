@@ -1,6 +1,6 @@
 import { test, expect } from 'vitest';
 import * as THREE from 'three';
-import { leadFor, minLeadFor, createChase, createCinematic, barsFor, shellRadius, FLING, spaceSparkTime, VEIL_NEAR, VEIL_K, VEIL_ADD, VEIL_GROW, WHITE_AHEAD, CHASE_HOLD, BEAT_LENS, LENS, beatLens } from '../../src/render/cinematic.js';
+import { leadFor, minLeadFor, createChase, createCinematic, barsFor, shellRadius, SPACE_LOOK, FLING, spaceSparkTime, VEIL_NEAR, VEIL_K, VEIL_ADD, VEIL_GROW, WHITE_AHEAD, CHASE_HOLD, BEAT_LENS, LENS, beatLens } from '../../src/render/cinematic.js';
 import { createEnemies } from '../../src/game/enemies.js';
 import { createTimeline, FINALE } from '../../src/render/finaleTimeline.js';
 import { planFinale, planRetreat } from '../../src/render/finalePlan.js';
@@ -239,7 +239,8 @@ test('宇宙の衝撃波の殻もゆっくりふくらむ: いつも半球の少
       maxRate = Math.max(maxRate, (s - prev) / dt);
       prev = s;
     }
-    expect(maxRate).toBeLessThanOrEqual(0.6);
+    // R1i: 画面の上での速さ（最大の半球の大きさ rMax に対して）。中・小は半球が小さい分だけ、割合では速い
+    expect(maxRate * SPACE_LOOK[tl.tier].dome).toBeLessThanOrEqual(0.6);
   }
 });
 

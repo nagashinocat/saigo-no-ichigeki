@@ -615,7 +615,7 @@ cinematic.on('cue', ({ name, arg }) => {
     audio.finaleRumble(cinematic.timeline);
   } else if (name === 'burst') audio.boom(finalBlastSize, finaleBoomOpts(cinematic.timeline)); // 弾けた瞬間に爆発の音が開く
   else if (name === 'space') audio.muffle(1.4);
-  else if (name === 'rumble') audio.deepRumble();
+  else if (name === 'rumble') audio.deepRumble(cinematic.timeline?.spaceSound ?? 1); // R1i: 宇宙の段の大きさ
 });
 // 演出が最後まで終わった: そのままリプレイへ（写しがなければ、最後の絵のまま結果を重ねる）
 cinematic.on('end', () => {

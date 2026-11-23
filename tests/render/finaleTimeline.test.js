@@ -1,5 +1,6 @@
 import { test, expect } from 'vitest';
-import { FINALE, createTimeline } from '../../src/render/finaleTimeline.js';
+import { FINALE, SPACE_BEATS, createTimeline } from '../../src/render/finaleTimeline.js';
+import { SPACE_LOOK } from '../../src/render/cinematic.js';
 import { createSwell, SWELL } from '../../src/render/pacing.js';
 import { CONFIG } from '../../src/config.js';
 import { radiusFor } from '../../src/game/charge.js';
@@ -46,9 +47,11 @@ test('段の順番: 手 → 白 → スローでふくらむ（swell）→ 弾�
     expect(tl.stage(tl.burst + 0.01)).toBe('race');
     expect(tl.stage(tl.snap + 0.01)).toBe('chase');
     expect(tl.stage(tl.end + 0.1)).toBe('done');
-    expect(tl.flatten - tl.chaseEnd).toBeGreaterThanOrEqual(FINALE.spaceMin - 1e-9);
-    expect(tl.domeEnd - tl.chaseEnd).toBeGreaterThanOrEqual(FINALE.domeMin - 1e-9);
-    expect(tl.flatten - tl.domeEnd).toBeGreaterThanOrEqual(FINALE.spaceHold - 1e-9);
+    // R1i: 宇宙からあとの秒は宇宙の段のもの（最大は FINALE のまま。tests/render/spaceTier.test.js）
+    const B = { ...FINALE, ...SPACE_BEATS[tl.tier] };
+    expect(tl.flatten - tl.chaseEnd).toBeGreaterThanOrEqual(B.spaceMin - 1e-9);
+    expect(tl.domeEnd - tl.chaseEnd).toBeGreaterThanOrEqual(B.domeMin - 1e-9);
+    expect(tl.flatten - tl.domeEnd).toBeGreaterThanOrEqual(B.spaceHold - 1e-9);
   }
 });
 
@@ -57,7 +60,11 @@ test('全体の長さは前（ガラスの一拍）+ 0.5 秒まで。短くし�
     for (const k of [0.36, 0.46, 0.56]) {
       const tl = beatFor(RADII[i], k);
       expect(tl.end, `amount ${a} k ${k}`).toBeLessThanOrEqual(PREV_END[a] + 0.5 + 1e-9);
-      expect(tl.end).toBeGreaterThanOrEqual(9);
+      // R1i: 9 秒以上は最大の段。中・小は宇宙からあとを段の分だけ短くする（持ち主 10:29「しょうもないやつ」）が、宇宙へ切り替わるまでは同じ
+      const B = { ...FINALE, ...SPACE_BEATS[tl.tier] };
+      const cut = (FINALE.domeMin - B.domeMin) + (FINALE.flattenSec - B.flattenSec) + (FINALE.thinSec - B.thinSec) + (FINALE.silenceSec - B.silenceSec) + (FINALE.rumbleHold - B.rumbleHold);
+      expect(tl.end).toBeGreaterThanOrEqual(9 - cut - 1e-9);
+      if (tl.tier === 'max') expect(tl.end).toBeGreaterThanOrEqual(9);
     }
   });
 });
@@ -162,6 +169,7 @@ test('宇宙の半球はゆっくりふくらむ: domeAt は chaseEnd で 0・do
       if (tl.radius - tl.fCut > 1e-6) expect(p).toBeLessThanOrEqual((tl.front(t) - tl.fCut) / (tl.radius - tl.fCut) + 1e-9);
       prev = p;
     }
-    expect(maxRate).toBeLessThanOrEqual(0.8);
+    // R1i: 画面の上での速さ（最大の半球の大きさに対して）。中・小は半球が小さい分だけ、割合では速くふくらむ（小は「ぽっ」と）
+    expect(maxRate * SPACE_LOOK[tl.tier].dome).toBeLessThanOrEqual(0.8);
   }
 });

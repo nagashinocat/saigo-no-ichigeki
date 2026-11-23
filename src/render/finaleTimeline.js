@@ -38,10 +38,26 @@ export const FINALE = {
   rumbleHold: 1.0,
 };
 
+// R1i（持ち主 2026-11-23 10:29）: 宇宙の段（最大・中・小）。段は放った一撃の半径で決める（CONFIG.spaceTier）。
+// 宇宙へ切り替わる（chaseEnd）までは段によらない。宇宙からあと（半球のふくらみ・止まって見せる間・押しつぶし・細って消える・
+// 無音・地鳴り）の秒を、小さい段ほど短くする（max は FINALE のまま）。spaceSound: 宇宙からあとの音の大きさ（最大に対する割合）
+export const SPACE_BEATS = {
+  max: { spaceSound: 1 },
+  normal: { domeMin: 1.6, spaceHold: 0.35, spaceMin: 1.8, flattenSec: 0.8, thinSec: 0.4, silenceSec: 0.4, rumbleHold: 0.85, spaceSound: 0.6 },
+  small: { domeMin: 0.8, spaceHold: 0.2, spaceMin: 1.1, flattenSec: 0.5, thinSec: 0.3, silenceSec: 0.3, rumbleHold: 0.6, spaceSound: 0.32 },
+};
+export function spaceTierFor(radius, cfg = CONFIG) {
+  const T = cfg.spaceTier;
+  if (!T) return 'max';
+  return radius >= T.max ? 'max' : radius >= T.normal ? 'normal' : 'small';
+}
+
 // 一発ごとの時刻表。riderDist: 撮る一人（いちばん手前の乗り手）の爆心からの距離、firstDist: いちばん奥（爆心に近い）の乗り手
 // （firstEngulf: その者が飲まれる時刻。firstEngulf〜camHit が、乗り手が光の壁を背にした影として順に飲まれていく間）、
-// camDist: カメラの爆心からの距離（m。省けば riderFrac・camBack から）
-export function createTimeline({ radius, riderDist = null, firstDist = null, camDist = null }, F = FINALE, cfg = CONFIG) {
+// camDist: カメラの爆心からの距離（m。省けば riderFrac・camBack から）、tier: 宇宙の段（省けば半径から spaceTierFor）
+export function createTimeline({ radius, riderDist = null, firstDist = null, camDist = null, tier = null }, F0 = FINALE, cfg = CONFIG) {
+  const spaceTier = tier ?? spaceTierFor(radius, cfg);
+  const F = { ...F0, ...SPACE_BEATS[spaceTier] };
   const freeze = cfg.cinematic.freezeSec;
   const { creep } = phaseTimes(radius, cfg);
   const total = blastDuration(radius, cfg);
@@ -91,6 +107,8 @@ export function createTimeline({ radius, riderDist = null, firstDist = null, cam
   }
 
   return {
+    // R1i: 宇宙の段と、その段の押しつぶし・細る秒、宇宙からあとの音の大きさ
+    tier: spaceTier, flattenSec: F.flattenSec, thinSec: F.thinSec, spaceSound: F.spaceSound,
     radius, riderDist: dR, firstDist: dFirst, camDist: dC, creepFront: f0, bSnap, total, swell,
     hands: F.hands, white: F.white, erupt: F.white, burst, resume: burst, firstEngulf, engulf, camHit, snap,
     chaseEnd, frontDone, domeEnd, flatten, lineEnd, rumble, end,

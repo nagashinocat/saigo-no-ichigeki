@@ -9,7 +9,8 @@ import { AMOUNT_LABEL } from '../ui/result.js';
 //   close     リプレイの street（通りから見上げる）: 弾ける少し前のスローから、光の壁に呑まれる（白）まで
 //   showcase  そのままリプレイの続き（ずっと引いた横のカット → 真上のカット）。主人公のカットには入らない
 //   space     演出の宇宙: ふくらんだ光の半球と衝撃波の輪（押しつぶされる手前の spaceLead 秒）
-//   line      半球が押しつぶされて縦一本の線になり、画面の上まで突き抜けて細くなって消える（R1d・M2。途中で切らない）
+//   line      半球が押しつぶされて縦一本の線になり、画面の上まで突き抜けて細くなって消える（R1d・M2。途中で切らない）。
+//             R1i: 中・小の段は線が上の端の手前で細って消え、この場面も短い（演出の時刻表の段のまま）
 //   tail      消えたあとの焼けた街の灯と無音。題字と被害額を読む間
 // 長すぎれば 見せ場 → 宇宙の前置き → 寄りの前置き → 余韻 の順に詰め、短すぎれば 余韻 → 宇宙 → 見せ場 の順に延ばす。
 export const CLIP = {
@@ -66,9 +67,12 @@ export function planClip({ replay, finale }, C = CLIP) {
   const audio = {
     erupt: 0, burst, engulf: burst + 0.6 * (s0.t1 - burst), snap: s0.t1,
     chaseEnd: s2.t0, flatten: s3.t0, lineEnd: s3.t1,
+    // R1i: 宇宙からあとの音の大きさ（演出の時刻表の段のもの）
+    spaceSound: finale.spaceSound ?? 1,
   };
   const cues = [{ t: 0, name: 'erupt' }, { t: burst, name: 'burst' }, { t: s2.t0, name: 'space' }];
-  return { kind: 'blast', segments, total: segments.at(-1).t1, cues, audio, flashes: [{ t: s2.t0, sec: C.flashSec }] };
+  // R1i: 宇宙の段（最大・中・小）は演出の時刻表のもの（宇宙の絵は cinematic.spaceShot がその時刻表で描く）
+  return { kind: 'blast', tier: finale.tier ?? 'max', segments, total: segments.at(-1).t1, cues, audio, flashes: [{ t: s2.t0, sec: C.flashSec }] };
 }
 
 // 時間切れの結末（ブラックホール）の動画: 画面全体になってから（cut）、街と空の飲み込み → 何もない空間 → 暗転の少しあとまで

@@ -128,6 +128,17 @@ export function spaceSparkTime(tl, dist, radius, dome0 = DOME0) {
 }
 // 宇宙のカメラの画角（縦長は横の、横長は縦の、度）
 const SPACE_FOV = { h: 54, v: 36 };
+// R1i（持ち主 2026-11-23 10:29）: 宇宙の段ごとの見え方（段は finaleTimeline.js spaceTierFor。最大は前のまま）。
+//   dome: 光の半球の大きさ（最大に対する割合）、glow: 半球の明るさ、line: 縦一線の光の明るさ、
+//   pierce: 線が画面の上の端を突き抜けるか（最大だけ。M2）、topNdc: 突き抜けない段で、線の板の先が届く画面の縦の上限（NDC）、
+//   stretch: 押しつぶされて縦へ伸びる高さの上限（半球の半径に対して）、ring / shell: 衝撃波の輪と殻（明るさと、輪の走る遠さ）、
+//   scar: 消えたあとの焼けた街の灯、pop: 小の「ぽっ」— ふくらみきる手前から止まる間に、半球と光が少しだけ跳ねる
+export const SPACE_LOOK = {
+  max: { dome: 1, glow: 1, line: 1, pierce: true, topNdc: LINE_HANDOFF.topNdc, stretch: 2.5, ring: 1, shell: 1, scar: 1, pop: 0 },
+  normal: { dome: 0.66, glow: 0.72, line: 0.72, pierce: false, topNdc: 0.42, stretch: 1.8, ring: 0.7, shell: 0.7, scar: 0.7, pop: 0 },
+  small: { dome: 0.34, glow: 0.55, line: 0.5, pierce: false, topNdc: 0.05, stretch: 0.9, ring: 0.45, shell: 0.45, scar: 0.45, pop: 0.16 },
+};
+const lookOf = (tl) => SPACE_LOOK[tl?.tier] ?? SPACE_LOOK.max;
 // カメラのそばのビル（水平にこの距離 m 以内）は、光の壁が触れた瞬間に隠す（球の面へ半分だけ押されて引き伸ばされた壁が
 // レンズの前を横切らない。光の壁の面がその場所をおおう）。遠くのビルは今までどおり飲まれてつぶれていくのを見せる
 export const VEIL_NEAR = 80;
@@ -434,26 +445,30 @@ export function createCinematic(views, enemyView, explosionView, { renderer, sce
     // 光の半球: ふくらむ → 両側から押しつぶされて（幅 → 0）縦へ伸び、そのまま縦一本の線になる → 細くなって消える
     // R1d（持ち主 14:13「ドーム型の光が消える時に縦 1 本の線になって消える感じ」）: 別の柱が空へ伸びるのではなく、半球そのものが線へ変わる
     // 一続きの動き。線は半球の幅が始めの 30% より細くなってから、押しつぶされた半球と同じ所・同じ高さ・同じ幅で引き継ぐ（LINE_HANDOFF）
-    const f = clamp01((t - tl.flatten) / FINALE.flattenSec);
-    const th = clamp01((t - tl.flatten - FINALE.flattenSec) / FINALE.thinSec);
+    // R1i: 宇宙の段の見え方（SPACE_LOOK）と、段の押しつぶし・細る秒（時刻表の段のもの。最大は FINALE のまま）
+    const L = lookOf(tl), fSec = tl.flattenSec ?? FINALE.flattenSec, tSec = tl.thinSec ?? FINALE.thinSec;
+    const f = clamp01((t - tl.flatten) / fSec);
+    const th = clamp01((t - tl.flatten - fSec) / tSec);
+    // 小の「ぽっ」: ふくらみきる少し手前から押しつぶされるまでの間に、半球が少しだけ跳ねる（最大・中は 1 のまま）
+    const popK = L.pop ? 1 + L.pop * Math.sin(Math.PI * clamp01((t - tl.domeEnd + 0.12) / Math.max(0.05, tl.flatten - tl.domeEnd + 0.12))) : 1;
     // 半球は街の前線の残りと同じく、ゆっくりゆるみながらふくらみ、domeEnd に止まる（finaleTimeline の domeAt）
-    const r = rMax * (DOME0 + (1 - DOME0) * tl.domeAt(t));
+    const r = rMax * (DOME0 + (1 - DOME0) * tl.domeAt(t)) * popK;
     const flat = easeInOut(f);
     const hand = smooth((flat - LINE_HANDOFF.from) / LINE_HANDOFF.span); // 0: 半球だけ → 1: 線だけ
-    const domeI = (0.75 + 0.35 * Math.sin(Math.PI * f)) * (1 - hand);
+    const domeI = (0.75 + 0.35 * Math.sin(Math.PI * f)) * (1 - hand) * L.glow * (1 + 2 * (popK - 1));
     // 縦へ伸びる高さは、線の板の先（細りながら伸びる分 1.12 倍まで）が画面の上の端（LINE_HANDOFF.topNdc）の手前に収まるまで
-    // （縦長でも横長でも、線の先が画面の上の端や黒い帯で切れない）
-    const room = skyRoom(space.camera, LINE_HANDOFF.topNdc) * LINE_HANDOFF.glowFrac / 1.12;
-    const stretch = Math.max(0, Math.min(2.5, room / Math.max(r, 1e-6) - 1));
+    // （縦長でも横長でも、線の先が画面の上の端や黒い帯で切れない）。R1i: 中・小はもっと下（L.topNdc）までで、伸びも控えめ（L.stretch）
+    const room = skyRoom(space.camera, L.topNdc) * LINE_HANDOFF.glowFrac / 1.12;
+    const stretch = Math.max(0, Math.min(L.stretch, room / Math.max(r, 1e-6) - 1));
     space.setDome(r, flat, domeI, t, stretch);
     // 衝撃波の輪: 半球の根元から雲の上を走り、カメラの下をくぐって消える
     const ru = clamp01((u - 0.03) / 0.97);
-    const ringR = r * 0.9 + (spaceDist * 0.78) * (1 - (1 - ru) ** 1.5);
+    const ringR = r * 0.9 + (spaceDist * 0.78 * L.ring) * (1 - (1 - ru) ** 1.5);
     // カメラの下へ近づくほど太く見えるので、近づく前に薄れる
-    space.setRing(ringR, ru > 0 ? (1 - smooth((ru - 0.45) / 0.45)) * (1 - f) * smooth(ru / 0.05) : 0);
+    space.setRing(ringR, ru > 0 ? (1 - smooth((ru - 0.45) / 0.45)) * (1 - f) * smooth(ru / 0.05) * L.ring : 0);
     // 衝撃波の殻: 半球の少し先を、半球と同じゆっくりした進み（domeAt）でふくらみ、ふくらみきる前に薄れて消える
     const pd = tl.domeAt(t);
-    space.setShell(rMax * shellRadius(pd), (1 - smooth((pd - 0.55) / 0.45)) * smooth(u / 0.06) * (1 - f));
+    space.setShell(rMax * shellRadius(pd), (1 - smooth((pd - 0.55) / 0.45)) * smooth(u / 0.06) * (1 - f) * L.shell);
     // 縦一本の線（R1b → R1d）: 押しつぶされた半球の続き。光る部分（板の下から LINE_HANDOFF.glowFrac）が半球の描かれる高さ
     // （spaceView.setDome の r·(1 + 2.5·flat)）に合い、太さは半球の今の幅（細りきっても見える下限 minThick·r）。
     // 押しつぶしが終わると細くなりながら少し上へ伸びて消える
@@ -462,14 +477,15 @@ export function createCinematic(views, enemyView, explosionView, { renderer, sce
     // M2: 線へ変わると、光る部分の先が画面の上の端を突き抜けるまで伸びる
     const pierceLen = (space.lineReach ? space.lineReach(LINE_HANDOFF.pierceNdc) : skyRoom(space.camera, LINE_HANDOFF.pierceNdc)) / LINE_HANDOFF.tipFrac;
     const pr = easeOut(LINE_HANDOFF.pierceHand * hand + LINE_HANDOFF.pierceThin * th);
-    const len = baseLen + Math.max(0, pierceLen - baseLen) * pr;
+    // R1i: 突き抜けるのは最大だけ。中・小は押しつぶされた高さのまま、上の端の手前で細って消える
+    const len = L.pierce ? baseLen + Math.max(0, pierceLen - baseLen) * pr : baseLen;
     // M2: 太さは半球の幅のまま細り、minThick に届いたら（LINE_FLOOR_F）板の太さはそこで止め、芯の幅を lineEnd まで細らせ続ける
-    const tFloor = tl.flatten + LINE_FLOOR_F * FINALE.flattenSec;
+    const tFloor = tl.flatten + LINE_FLOOR_F * fSec;
     const rFloor = rMax * (DOME0 + (1 - DOME0) * tl.domeAt(tFloor));
     const floored = t >= tFloor;
     const thick = floored ? LINE_HANDOFF.minThick * rFloor : 2 * r * Math.max(0.002, 1 - flat);
     const thin = floored ? clamp01((t - tFloor) / Math.max(1e-6, tl.lineEnd - tFloor)) : 0;
-    const lineI = hand * (1 - smooth((th - 0.25) / 0.75)) * 1.6;
+    const lineI = hand * (1 - smooth((th - 0.25) / 0.75)) * 1.6 * L.line;
     space.setLine(len, thick, thin, lineI);
     // 街を見回る軍勢: 生きている者は緑の点、宇宙の光の半球の縁が届いた瞬間に火花（宇宙の座標へ縮める: 半径 radius m → rMax）
     if (getEnemies) {
@@ -490,7 +506,7 @@ export function createCinematic(views, enemyView, explosionView, { renderer, sce
       space.setSparks(_sparks, renderer?.getPixelRatio?.() ?? 1);
     }
     // 消えたあとに残る、焼けた街の小さな灯
-    space.setScar(2.0 * smooth((t - tl.lineEnd + 0.3) / 0.6) * (1 - 0.4 * smooth((t - tl.rumble) / 1.5)));
+    space.setScar(2.0 * smooth((t - tl.lineEnd + 0.3) / 0.6) * (1 - 0.4 * smooth((t - tl.rumble) / 1.5)) * L.scar);
     space.setStars(smooth(u / 0.4));
     const g = screen.grade;
     g.sat = 1.0; g.warm = 0.1; g.grain = 0.035; g.contrast = 1.05; g.bloom = 0.55;
@@ -517,6 +533,8 @@ export function createCinematic(views, enemyView, explosionView, { renderer, sce
     const halfH = spaceDist * Math.tan(THREE.MathUtils.degToRad(space.camera.fov) / 2);
     // S8: 大きさの基準は S7 までの最大の半径（blast.smallRef）。広げた最大の一発（720 m）は前の最大より約 14% 大きく見える
     rMax = 0.17 * halfH * (0.5 + 0.5 * Math.sqrt(s.radius / (cfg.blast.smallRef ?? cfg.radius.max)));
+    // R1i: 宇宙の段の大きさ（最大は 1 のまま）
+    rMax *= lookOf(tl).dome;
   }
 
   // 撮る場所（plan）が決まったら: 時刻表・カメラ・隠すビル・乗り手の隊形
