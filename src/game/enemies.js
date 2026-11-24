@@ -599,8 +599,8 @@ export function createEnemies(rng, cfg = CONFIG, { buildings = [], patrolRng = n
   // よろめく者（R1）: 主人公から外へ push m/s（stagger.sec 秒でなめらかに 0 へ）押し戻されながら、左回りに spin m/s で回る。
   // 終われば chase へ戻り、そのまま突っ込み直す（速さは今の速さから上げる）
   function staggerStep(e, dt) {
-    // 持ち主 2026-11-24「払うを強く」: 払うの衝撃波（shock）で弾かれた者は、その一回だけ長く遠くへ（e.stg: { sec, push }）
-    const S = e.stg ? { ...E.stagger, ...e.stg } : E.stagger;
+    // 持ち主 2026-11-24「払うを強く」: 払うの衝撃波（shock）で弾かれた者は、その一回だけ長く遠くへ（e.stg。弾いたときに E.stagger と合わせて作ってある）
+    const S = e.stg ?? E.stagger;
     e.staggerT += dt;
     if (e.x == null) { e.x = H.x + Math.cos(e.angle) * e.dist; e.z = H.z + Math.sin(e.angle) * e.dist; }
     const u = Math.min(1, e.staggerT / S.sec);
@@ -782,12 +782,29 @@ export function createEnemies(rng, cfg = CONFIG, { buildings = [], patrolRng = n
     // 持ち主 2026-11-24「無敵は短く、払うを強く」: 払った瞬間の衝撃波。centre から sh.radius m の内の、主人公を追う・掴む・群がる・よろめく者
     // （見回るだけの者と、まだ探している者は除く）を、外へ sh.knock m ほど sh.sec 秒で弾き飛ばし（よろめき。掴む・群がるからも外れる）、
     // sh.blind なら弾かれ終わったとき主人公を見失わせる（探し直し）。倒すのは払うの前線（applyBlastFront）のまま。弾いた数を返す
+    // Fix round 2: 閃光の残り（haze）を払った所 centre から始める。2 回目の払うは、前の残りを捨てて、新しく払った所から hazeSec 秒をやり直す
+    // （残りの長い方を保たない: 閃光は今の主人公の所に出る。前の所の残りを延ばすと、離れた所が守られたままになる）
+    haze(centre, sh) {
+      if (!sh || !(sh.hazeSec > 0)) { return; }
+      const C = centre ?? H;
+      haze = { x: C.x, z: C.z, r: sh.hazeR ?? sh.radius, until: time + sh.hazeSec };
+    },
+    // 閃光の残り（描く側が読む）: { x, z, r, left（残り秒）, total（長さ） } か null
+    hazeInfo(total = 0) { return haze && time < haze.until ? { x: haze.x, z: haze.z, r: haze.r, left: haze.until - time, total } : null; },
+    // 払った瞬間に、衝撃波で弾く見込みの数（音の強さ。前線で倒れる者も入る）
+    shockable(centre, sh) {
+      if (!sh || !(sh.radius > 0)) return 0;
+      const C = centre ?? H;
+      let n = 0;
+      for (const e of list) if (e.state !== 'dead' && e.x != null && SHOCKED.has(e.state) && Math.hypot(e.x - C.x, e.z - C.z) <= sh.radius) n++;
+      return n;
+    },
     shock(centre, sh) {
       if (!sh || !(sh.radius > 0)) return 0;
       const C = centre ?? H;
       // 押し戻しの道のり = push × sec × ∫(1 − u)(1 − u/2) du = push × sec × 5/12
       const push = (sh.knock ?? 0) / (Math.max(1e-3, sh.sec) * (5 / 12));
-      if (sh.hazeSec > 0) haze = { x: C.x, z: C.z, r: sh.hazeR ?? sh.radius, until: time + sh.hazeSec };
+      const stg = { ...E.stagger, sec: sh.sec, push: Math.max(E.stagger.push, push), blind: !!sh.blind }; // 弾かれた者みなで使う（staggerStep は読むだけ）
       let n = 0;
       for (const e of list) {
         if (e.state === 'dead' || e.x == null) continue;
@@ -803,7 +820,7 @@ export function createEnemies(rng, cfg = CONFIG, { buildings = [], patrolRng = n
         if (sh.blind) e.blindUntil = time + sh.sec + (sh.blindSec ?? 0);
         if (e.state === 'grab' || e.state === 'cling') { delete e.layer; e.unpile = null; }
         e.state = 'stagger'; e.staggerT = 0;
-        e.stg = { sec: sh.sec, push: Math.max(E.stagger.push, push), blind: !!sh.blind };
+        e.stg = stg;
         n++;
       }
       if (n) relayer();

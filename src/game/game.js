@@ -123,6 +123,12 @@ export function createGame({ seed, cfg = CONFIG }) {
         maxCombo = Math.max(maxCombo, b.hits);
         if (b.hits >= (cfg.puff.combo?.from ?? Infinity)) emit('combo', { k: b.hits, blastId: b.id });
       }
+      // Fix round 2: 前線が広がりきった（倒し終えた）ら衝撃波。倒れなかった者（よろめく重い者も）を弾く
+      if (b.shockPending && (b.blast.front >= b.shot.radius - 1e-6 || b.blast.done)) {
+        const n = enemies.shock(b.shot.centre, b.shockPending);
+        b.shockPending = null;
+        emit('shock', { centre: b.shot.centre, hits: n });
+      }
     }
     blasts = blasts.filter((b) => !b.blast.done);
   }
@@ -225,6 +231,8 @@ export function createGame({ seed, cfg = CONFIG }) {
     get puffsLeft() { return puffsLeft; },
     // Fix round 1: 払うの守りの残り秒（輪の見た目）
     get guardLeft() { return enemies.guardLeft; },
+    // Fix round 2: 閃光の残り { x, z, r, left, total }（無ければ null。描く側が安全な所と残りを見せる）
+    get haze() { return enemies.hazeInfo(cfg.puff.shock?.hazeSec ?? 0); },
     get puffBlock() { return puffBlock(); },
     // R1f fix1: 前の払うが広がり終わるまでの残りの秒（広がっていなければ 0。input/puffBuffer.js が使う）
     get puffBusyLeft() { let m = 0; for (const b of blasts) if (b.shot.small) m = Math.max(m, b.blast.left); return m; },
@@ -324,10 +332,15 @@ export function createGame({ seed, cfg = CONFIG }) {
       enemies.guard(cfg.puff.guardSec ?? 0); // Pass 2: 払ったあとしばらく掴まれない
       hideCool = Math.max(hideCool, cfg.puff.hideLockSec ?? 0); // Pass 2: 払ったあと hideLockSec 秒は隠れられない（払うと隠れるを続けて使えない）
       const shot = { amount: cfg.puff.cost, radius: cfg.puff.radius, isBig: false, small: true, centre: { x: hero.x, z: hero.z } };
-      startBlast(shot);
-      // 持ち主 2026-11-24「払うを強く」: 衝撃波（追う・掴む者を遠くへ弾き、目をくらませる）
-      const shocked = enemies.shock(shot.centre, cfg.puff.shock);
-      if (cfg.puff.shock) shot.shock = { radius: cfg.puff.shock.radius, hits: shocked };
+      const b = startBlast(shot);
+      // 持ち主 2026-11-24「払うを強く」: 閃光の残りはすぐ。衝撃波（追う・掴む者を遠くへ弾き、目をくらませる）は、Fix round 2: 前線が広がりきって
+      // 倒し終えてから（先に弾くと前線が届かない）。hits は弾く見込みの数（音の強さ）
+      const sh = cfg.puff.shock;
+      if (sh) {
+        enemies.haze(shot.centre, sh);
+        b.shockPending = sh;
+        shot.shock = { radius: sh.radius, hits: enemies.shockable(shot.centre, sh) };
+      }
       emit('puff', shot);
       return true;
     },

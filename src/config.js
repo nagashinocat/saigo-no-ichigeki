@@ -33,10 +33,11 @@ export const CONFIG = {
   // 持ち主 2026-11-24（「無敵は短く、払うを強く」）: 守りは 4 秒のまま、払うそのものを強く（tests/game/puffShock.test.js）:
   //  前線 22 → 40 m。衝撃波 shock: 払った瞬間 radius m の内の追う・近づく・掴む・群がる・よろめく者を外へ knock m（sec 秒）弾き、目をくらませ
   //  （弾かれ終わると見失い、知らせも忘れて探し直す。blindSec 秒は見つけない・知らせも届かない）、知らされて向かってくる探す者も忘れる。
-  //  閃光の残り: hazeSec 秒、払った所から hazeR m の内の探す者は主人公を見つけられない（見回るだけの者は弾かない）。
-  //  今日の街 360 で最善 99%・隠れるだけ 27%・払う 3 回・隠れない 46%・矢印に従う 9 割（2247-fix-report.md Fix round 1）
+  //  閃光の残り: hazeSec 秒、払った所から hazeR m の内の探す者は主人公を見つけられない（見回るだけの者は弾かない）。2 回目の払うはやり直す。
+  //  Fix round 2: 衝撃波は前線が広がりきってから（倒れなかった者だけを弾く）。閃光の残り 9.75 → 10.5 秒。
+  //  今日の街 360 で最善 98%・隠れるだけ 27%・払う 3 回・隠れない 43%（2247-fix-report.md Fix round 2）
   puff:    { cost: 2.2, uses: 3, radius: 40, guardSec: 4, guardKill: true, hideLockSec: 2, combo: { from: 3 },
-    shock: { radius: 90, knock: 35, sec: 1.2, blind: true, blindSec: 3, hazeSec: 9.75, hazeR: 90 } },
+    shock: { radius: 90, knock: 35, sec: 1.2, blind: true, blindSec: 3, hazeSec: 10.5, hazeR: 90 } },
   // 最後の一発の半径（貯めた力 / power.max で決まる）。S8: max 440 → 720（街の端 680 m と、見回る軍勢の一番外
   // （maxEnemyReach、約 603 m）より十分先まで。最大溜めなら街のどこにいる軍勢も必ず巻き込む）
   // fix1（持ち主 15:33「軍勢は街の全体に」）: 見回る者が街の端まで行くので max 720 → 730（maxEnemyReach 約 685 m + 40 m より先）

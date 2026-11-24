@@ -185,7 +185,8 @@ test('先読みを延ばしても、長押しへの BGM の反応は速いまま
 test('払う・掴まれる・時間がたって軍勢が増える間、ゲームは最後の一発の合図（shot / cinematicStart / over）を出さない', () => {
   // M2: 払うは 3 回までになったが、ここは払うたびに合図が出ないことを何度も確かめたいので、回数の制限を外す
   // Pass 2: 払ったあとの守り（guardSec）があると掴まれる場面が来ないので、ここは守りなし（確かめたいのは音の合図）
-  const game = createGame({ seed: 7, cfg: { ...CONFIG, puff: { ...CONFIG.puff, uses: Infinity, guardSec: 0 } } });
+  // Fix round 2: 払うの閃光の残り（見つからない間）と衝撃波も外す（1.2 秒ごとに払うので、掴まれる場面が来ない）
+  const game = createGame({ seed: 7, cfg: { ...CONFIG, puff: { ...CONFIG.puff, uses: Infinity, guardSec: 0, shock: null } } });
   const seen = [];
   for (const ev of ['shot', 'cinematicStart', 'cinematicEnd', 'over', 'puff', 'fizzle']) game.on(ev, () => seen.push(ev));
   game.pressStart();

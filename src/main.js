@@ -37,6 +37,8 @@ import { createDashStreak } from './render/dashStreak.js';
 import { createHideAction } from './render/hideAction.js';
 import { createGuardRing } from './render/guardRing.js';
 import { createShockRing } from './render/shockRing.js';
+import { createHazeDome } from './render/hazeDome.js';
+import { hazeMarkState, createHazeMark } from './ui/hazeMark.js';
 import { stickMarks } from './ui/stickMarks.js';
 import { bindPointerInput, eventMs } from './input/bindDom.js';
 import { clearThreshold } from './game/charge.js';
@@ -882,7 +884,7 @@ function restartRound() {
   heroMoved = false; liftT = 0;
   hand.reset(); hand.setCollapse(0);
   dashStreak.update(game.hero, 1e3); hideAction.update({ ...game.hero, action: null }, 1e3); // 滑り込みの筋・跳ぶ見た目を消しきる
-  guardRing.reset(); shockRing.reset();
+  guardRing.reset(); shockRing.reset(); hazeDome.reset();
   views.resetCamera(game.hero);
   // 入力・HUD・知らせ
   controls.reset(); keysDown.clear(); keyFlick.reset(); puffBuffer.clear();
@@ -960,6 +962,8 @@ game.on('hide', () => audio.hideCue('jump', screenCue(game.hero.x, 1, game.hero.
 // Fix round 1（見直し Important 5）: 払うの守りの輪（守りの間だけ、主人公のまわりの地面）と、弾いた瞬間の脈・音
 const guardRing = createGuardRing(cityScene);
 const shockRing = createShockRing(cityScene); // 持ち主 2026-11-24: 払うの衝撃波の輪
+const hazeDome = createHazeDome(cityScene); // Fix round 2: 閃光の残り（安全な所）の薄い光のドーム
+const hazeMark = createHazeMark(document.getElementById('hazeMark')); // Fix round 2: 閃光の残りの輪（主人公のそば）
 const guardCueLimit = createRateLimit(GUARD_CUE_MAX_PER_SEC); // Fix round 3: 弾く音は 1 秒に 6 回まで
 game.on('guardHit', (h) => { guardRing.hit(); if (guardCueLimit(performance.now() / 1000)) audio.guardCue(screenCue(h.x, 1, h.z).pan); });
 views.follow(game.hero, { snap: true });
@@ -1033,6 +1037,7 @@ function simulate(dt) {
   syncHide(dt);
   guardRing.update(dt, game.hero, game.phase === 'playing' ? game.guardLeft : 0, CONFIG.puff.guardSec);
   shockRing.update(dt);
+  hazeDome.update(dt, game.phase === 'playing' ? game.haze : null);
   const wdt = cinematic.active ? cinematic.worldDt : dt;
   explosionView.setBirthScale(cinematic.active ? cinematic.blastBirthScale : 1);
   explosionView.setCoreScale(cinematic.active ? cinematic.blastCoreScale : 1);
@@ -1080,6 +1085,9 @@ function finishFrame(dt, live) {
   // R1f fix1: 物陰にいる間の「かくれ中」と残りの輪
   const hm = inPlay() && !debugCam ? hideMarkState({ hero: game.hero, hideLeft: game.hideLeft, holdSec: CONFIG.hide.holdSec, warn: !!lo?.coverWarn }) : { show: false, p: 0 };
   hideMark.update(hm, hm.show ? screenCue(game.hero.x, 1.2, game.hero.z) : null);
+  // Fix round 2: 閃光の残りの輪（遊んでいる間だけ）
+  const hz = inPlay() && !debugCam ? hazeMarkState({ haze: game.haze, hero: game.hero }) : { show: false, p: 0 };
+  hazeMark.update(hz, hz.show ? screenCue(game.hero.x, 1.2, game.hero.z) : null);
   // 最後の一発を放ってから結果までずっと HUD は出さない（両手が玉を握り込む間も、リプレイの間も）
   hud.setVisible(!debugCam && !introFlow.blocksInput && finaleOff()); // C1: リトライの TAP の間も出さない
   updateAudio(live, dt);

@@ -56,7 +56,8 @@ test('R1f fix1: 動く主人公（通りを渡り角を曲がり、壁に沿っ�
 test('Fix round 1: 出荷の設定（払うの守りあり）でも、25 m の内の軍勢はどのフレームでも 6 m/s 以上', () => {
   const { frames, seen, bad } = runR0({ ...CONFIG, puff: { ...CONFIG.puff, uses: Infinity } });
   if (process.env.R0_LOG) console.log(frames, seen);
-  expect(frames).toBeGreaterThan(3000);
+  // Fix round 2（払うの前線 40 m・衝撃波・閃光の残り）: 25 m の内に来る者が減り、数えたフレームは 2919（前は 3000 より多い）。下限 3000 → 2500
+  expect(frames).toBeGreaterThan(2500);
   expect(seen.grab).toBeGreaterThan(100);
   expect(seen.wall).toBeGreaterThan(30);
   expect(bad.slice(0, 6)).toEqual([]);

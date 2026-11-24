@@ -132,6 +132,14 @@
     /* R1f fix1: 物陰にいる間の「かくれ中」と、その物陰にいられる残り（--p、1 → 0）の細い輪（hideMark.js） */
     #hideMark { position: fixed; left: 0; top: 0; width: 0; height: 0; pointer-events: none; z-index: 4; --p: 1; }
     #hideMark[hidden] { display: none; }
+    /* Fix round 2: 払うの閃光の残り（hazeMark.js）。主人公の右下に小さな残りの輪（--p、1 → 0）。範囲の外へ出たら .out で薄く */
+    #hazeMark { position: fixed; left: 0; top: 0; width: 0; height: 0; pointer-events: none; z-index: 4; --p: 1; }
+    #hazeMark[hidden] { display: none; }
+    #hazeMark .hz-ring { position: absolute; left: 22px; top: 10px; width: 22px; height: 22px; border-radius: 50%;
+      background: conic-gradient(rgba(190, 235, 255, 0.95) calc(var(--p) * 360deg), rgba(190, 235, 255, 0.15) 0);
+      -webkit-mask: radial-gradient(circle, transparent 6px, #000 7px); mask: radial-gradient(circle, transparent 6px, #000 7px);
+      box-shadow: 0 0 10px rgba(160, 220, 255, 0.7); }
+    #hazeMark.out .hz-ring { opacity: 0.35; }
     /* Fix round 3: 物陰に近づく者がいる（見つかる前の知らせ）: 赤く脈打つ */
     #hideMark.warn .hm-ring { background: conic-gradient(rgba(255, 70, 60, 0.98) calc(var(--p) * 360deg), rgba(255, 70, 60, 0.2) 0); animation: hmWarn 0.35s ease-in-out infinite alternate; }
     #hideMark.warn .hm-tag { color: #ffe0dc; box-shadow: 0 0 0 2px rgba(255, 70, 60, 0.95), 0 0 12px rgba(255, 60, 40, 0.8); }
@@ -354,6 +362,7 @@
     </div>
   </div>
   <div id="hideMark" hidden><div class="hm-ring"></div><div class="hm-tag">かくれ中</div></div>
+  <div id="hazeMark" hidden><div class="hz-ring"></div></div>
   <div id="lookout" hidden><div class="lo-hit"></div><div class="lo-tap" hidden>TAP</div><div class="lo-arrow"><b></b><i></i></div><div class="lo-text"></div></div>
   <div id="start" hidden>長押しで力を貯め、離して最後の一撃<br><small>貯めながら、もう一本の指を長押しで動く・短くタップで払う（3 回まで）<br>LOOK OUT! が出たら 矢印をタップで物陰に隠れる<br>払うは まわりの者を はがす（重い者・大物は倒れず よろめく）</small></div>
   <div id="replay" hidden><span class="replay-tag">リプレイ</span><span class="replay-hint">タップでとばす</span></div>
